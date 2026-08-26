@@ -59,66 +59,119 @@ public class SmsReaderPlugin extends Plugin {
 
     private void readSms(PluginCall call) {
 
-        JSArray messages = new JSArray();
+        JSObject diagnostic = new JSObject();
 
-        Uri uri = Uri.parse("content://sms/inbox");
-
-        Cursor cursor = getContext()
-            .getContentResolver()
-            .query(
-                uri,
-                new String[] {
-                    "address",
-                    "body",
-                    "date"
-                },
-                null,
-                null,
-                "date DESC"
-            );
-
-        if (cursor == null) {
-            call.reject("Unable to read SMS inbox");
-            return;
-        }
+        diagnostic.put("stage", "starting");
+        diagnostic.put("permission", "READ_SMS granted");
 
         try {
 
-            while (cursor.moveToNext()) {
+            Uri uri = Uri.parse("content://sms/inbox");
 
-                JSObject message = new JSObject();
+            diagnostic.put("stage", "querying_sms_inbox");
+            diagnostic.put("uri", uri.toString());
 
-                message.put(
-                    "address",
-                    cursor.getString(
-                        cursor.getColumnIndexOrThrow("address")
-                    )
+            Cursor cursor = getContext()
+                .getContentResolver()
+                .query(
+                    uri,
+                    new String[] {
+                        "address",
+                        "body",
+                        "date"
+                    },
+                    null,
+                    null,
+                    "date DESC"
                 );
 
-                message.put(
-                    "body",
-                    cursor.getString(
-                        cursor.getColumnIndexOrThrow("body")
-                    )
+            if (cursor == null) {
+
+                diagnostic.put("stage", "query_returned_null");
+                diagnostic.put("cursor", "null");
+
+                call.reject(
+                    "SMS query returned null cursor",
+                    diagnostic
                 );
 
-                message.put(
-                    "date",
-                    cursor.getLong(
-                        cursor.getColumnIndexOrThrow("date")
-                    )
-                );
-
-                messages.put(message);
+                return;
             }
 
-        } finally {
-            cursor.close();
+            diagnostic.put("stage", "cursor_received");
+            diagnostic.put("cursor", "not null");
+
+            JSArray messages = new JSArray();
+
+            int count = 0;
+
+            try {
+
+                while (cursor.moveToNext()) {
+
+                    JSObject message = new JSObject();
+
+                    message.put(
+                        "address",
+                        cursor.getString(
+                            cursor.getColumnIndexOrThrow("address")
+                        )
+                    );
+
+                    message.put(
+                        "body",
+                        cursor.getString(
+                            cursor.getColumnIndexOrThrow("body")
+                        )
+                    );
+
+                    message.put(
+                        "date",
+                        cursor.getLong(
+                            cursor.getColumnIndexOrThrow("date")
+                        )
+                    );
+
+                    messages.put(message);
+
+                    count++;
+                }
+
+            } finally {
+                cursor.close();
+            }
+
+            diagnostic.put("stage", "reading_complete");
+            diagnostic.put("messageCount", count);
+
+            JSObject result = new JSObject();
+
+            result.put("messages", messages);
+            result.put("diagnostic", diagnostic);
+
+            call.resolve(result);
+
+        } catch (Exception e) {
+
+            diagnostic.put("stage", "exception");
+            diagnostic.put(
+                "exceptionType",
+                e.getClass().getName()
+            );
+            diagnostic.put(
+                "exceptionMessage",
+                e.getMessage() != null
+                    ? e.getMessage()
+                    : "No exception message"
+            );
+
+            call.reject(
+                "SMS inbox exception",
+                e.getMessage() != null
+                    ? e.getMessage()
+                    : "Unknown exception",
+                diagnostic
+            );
         }
-
-        JSObject result = new JSObject();
-        result.put("messages", messages);
-
-        call.resolve(result);
     }
 }

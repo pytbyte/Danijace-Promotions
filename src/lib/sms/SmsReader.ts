@@ -9,6 +9,7 @@ export interface SmsMessage {
 export interface SmsReaderPlugin {
   readInbox(): Promise<{
     messages: SmsMessage[];
+    diagnostic?: Record<string, unknown>;
   }>;
 }
 
