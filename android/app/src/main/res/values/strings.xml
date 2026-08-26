@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Geo Shua</string>
+    <string name="title_activity_main">Geo Shua</string>
+    <string name="package_name">com.pytbyte.geoshua</string>
+    <string name="custom_url_scheme">com.pytbyte.geoshua</string>
+</resources>
