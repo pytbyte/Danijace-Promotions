@@ -7,9 +7,10 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+    protected void onCreate(Bundle savedInstanceState) {
 
         registerPlugin(SmsReaderPlugin.class);
+
+        super.onCreate(savedInstanceState);
     }
 }
