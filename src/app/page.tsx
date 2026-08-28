@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { signIn } from "next-auth/react";
 
 export default function Home() {
   const [loading, setLoading] = useState(false);
@@ -8,13 +9,14 @@ export default function Home() {
   const handleGoogleLogin = async () => {
     setLoading(true);
 
-    // Connect Google authentication here
-    // Example:
-    // await signIn("google");
-
-    console.log("Google login");
-
-    setLoading(false);
+    try {
+      await signIn("google", {
+        callbackUrl: "/dashboard",
+      });
+    } catch (error) {
+      console.error("Google sign-in error:", error);
+      setLoading(false);
+    }
   };
 
   return (
@@ -37,7 +39,6 @@ export default function Home() {
 
           {/* Logo */}
           <div className="relative mb-8">
-            {/* Logo glow */}
             <div className="absolute inset-0 scale-75 rounded-full bg-yellow-500/10 blur-3xl" />
 
             <img
@@ -65,7 +66,7 @@ export default function Home() {
             </p>
           </div>
 
-          {/* Login button */}
+          {/* Google login */}
           <button
             type="button"
             onClick={handleGoogleLogin}
