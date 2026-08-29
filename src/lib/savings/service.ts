@@ -1,24 +1,51 @@
 /**
- * Savings service.
+ * =========================================================
+ * GEO-SHUA
+ * SAVINGS SERVICE
+ * =========================================================
  *
- * IMPORTANT FINANCIAL RULES
- * -------------------------
- * 1. Savings transactions are immutable financial records.
- * 2. Existing transaction amounts must never be changed.
- * 3. Corrections are represented by new adjustment transactions.
- * 4. Reversals are represented by new reversal transactions.
- * 5. Original transactions may have their status changed to
- *    "reversed" as metadata when a reversal is created.
- * 6. The transaction ledger is authoritative for balances.
- * 7. savings_accounts.balance is only a cached balance.
- * 8. Duplicate external transactions must be idempotent.
- * 9. No permanent deletion is provided by this service.
+ * PRODUCTION FINANCIAL LEDGER
+ *
+ * IMPORTANT:
+ * ---------------------------------------------------------
+ * - Savings has NO saccoId.
+ * - One member has exactly one fixed savings account.
+ * - savingsAccounts.balance is a CACHE only.
+ * - The transaction ledger is authoritative.
+ * - Financial transactions are append-only.
+ * - Existing financial amounts are never modified.
+ * - Corrections use NEW adjustment transactions.
+ * - Reversals use NEW reversal transactions.
+ * - No permanent financial deletion.
+ *
+ * MongoDB:
+ *
+ * savingsAccounts
+ *   _id      -> ObjectId
+ *   memberId -> ObjectId
+ *
+ * savings_transactions
+ *   _id      -> application UUID string
+ *
+ * =========================================================
  */
 
 import type {
-  Collection,
   ClientSession,
+  Collection,
+  CreateIndexesOptions,
+  Document,
+  Filter,
+  IndexDescription,
 } from "mongodb";
+
+import {
+  ObjectId,
+} from "mongodb";
+
+import {
+  randomUUID,
+} from "node:crypto";
 
 import clientPromise from "@/lib/mongodb";
 
@@ -38,43 +65,42 @@ import {
 ========================================================= */
 
 const DB_NAME =
-  process.env.MONGODB_DB || "geo-shua";
+  process.env.MONGODB_DB ||
+  "geo-shua";
 
 const ACCOUNT_COLLECTION =
-  "savings_accounts";
+  "savingsAccounts";
 
 const TRANSACTION_COLLECTION =
   "savings_transactions";
 
-const DEFAULT_PAGE = 1;
-const DEFAULT_LIMIT = 25;
-const MAX_LIMIT = 100;
+const DEFAULT_PAGE =
+  1;
+
+const DEFAULT_LIMIT =
+  25;
+
+const MAX_LIMIT =
+  100;
 
 /* =========================================================
-   MONGODB DOCUMENT TYPES
+   DATABASE DOCUMENT TYPES
 ========================================================= */
 
-/**
- * We use the application's string ID as MongoDB _id.
- *
- * This avoids maintaining two different identities for the
- * same financial record.
- *
- * Example:
- *
- * application:
- *   id = "550e8400-e29b-41d4-a716-446655440000"
- *
- * MongoDB:
- *   _id = "550e8400-e29b-41d4-a716-446655440000"
- */
 type SavingsAccountDocument =
-  Omit<SavingsAccount, "id"> & {
-    _id: string;
+  Omit<
+    SavingsAccount,
+    "id" | "memberId"
+  > & {
+    _id: ObjectId;
+    memberId: ObjectId;
   };
 
 type SavingsTransactionDocument =
-  Omit<SavingsTransaction, "id"> & {
+  Omit<
+    SavingsTransaction,
+    "id"
+  > & {
     _id: string;
   };
 
@@ -85,11 +111,8 @@ type SavingsTransactionDocument =
 export type GetSavingsTransactionsOptions = {
   page?: number;
   limit?: number;
-
   memberId?: string;
   savingsAccountId?: string;
-  saccoId?: string;
-
   type?: SavingsTransaction["type"];
   source?: SavingsTransaction["source"];
   status?: SavingsTransaction["status"];
@@ -97,66 +120,52 @@ export type GetSavingsTransactionsOptions = {
 
 export type PaginatedSavingsTransactions = {
   transactions: SavingsTransaction[];
-
   total: number;
-
   page: number;
-
   limit: number;
-
   totalPages: number;
 };
 
 export type CreateSavingsDepositInput = {
   savingsAccountId: string;
-
   memberId: string;
-
-  saccoId: string;
-
   memberName: string;
-
-  saccoName: string;
-
   amount: number;
-
   source: SavingsTransaction["source"];
-
   reference?: string;
-
   smsId?: string;
-
   sourceReference?: string;
-
   transactionAt?: string;
-
   recordedBy?: SavingsTransaction["recordedBy"];
 };
 
 export type CreateSavingsAdjustmentInput = {
   originalTransactionId: string;
-
   amount: number;
-
   reason: string;
-
   recordedBy?: SavingsTransaction["recordedBy"];
 };
 
 export type ReverseSavingsTransactionInput = {
   transactionId: string;
-
   reason: string;
-
   recordedBy?: SavingsTransaction["recordedBy"];
 };
 
 /* =========================================================
-   DATABASE HELPERS
+   INDEX INITIALIZATION
+========================================================= */
+
+let indexesPromise:
+  Promise<void> | null = null;
+
+/* =========================================================
+   DATABASE
 ========================================================= */
 
 async function getDatabase() {
-  const client = await clientPromise;
+  const client =
+    await clientPromise;
 
   return client.db(DB_NAME);
 }
@@ -164,7 +173,8 @@ async function getDatabase() {
 async function getAccountCollection(): Promise<
   Collection<SavingsAccountDocument>
 > {
-  const db = await getDatabase();
+  const db =
+    await getDatabase();
 
   return db.collection<SavingsAccountDocument>(
     ACCOUNT_COLLECTION
@@ -174,7 +184,8 @@ async function getAccountCollection(): Promise<
 async function getTransactionCollection(): Promise<
   Collection<SavingsTransactionDocument>
 > {
-  const db = await getDatabase();
+  const db =
+    await getDatabase();
 
   return db.collection<SavingsTransactionDocument>(
     TRANSACTION_COLLECTION
@@ -190,18 +201,28 @@ function getFirstValidationError(
 ): string {
   return (
     Object.values(errors)[0] ||
-    "Invalid savings data"
+    "Invalid savings data."
   );
 }
 
 function isDuplicateKeyError(
   error: unknown
 ): boolean {
+  if (
+    typeof error !== "object" ||
+    error === null
+  ) {
+    return false;
+  }
+
+  if (!("code" in error)) {
+    return false;
+  }
+
   return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === 11000
+    (error as {
+      code?: unknown;
+    }).code === 11000
   );
 }
 
@@ -219,6 +240,128 @@ function requireNonEmpty(
   return value.trim();
 }
 
+function requireFiniteNumber(
+  value: number,
+  message: string
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value)
+  ) {
+    throw new Error(message);
+  }
+
+  return value;
+}
+
+function requirePositiveNumber(
+  value: number,
+  message: string
+): number {
+  const number =
+    requireFiniteNumber(
+      value,
+      message
+    );
+
+  if (number <= 0) {
+    throw new Error(message);
+  }
+
+  return number;
+}
+
+function requireNonZeroNumber(
+  value: number,
+  message: string
+): number {
+  const number =
+    requireFiniteNumber(
+      value,
+      message
+    );
+
+  if (number === 0) {
+    throw new Error(message);
+  }
+
+  return number;
+}
+
+/* =========================================================
+   OBJECT ID
+========================================================= */
+
+function requireObjectId(
+  value: string,
+  message: string
+): ObjectId {
+  const clean =
+    requireNonEmpty(
+      value,
+      message
+    );
+
+  if (!ObjectId.isValid(clean)) {
+    throw new Error(message);
+  }
+
+  return new ObjectId(clean);
+}
+
+/* =========================================================
+   DATE
+========================================================= */
+
+function normalizeTransactionDate(
+  value: string | undefined,
+  fallback: string
+): string {
+  if (
+    typeof value !== "string" ||
+    !value.trim()
+  ) {
+    return fallback;
+  }
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    throw new Error(
+      "Transaction date must be a valid date."
+    );
+  }
+
+  return date.toISOString();
+}
+
+/* =========================================================
+   STATUS HELPERS
+========================================================= */
+
+function isConfirmedStatus(
+  status: SavingsTransaction["status"]
+): boolean {
+  return status === "confirmed";
+}
+
+function isPendingStatus(
+  status: SavingsTransaction["status"]
+): boolean {
+  return status === "pending";
+}
+
+function isReversedStatus(
+  status: SavingsTransaction["status"]
+): boolean {
+  return status === "reversed";
+}
+
 /* =========================================================
    DOCUMENT CONVERSION
 ========================================================= */
@@ -228,12 +371,28 @@ function toSavingsAccount(
 ): SavingsAccount {
   const {
     _id,
+    memberId,
     ...data
   } = document;
 
   return {
     ...data,
-    id: _id,
+
+    id:
+      _id.toHexString(),
+
+    memberId:
+      memberId.toHexString(),
+
+    /*
+     * Existing accounts may have been created before
+     * isActive became part of the schema.
+     */
+    isActive:
+      typeof document.isActive ===
+        "boolean"
+        ? document.isActive
+        : document.status === "active",
   };
 }
 
@@ -251,166 +410,469 @@ function toSavingsTransaction(
   };
 }
 
+function toSavingsTransactionDocument(
+  transaction: SavingsTransaction
+): SavingsTransactionDocument {
+  return {
+    _id:
+      transaction.id,
+
+    savingsAccountId:
+      transaction.savingsAccountId,
+
+    memberId:
+      transaction.memberId,
+
+    memberName:
+      transaction.memberName,
+
+    amount:
+      transaction.amount,
+
+    type:
+      transaction.type,
+
+    source:
+      transaction.source,
+
+    status:
+      transaction.status,
+
+    ...(transaction.reference
+      ? {
+          reference:
+            transaction.reference,
+        }
+      : {}),
+
+    ...(transaction.smsId
+      ? {
+          smsId:
+            transaction.smsId,
+        }
+      : {}),
+
+    ...(transaction.sourceReference
+      ? {
+          sourceReference:
+            transaction.sourceReference,
+        }
+      : {}),
+
+    ...(transaction.relatedTransactionId
+      ? {
+          relatedTransactionId:
+            transaction.relatedTransactionId,
+        }
+      : {}),
+
+    ...(transaction.reason
+      ? {
+          reason:
+            transaction.reason,
+        }
+      : {}),
+
+    ...(transaction.recordedBy
+      ? {
+          recordedBy:
+            transaction.recordedBy,
+        }
+      : {}),
+
+    transactionAt:
+      transaction.transactionAt,
+
+    createdAt:
+      transaction.createdAt,
+
+    updatedAt:
+      transaction.updatedAt,
+
+    synced:
+      transaction.synced,
+  };
+}
+
 /* =========================================================
-   INDEXES
+   INDEX HELPERS
 ========================================================= */
 
 /**
- * Create all indexes required by the savings ledger.
+ * Compare index key specifications only.
  *
- * MongoDB createIndex is idempotent.
+ * Example:
+ *
+ * { memberId: 1 }
+ *
+ * equals:
+ *
+ * { memberId: 1 }
  */
-async function ensureIndexes(): Promise<void> {
-  const accounts =
-    await getAccountCollection();
+function sameIndexKeys(
+  a: Document,
+  b: Document
+): boolean {
+  const aKeys =
+    Object.keys(a);
 
-  const transactions =
-    await getTransactionCollection();
+  const bKeys =
+    Object.keys(b);
 
-  /**
-   * One fixed savings account per member
-   * within a SACCO.
-   */
-  await accounts.createIndex(
-    {
-      saccoId: 1,
-      memberId: 1,
-    },
-    {
-      unique: true,
-      name:
-        "unique_sacco_member_savings_account",
+  if (
+    aKeys.length !==
+    bKeys.length
+  ) {
+    return false;
+  }
+
+  for (const key of aKeys) {
+    if (
+      a[key] !==
+      b[key]
+    ) {
+      return false;
     }
-  );
+  }
 
-  /**
-   * Account transaction history.
+  return true;
+}
+
+/**
+ * Ensure an index exists.
+ *
+ * IMPORTANT:
+ * ---------------------------------------------------------
+ * Existing installations may contain older indexes.
+ *
+ * If an old index has the SAME key pattern but:
+ *
+ *   - a different name
+ *   - different uniqueness
+ *
+ * we migrate ONLY the index.
+ *
+ * Financial documents are NEVER touched.
+ *
+ * This specifically handles legacy indexes such as:
+ *
+ * related_transaction_lookup
+ *
+ * which may currently be:
+ *
+ * {
+ *   relatedTransactionId: 1,
+ *   type: 1
+ * }
+ *
+ * but non-unique.
+ */
+async function ensureIndex<T extends Document>(
+  collection: Collection<T>,
+  keys: IndexDescription["key"],
+  options: CreateIndexesOptions
+): Promise<void> {
+  const existingIndexes =
+    await collection
+      .listIndexes()
+      .toArray();
+
+  const sameKeyIndexes =
+    existingIndexes.filter(
+      (index) =>
+        index.key &&
+        sameIndexKeys(
+          index.key,
+          keys
+        )
+    );
+
+  /*
+   * Find an exact compatible index.
    */
-  await transactions.createIndex(
-    {
-      savingsAccountId: 1,
-      transactionAt: -1,
-      _id: -1,
-    },
-    {
-      name: "account_transaction_history",
-    }
-  );
+  const compatible =
+    sameKeyIndexes.find(
+      (index) => {
+        const uniqueRequired =
+          options.unique === true;
 
-  /**
-   * Member transaction history.
-   */
-  await transactions.createIndex(
-    {
-      saccoId: 1,
-      memberId: 1,
-      transactionAt: -1,
-      _id: -1,
-    },
-    {
-      name: "member_transaction_history",
-    }
-  );
+        const uniqueExisting =
+          index.unique === true;
 
-  /**
-   * SACCO transaction history.
-   */
-  await transactions.createIndex(
-    {
-      saccoId: 1,
-      transactionAt: -1,
-      _id: -1,
-    },
-    {
-      name: "sacco_transaction_history",
-    }
-  );
+        return (
+          uniqueRequired ===
+          uniqueExisting
+        );
+      }
+    );
 
-  /**
-   * Prevent duplicate external references.
+  if (compatible) {
+    return;
+  }
+
+  /*
+   * An equivalent key exists but its properties do not
+   * satisfy the required definition.
    *
-   * A reference is unique within:
-   *
-   * SACCO + source + reference
+   * Remove ONLY the conflicting index.
    */
-  await transactions.createIndex(
-    {
-      saccoId: 1,
-      source: 1,
-      reference: 1,
-    },
-    {
-      unique: true,
-
-      partialFilterExpression: {
-        reference: {
-          $exists: true,
-          $type: "string",
-        },
-      },
-
-      name:
-        "unique_external_savings_reference",
+  for (
+    const conflicting of sameKeyIndexes
+  ) {
+    /*
+     * Never attempt to drop MongoDB's _id index.
+     */
+    if (
+      conflicting.name ===
+      "_id_"
+    ) {
+      continue;
     }
-  );
 
-  /**
-   * Prevent the same SMS from creating multiple
-   * savings transactions within a SACCO.
+    if (
+      conflicting.name
+    ) {
+      await collection.dropIndex(
+        conflicting.name
+      );
+    }
+  }
+
+  /*
+   * Now create the required index.
    */
-  await transactions.createIndex(
-    {
-      saccoId: 1,
-      smsId: 1,
-    },
-    {
-      unique: true,
-
-      partialFilterExpression: {
-        smsId: {
-          $exists: true,
-          $type: "string",
-        },
-      },
-
-      name: "unique_savings_sms",
-    }
-  );
-
-  /**
-   * Find adjustments/reversals related to an
-   * original transaction quickly.
-   */
-  await transactions.createIndex(
-    {
-      relatedTransactionId: 1,
-      type: 1,
-    },
-    {
-      name:
-        "related_transaction_lookup",
-    }
+  await collection.createIndex(
+    keys,
+    options
   );
 }
 
 /* =========================================================
-   TRANSACTIONAL BALANCE CALCULATION
+   INDEXES
 ========================================================= */
 
-/**
- * Calculate the authoritative savings balance
- * from the transaction ledger.
- *
- * IMPORTANT:
- *
- * A reversed original transaction is excluded because
- * its replacement reversal transaction carries the
- * opposite financial effect.
- */
+async function ensureIndexes(): Promise<void> {
+  if (indexesPromise) {
+    return indexesPromise;
+  }
+
+  indexesPromise =
+    (async () => {
+      const accounts =
+        await getAccountCollection();
+
+      const transactions =
+        await getTransactionCollection();
+
+      /* =====================================================
+         SAVINGS ACCOUNT INDEXES
+      ===================================================== */
+
+      /*
+       * ONE MEMBER = ONE SAVINGS ACCOUNT
+       */
+      await ensureIndex(
+        accounts,
+        {
+          memberId: 1,
+        },
+        {
+          unique: true,
+          name:
+            "unique_member_savings_account",
+        }
+      );
+
+      /*
+       * UNIQUE SAVINGS ACCOUNT NUMBER
+       */
+      await ensureIndex(
+        accounts,
+        {
+          accountNumber: 1,
+        },
+        {
+          unique: true,
+          name:
+            "unique_savings_account_number",
+        }
+      );
+
+      /* =====================================================
+         TRANSACTION INDEXES
+      ===================================================== */
+
+      /*
+       * ACCOUNT HISTORY
+       */
+      await ensureIndex(
+        transactions,
+        {
+          savingsAccountId: 1,
+          transactionAt: -1,
+          _id: -1,
+        },
+        {
+          name:
+            "account_transaction_history",
+        }
+      );
+
+      /*
+       * MEMBER HISTORY
+       *
+       * IMPORTANT:
+       *
+       * Older versions of the system used:
+       *
+       * {
+       *   saccoId: 1,
+       *   memberId: 1,
+       *   transactionAt: -1,
+       *   _id: -1
+       * }
+       *
+       * Savings no longer has saccoId.
+       *
+       * Because the old index has a DIFFERENT key pattern,
+       * ensureIndex cannot identify it as equivalent.
+       *
+       * The new correct index is created here.
+       *
+       * The legacy index can safely remain temporarily because
+       * it does not alter financial data.
+       */
+      await ensureIndex(
+        transactions,
+        {
+          memberId: 1,
+          transactionAt: -1,
+          _id: -1,
+        },
+        {
+          name:
+            "member_transaction_history",
+        }
+      );
+
+      /*
+       * EXTERNAL REFERENCE IDEMPOTENCY
+       */
+      await ensureIndex(
+        transactions,
+        {
+          source: 1,
+          reference: 1,
+        },
+        {
+          unique: true,
+
+          partialFilterExpression: {
+            reference: {
+              $exists: true,
+              $type: "string",
+            },
+          },
+
+          name:
+            "unique_external_savings_reference",
+        }
+      );
+
+      /*
+       * SMS IDEMPOTENCY
+       */
+      await ensureIndex(
+        transactions,
+        {
+          smsId: 1,
+        },
+        {
+          unique: true,
+
+          partialFilterExpression: {
+            smsId: {
+              $exists: true,
+              $type: "string",
+            },
+          },
+
+          name:
+            "unique_savings_sms",
+        }
+      );
+
+      /*
+       * ONE DIRECT ACTION PER ORIGINAL
+       *
+       * Exactly one:
+       *
+       *   adjustment
+       *
+       * OR
+       *
+       *   reversal
+       *
+       * for each original transaction.
+       *
+       * This also fixes the legacy:
+       *
+       * related_transaction_lookup
+       *
+       * index if it exists with the same key pattern but
+       * without unique:true.
+       */
+      await ensureIndex(
+        transactions,
+        {
+          relatedTransactionId: 1,
+          type: 1,
+        },
+        {
+          unique: true,
+
+          partialFilterExpression: {
+            relatedTransactionId: {
+              $exists: true,
+              $type: "string",
+            },
+
+            type: {
+              $in: [
+                "adjustment",
+                "reversal",
+              ],
+            },
+          },
+
+          name:
+            "unique_related_savings_action",
+        }
+      );
+    })();
+
+  try {
+    await indexesPromise;
+  } catch (error) {
+    indexesPromise = null;
+    throw error;
+  }
+}
+
+/* =========================================================
+   AUTHORITATIVE LEDGER BALANCE
+========================================================= */
+
 async function calculateLedgerBalance(
   savingsAccountId: string,
   session?: ClientSession
 ): Promise<number> {
+  const cleanId =
+    requireNonEmpty(
+      savingsAccountId,
+      "Savings account ID is required."
+    );
+
   const transactions =
     await getTransactionCollection();
 
@@ -423,9 +885,22 @@ async function calculateLedgerBalance(
         [
           {
             $match: {
-              savingsAccountId,
+              savingsAccountId:
+                cleanId,
+
+              /*
+               * Pending transactions do not affect balance.
+               *
+               * Reversal transactions contain the exact opposite
+               * amount of the original.
+               *
+               * Therefore:
+               *
+               * original + reversal = 0
+               */
               status: {
-                $ne: "reversed",
+                $ne:
+                  "pending",
               },
             },
           },
@@ -435,7 +910,8 @@ async function calculateLedgerBalance(
               _id: null,
 
               balance: {
-                $sum: "$amount",
+                $sum:
+                  "$amount",
               },
             },
           },
@@ -446,69 +922,176 @@ async function calculateLedgerBalance(
       )
       .toArray();
 
-  return result[0]?.balance ?? 0;
+  return (
+    result[0]?.balance ??
+    0
+  );
 }
 
-/**
- * Update the cached balance.
- *
- * The ledger remains authoritative.
- */
+/* =========================================================
+   ACCOUNT LOCK / SERIALIZATION
+========================================================= */
+
+async function lockSavingsAccount(
+  savingsAccountId: string,
+  session: ClientSession
+): Promise<SavingsAccountDocument> {
+  const accountObjectId =
+    requireObjectId(
+      savingsAccountId,
+      "Invalid savings account ID."
+    );
+
+  const accounts =
+    await getAccountCollection();
+
+  const account =
+    await accounts.findOne(
+      {
+        _id:
+          accountObjectId,
+      },
+      {
+        session,
+      }
+    );
+
+  if (!account) {
+    throw new Error(
+      "Savings account not found."
+    );
+  }
+
+  /*
+   * Touch the account inside the transaction.
+   *
+   * This makes the account document the serialization point
+   * for concurrent financial mutations.
+   */
+  const lockResult =
+    await accounts.updateOne(
+      {
+        _id:
+          accountObjectId,
+      },
+      {
+        $set: {
+          updatedAt:
+            new Date().toISOString(),
+        },
+      },
+      {
+        session,
+      }
+    );
+
+  if (
+    lockResult.matchedCount !==
+    1
+  ) {
+    throw new Error(
+      "Savings account could not be locked."
+    );
+  }
+
+  return account;
+}
+
+/* =========================================================
+   UPDATE CACHED BALANCE
+========================================================= */
+
 async function updateCachedAccountBalance(
   savingsAccountId: string,
-  session?: ClientSession
+  session: ClientSession
 ): Promise<number> {
+  const accountObjectId =
+    requireObjectId(
+      savingsAccountId,
+      "Invalid savings account ID."
+    );
+
+  const accounts =
+    await getAccountCollection();
+
   const balance =
     await calculateLedgerBalance(
       savingsAccountId,
       session
     );
 
-  const accounts =
-    await getAccountCollection();
-
-  await accounts.updateOne(
-    {
-      _id: savingsAccountId,
-    },
-    {
-      $set: {
-        balance,
-
-        updatedAt:
-          new Date().toISOString(),
+  const result =
+    await accounts.updateOne(
+      {
+        _id:
+          accountObjectId,
       },
-    },
-    {
-      session,
-    }
-  );
+      {
+        $set: {
+          balance,
+
+          updatedAt:
+            new Date().toISOString(),
+        },
+      },
+      {
+        session,
+      }
+    );
+
+  if (
+    result.matchedCount !==
+    1
+  ) {
+    throw new Error(
+      "Savings account cached balance could not be updated."
+    );
+  }
 
   return balance;
 }
 
 /* =========================================================
-   GET SAVINGS ACCOUNT
+   ACCOUNT OWNERSHIP
 ========================================================= */
 
-/**
- * Find the fixed savings account belonging
- * to a member.
- */
+function validateAccountOwnership(
+  account: SavingsAccountDocument,
+  memberId: string
+): void {
+  if (
+    account.memberId.toHexString() !==
+    memberId
+  ) {
+    throw new Error(
+      "Savings account does not belong to this member."
+    );
+  }
+
+  const isActive =
+    typeof account.isActive ===
+      "boolean"
+      ? account.isActive
+      : account.status === "active";
+
+  if (!isActive) {
+    throw new Error(
+      "Savings account is inactive."
+    );
+  }
+}
+
+/* =========================================================
+   GET ACCOUNT BY MEMBER
+========================================================= */
+
 export async function getSavingsAccount(
-  saccoId: string,
   memberId: string
 ): Promise<SavingsAccount | null> {
-  const cleanSaccoId =
-    requireNonEmpty(
-      saccoId,
-      "SACCO ID is required"
-    );
-
-  const cleanMemberId =
-    requireNonEmpty(
+  const memberObjectId =
+    requireObjectId(
       memberId,
-      "Member ID is required"
+      "Invalid member ID."
     );
 
   await ensureIndexes();
@@ -518,15 +1101,17 @@ export async function getSavingsAccount(
 
   const account =
     await collection.findOne({
-      saccoId: cleanSaccoId,
-      memberId: cleanMemberId,
+      memberId:
+        memberObjectId,
     });
 
   if (!account) {
     return null;
   }
 
-  return toSavingsAccount(account);
+  return toSavingsAccount(
+    account
+  );
 }
 
 /* =========================================================
@@ -536,67 +1121,10 @@ export async function getSavingsAccount(
 export async function getSavingsAccountById(
   id: string
 ): Promise<SavingsAccount | null> {
-  const cleanId =
-    requireNonEmpty(
+  const accountObjectId =
+    requireObjectId(
       id,
-      "Savings account ID is required"
-    );
-
-  const collection =
-    await getAccountCollection();
-
-  const account =
-    await collection.findOne({
-      _id: cleanId,
-    });
-
-  if (!account) {
-    return null;
-  }
-
-  return toSavingsAccount(account);
-}
-
-/* =========================================================
-   CREATE / GET ACCOUNT
-========================================================= */
-
-/**
- * Get an existing fixed savings account or create one.
- *
- * This operation is idempotent.
- */
-export async function getOrCreateSavingsAccount(
-  data: Pick<
-    SavingsAccount,
-    | "memberId"
-    | "saccoId"
-    | "memberName"
-    | "saccoName"
-  >
-): Promise<SavingsAccount> {
-  const memberId =
-    requireNonEmpty(
-      data.memberId,
-      "Member ID is required"
-    );
-
-  const saccoId =
-    requireNonEmpty(
-      data.saccoId,
-      "SACCO ID is required"
-    );
-
-  const memberName =
-    requireNonEmpty(
-      data.memberName,
-      "Member name is required"
-    );
-
-  const saccoName =
-    requireNonEmpty(
-      data.saccoName,
-      "SACCO name is required"
+      "Invalid savings account ID."
     );
 
   await ensureIndexes();
@@ -604,50 +1132,171 @@ export async function getOrCreateSavingsAccount(
   const collection =
     await getAccountCollection();
 
-  /**
-   * First attempt to find the account.
-   */
-  const existing =
+  const account =
     await collection.findOne({
-      saccoId,
-      memberId,
+      _id:
+        accountObjectId,
     });
 
+  if (!account) {
+    return null;
+  }
+
+  return toSavingsAccount(
+    account
+  );
+}
+
+/* =========================================================
+   GET OR CREATE ACCOUNT
+========================================================= */
+
+export async function getOrCreateSavingsAccount(
+  data: Pick<
+    SavingsAccount,
+    "memberId" | "memberName"
+  >,
+  session?: ClientSession
+): Promise<SavingsAccount> {
+  const memberId =
+    requireNonEmpty(
+      data.memberId,
+      "Member ID is required."
+    );
+
+  const memberName =
+    requireNonEmpty(
+      data.memberName,
+      "Member name is required."
+    );
+
+  const memberObjectId =
+    requireObjectId(
+      memberId,
+      "Invalid member ID."
+    );
+
+  await ensureIndexes();
+
+  const collection =
+    await getAccountCollection();
+
+  /*
+   * First check for an existing account.
+   */
+  const existing =
+    await collection.findOne(
+      {
+        memberId:
+          memberObjectId,
+      },
+      {
+        session,
+      }
+    );
+
   if (existing) {
-    /**
-     * We deliberately do not silently overwrite
-     * historical account information.
-     *
-     * Member/SACCO names are cached display values.
-     */
-    return toSavingsAccount(existing);
+    return toSavingsAccount(
+      existing
+    );
   }
 
   const now =
     new Date().toISOString();
 
-  const account: SavingsAccount = {
-    id: crypto.randomUUID(),
+  /*
+   * Find the highest existing SAV number.
+   */
+  const latestAccount =
+    await collection
+      .find({
+        accountNumber: {
+          $regex:
+            /^SAV-\d+$/i,
+        },
+      })
+      .sort({
+        accountNumber:
+          -1,
+      })
+      .limit(1)
+      .next();
+
+  let nextNumber =
+    1;
+
+  if (
+    latestAccount?.accountNumber
+  ) {
+    const match =
+      latestAccount.accountNumber.match(
+        /^SAV-(\d+)$/i
+      );
+
+    if (match?.[1]) {
+      const parsed =
+        Number(match[1]);
+
+      if (
+        Number.isSafeInteger(
+          parsed
+        ) &&
+        parsed >= 1
+      ) {
+        nextNumber =
+          parsed + 1;
+      }
+    }
+  }
+
+  const accountNumber =
+    `SAV-${String(
+      nextNumber
+    ).padStart(
+      6,
+      "0"
+    )}`;
+
+  const accountObjectId =
+    new ObjectId();
+
+  const account:
+    SavingsAccount = {
+    id:
+      accountObjectId.toHexString(),
 
     memberId,
 
-    saccoId,
-
     memberName,
 
-    saccoName,
+    accountNumber,
 
-    balance: 0,
+    accountType:
+      "fixed",
 
-    isActive: true,
+    balance:
+      0,
 
-    createdAt: now,
+    status:
+      "active",
 
-    updatedAt: now,
+    isActive:
+      true,
+
+    createdAt:
+      now,
+
+    updatedAt:
+      now,
+
+    createdBy:
+      "system",
   };
 
   const validation =
-    validateSavingsAccount(account);
+    validateSavingsAccount(
+      account
+    );
 
   if (!validation.valid) {
     throw new Error(
@@ -659,55 +1308,65 @@ export async function getOrCreateSavingsAccount(
 
   const document:
     SavingsAccountDocument = {
-    _id: account.id,
+    _id:
+      accountObjectId,
 
     memberId:
-      account.memberId,
+      memberObjectId,
 
-    saccoId:
-      account.saccoId,
+    memberName,
 
-    memberName:
-      account.memberName,
+    accountNumber,
 
-    saccoName:
-      account.saccoName,
+    accountType:
+      "fixed",
 
     balance:
-      account.balance,
+      0,
+
+    status:
+      "active",
 
     isActive:
-      account.isActive,
+      true,
 
     createdAt:
-      account.createdAt,
+      now,
 
     updatedAt:
-      account.updatedAt,
+      now,
+
+    createdBy:
+      "system",
   };
 
   try {
     await collection.insertOne(
-      document
+      document,
+      {
+        session,
+      }
     );
 
     return account;
   } catch (error) {
-    /**
-     * Another request may have created the
-     * same fixed account between findOne
-     * and insertOne.
+    /*
+     * Outside an existing transaction we can safely recover
+     * from a concurrent creation of the same member account.
      */
-    if (isDuplicateKeyError(error)) {
-      const existing =
+    if (
+      isDuplicateKeyError(error) &&
+      !session
+    ) {
+      const concurrent =
         await collection.findOne({
-          saccoId,
-          memberId,
+          memberId:
+            memberObjectId,
         });
 
-      if (existing) {
+      if (concurrent) {
         return toSavingsAccount(
-          existing
+          concurrent
         );
       }
     }
@@ -717,7 +1376,7 @@ export async function getOrCreateSavingsAccount(
 }
 
 /* =========================================================
-   GET TRANSACTION BY ID
+   GET TRANSACTION
 ========================================================= */
 
 export async function getSavingsTransactionById(
@@ -726,15 +1385,18 @@ export async function getSavingsTransactionById(
   const cleanId =
     requireNonEmpty(
       id,
-      "Transaction ID is required"
+      "Transaction ID is required."
     );
+
+  await ensureIndexes();
 
   const collection =
     await getTransactionCollection();
 
   const transaction =
     await collection.findOne({
-      _id: cleanId,
+      _id:
+        cleanId,
     });
 
   if (!transaction) {
@@ -747,33 +1409,32 @@ export async function getSavingsTransactionById(
 }
 
 /* =========================================================
-   FIND DUPLICATE EXTERNAL TRANSACTION
+   FIND EXTERNAL DUPLICATE
 ========================================================= */
 
 async function findExistingExternalTransaction(
   data: {
-    saccoId: string;
-    source: SavingsTransaction["source"];
+    source:
+      SavingsTransaction["source"];
+
     reference?: string;
+
     smsId?: string;
+
     session?: ClientSession;
   }
 ): Promise<SavingsTransaction | null> {
   const collection =
     await getTransactionCollection();
 
-  /**
-   * SMS ID is the strongest source identity.
-   */
-  if (data.smsId?.trim()) {
+  const smsId =
+    data.smsId?.trim();
+
+  if (smsId) {
     const existing =
       await collection.findOne(
         {
-          saccoId:
-            data.saccoId,
-
-          smsId:
-            data.smsId.trim(),
+          smsId,
         },
         {
           session:
@@ -788,21 +1449,17 @@ async function findExistingExternalTransaction(
     }
   }
 
-  /**
-   * External transaction reference.
-   */
-  if (data.reference?.trim()) {
+  const reference =
+    data.reference?.trim();
+
+  if (reference) {
     const existing =
       await collection.findOne(
         {
-          saccoId:
-            data.saccoId,
-
           source:
             data.source,
 
-          reference:
-            data.reference.trim(),
+          reference,
         },
         {
           session:
@@ -821,148 +1478,142 @@ async function findExistingExternalTransaction(
 }
 
 /* =========================================================
-   CREATE DEPOSIT
+   DUPLICATE VALIDATION
 ========================================================= */
 
-/**
- * Record a new savings deposit.
- *
- * A deposit is always a new transaction.
- *
- * No existing transaction is modified.
- */
-export async function createSavingsDeposit(
-  data: CreateSavingsDepositInput
-): Promise<SavingsTransaction> {
-  await ensureIndexes();
-
-  const savingsAccountId =
-    requireNonEmpty(
-      data.savingsAccountId,
-      "Savings account ID is required"
-    );
-
-  const memberId =
-    requireNonEmpty(
-      data.memberId,
-      "Member ID is required"
-    );
-
-  const saccoId =
-    requireNonEmpty(
-      data.saccoId,
-      "SACCO ID is required"
-    );
-
-  const memberName =
-    requireNonEmpty(
-      data.memberName,
-      "Member name is required"
-    );
-
-  const saccoName =
-    requireNonEmpty(
-      data.saccoName,
-      "SACCO name is required"
-    );
-
-  /**
-   * Get the fixed account.
-   */
-  const account =
-    await getSavingsAccountById(
-      savingsAccountId
-    );
-
-  if (!account) {
-    throw new Error(
-      "Savings account not found."
-    );
+function assertDuplicateMatchesRequest(
+  existing: SavingsTransaction,
+  requested: {
+    savingsAccountId: string;
+    memberId: string;
+    amount: number;
+    source:
+      SavingsTransaction["source"];
+    reference?: string;
+    smsId?: string;
   }
+): void {
+  const sameAccount =
+    existing.savingsAccountId ===
+    requested.savingsAccountId;
 
-  /**
-   * Verify ownership.
-   */
+  const sameMember =
+    existing.memberId ===
+    requested.memberId;
+
+  const sameAmount =
+    existing.amount ===
+    requested.amount;
+
+  const sameSource =
+    existing.source ===
+    requested.source;
+
+  const sameReference =
+    !requested.reference ||
+    existing.reference ===
+      requested.reference;
+
+  const sameSmsId =
+    !requested.smsId ||
+    existing.smsId ===
+      requested.smsId;
+
   if (
-    account.memberId !==
-    memberId
+    !sameAccount ||
+    !sameMember ||
+    !sameAmount ||
+    !sameSource ||
+    !sameReference ||
+    !sameSmsId
   ) {
     throw new Error(
-      "Savings account does not belong to this member."
+      "Duplicate external transaction identifier conflicts with an existing savings transaction."
     );
   }
+}
 
-  /**
-   * Verify SACCO ownership.
-   */
-  if (
-    account.saccoId !==
-    saccoId
-  ) {
-    throw new Error(
-      "Savings account does not belong to this SACCO."
+/* =========================================================
+   BUILD DEPOSIT
+========================================================= */
+
+function buildSavingsDeposit(
+  data: CreateSavingsDepositInput,
+  now: string
+): SavingsTransaction {
+  const transactionAt =
+    normalizeTransactionDate(
+      data.transactionAt,
+      now
     );
-  }
-
-  /**
-   * Inactive accounts cannot receive
-   * new savings deposits.
-   */
-  if (!account.isActive) {
-    throw new Error(
-      "Savings account is inactive."
-    );
-  }
-
-  /**
-   * A deposit must have a positive amount.
-   *
-   * Validation will perform the detailed
-   * monetary checks.
-   */
-  const now =
-    new Date().toISOString();
 
   const transaction:
     SavingsTransaction = {
-    id: crypto.randomUUID(),
+    id:
+      randomUUID(),
 
-    savingsAccountId,
+    savingsAccountId:
+      requireNonEmpty(
+        data.savingsAccountId,
+        "Savings account ID is required."
+      ),
 
-    memberId,
+    memberId:
+      requireNonEmpty(
+        data.memberId,
+        "Member ID is required."
+      ),
 
-    saccoId,
+    memberName:
+      requireNonEmpty(
+        data.memberName,
+        "Member name is required."
+      ),
 
-    memberName,
+    amount:
+      requirePositiveNumber(
+        data.amount,
+        "Savings deposit amount must be greater than zero."
+      ),
 
-    saccoName,
+    type:
+      "deposit",
 
-    amount: data.amount,
+    source:
+      data.source,
 
-    type: "deposit",
+    status:
+      "confirmed",
 
-    source: data.source,
+    ...(data.reference?.trim()
+      ? {
+          reference:
+            data.reference.trim(),
+        }
+      : {}),
 
-    status: "confirmed",
+    ...(data.smsId?.trim()
+      ? {
+          smsId:
+            data.smsId.trim(),
+        }
+      : {}),
 
-    reference:
-      data.reference?.trim() ||
-      undefined,
+    ...(data.sourceReference?.trim()
+      ? {
+          sourceReference:
+            data.sourceReference.trim(),
+        }
+      : {}),
 
-    smsId:
-      data.smsId?.trim() ||
-      undefined,
+    ...(data.recordedBy
+      ? {
+          recordedBy:
+            data.recordedBy,
+        }
+      : {}),
 
-    sourceReference:
-      data.sourceReference?.trim() ||
-      undefined,
-
-    recordedBy:
-      data.recordedBy,
-
-    transactionAt:
-      data.transactionAt ||
-      now,
+    transactionAt,
 
     createdAt:
       now,
@@ -970,7 +1621,8 @@ export async function createSavingsDeposit(
     updatedAt:
       now,
 
-    synced: true,
+    synced:
+      true,
   };
 
   const normalized =
@@ -991,30 +1643,72 @@ export async function createSavingsDeposit(
     );
   }
 
+  return normalized;
+}
+
+/* =========================================================
+   CREATE DEPOSIT
+========================================================= */
+
+export async function createSavingsDeposit(
+  data: CreateSavingsDepositInput
+): Promise<SavingsTransaction> {
+  await ensureIndexes();
+
+  const savingsAccountId =
+    requireNonEmpty(
+      data.savingsAccountId,
+      "Savings account ID is required."
+    );
+
+  const memberId =
+    requireNonEmpty(
+      data.memberId,
+      "Member ID is required."
+    );
+
+  const memberName =
+    requireNonEmpty(
+      data.memberName,
+      "Member name is required."
+    );
+
+  const amount =
+    requirePositiveNumber(
+      data.amount,
+      "Savings deposit amount must be greater than zero."
+    );
+
+  requireObjectId(
+    savingsAccountId,
+    "Invalid savings account ID."
+  );
+
+  requireObjectId(
+    memberId,
+    "Invalid member ID."
+  );
+
+  const now =
+    new Date().toISOString();
+
+  const transaction =
+    buildSavingsDeposit(
+      {
+        ...data,
+        savingsAccountId,
+        memberId,
+        memberName,
+        amount,
+      },
+      now
+    );
+
   const transactions =
     await getTransactionCollection();
 
-  /**
-   * Check duplicates before starting the
-   * transaction.
-   */
-  const duplicate =
-    await findExistingExternalTransaction({
-      saccoId,
-
-      source:
-        normalized.source,
-
-      reference:
-        normalized.reference,
-
-      smsId:
-        normalized.smsId,
-    });
-
-  if (duplicate) {
-    return duplicate;
-  }
+  const accounts =
+    await getAccountCollection();
 
   const client =
     await clientPromise;
@@ -1023,147 +1717,179 @@ export async function createSavingsDeposit(
     client.startSession();
 
   try {
-    let created:
+    let result:
       SavingsTransaction | null =
       null;
 
     await session.withTransaction(
       async () => {
-        /**
-         * Repeat duplicate check inside
-         * the transaction to handle races.
+        /*
+         * 1. IDEMPOTENCY
          */
-        const duplicateInsideTransaction =
+        const duplicate =
           await findExistingExternalTransaction({
-            saccoId,
-
             source:
-              normalized.source,
+              transaction.source,
 
             reference:
-              normalized.reference,
+              transaction.reference,
 
             smsId:
-              normalized.smsId,
+              transaction.smsId,
 
             session,
           });
 
-        if (duplicateInsideTransaction) {
-          created =
-            duplicateInsideTransaction;
+        if (duplicate) {
+          assertDuplicateMatchesRequest(
+            duplicate,
+            {
+              savingsAccountId:
+                transaction.savingsAccountId,
+
+              memberId:
+                transaction.memberId,
+
+              amount:
+                transaction.amount,
+
+              source:
+                transaction.source,
+
+              reference:
+                transaction.reference,
+
+              smsId:
+                transaction.smsId,
+            }
+          );
+
+          result =
+            duplicate;
 
           return;
         }
 
-        const document:
-          SavingsTransactionDocument = {
-          _id:
-            normalized.id,
+        /*
+         * 2. SERIALIZE THROUGH ACCOUNT
+         */
+        const account =
+          await lockSavingsAccount(
+            savingsAccountId,
+            session
+          );
 
-          savingsAccountId:
-            normalized.savingsAccountId,
+        validateAccountOwnership(
+          account,
+          transaction.memberId
+        );
 
-          memberId:
-            normalized.memberId,
-
-          saccoId:
-            normalized.saccoId,
-
-          memberName:
-            normalized.memberName,
-
-          saccoName:
-            normalized.saccoName,
-
-          amount:
-            normalized.amount,
-
-          type:
-            normalized.type,
-
-          source:
-            normalized.source,
-
-          status:
-            normalized.status,
-
-          reference:
-            normalized.reference,
-
-          smsId:
-            normalized.smsId,
-
-          sourceReference:
-            normalized.sourceReference,
-
-          relatedTransactionId:
-            normalized.relatedTransactionId,
-
-          reason:
-            normalized.reason,
-
-          recordedBy:
-            normalized.recordedBy,
-
-          transactionAt:
-            normalized.transactionAt,
-
-          createdAt:
-            normalized.createdAt,
-
-          updatedAt:
-            normalized.updatedAt,
-
-          synced:
-            normalized.synced,
-        };
-
+        /*
+         * 3. APPEND LEDGER ENTRY
+         */
         await transactions.insertOne(
-          document,
+          toSavingsTransactionDocument(
+            transaction
+          ),
           {
             session,
           }
         );
 
-        await updateCachedAccountBalance(
-          savingsAccountId,
-          session
-        );
+        /*
+         * 4. AUTHORITATIVE BALANCE
+         */
+        const balance =
+          await calculateLedgerBalance(
+            savingsAccountId,
+            session
+          );
 
-        created =
-          normalized;
+        /*
+         * 5. UPDATE CACHE
+         */
+        const cacheResult =
+          await accounts.updateOne(
+            {
+              _id:
+                account._id,
+            },
+            {
+              $set: {
+                balance,
+
+                updatedAt:
+                  new Date().toISOString(),
+              },
+            },
+            {
+              session,
+            }
+          );
+
+        if (
+          cacheResult.matchedCount !==
+          1
+        ) {
+          throw new Error(
+            "Savings account balance cache could not be updated."
+          );
+        }
+
+        result =
+          transaction;
       }
     );
 
-    if (!created) {
+    if (!result) {
       throw new Error(
         "Savings deposit could not be created."
       );
     }
 
-    return created;
+    return result;
   } catch (error) {
-    /**
-     * Unique indexes are the final protection
-     * against duplicate financial records.
+    /*
+     * Unique indexes protect against concurrent external
+     * transaction submissions.
      */
     if (isDuplicateKeyError(error)) {
       const duplicate =
         await findExistingExternalTransaction({
-          saccoId,
-
           source:
-            normalized.source,
+            transaction.source,
 
           reference:
-            normalized.reference,
+            transaction.reference,
 
           smsId:
-            normalized.smsId,
+            transaction.smsId,
         });
 
       if (duplicate) {
+        assertDuplicateMatchesRequest(
+          duplicate,
+          {
+            savingsAccountId:
+              transaction.savingsAccountId,
+
+            memberId:
+              transaction.memberId,
+
+            amount:
+              transaction.amount,
+
+            source:
+              transaction.source,
+
+            reference:
+              transaction.reference,
+
+            smsId:
+              transaction.smsId,
+          }
+        );
+
         return duplicate;
       }
     }
@@ -1182,6 +1908,8 @@ export async function getSavingsTransactions(
   options:
     GetSavingsTransactionsOptions = {}
 ): Promise<PaginatedSavingsTransactions> {
+  await ensureIndexes();
+
   const collection =
     await getTransactionCollection();
 
@@ -1192,36 +1920,48 @@ export async function getSavingsTransactions(
     Number(options.limit);
 
   const page =
-    Number.isFinite(requestedPage) &&
+    Number.isFinite(
+      requestedPage
+    ) &&
     requestedPage > 0
-      ? Math.floor(requestedPage)
+      ? Math.floor(
+          requestedPage
+        )
       : DEFAULT_PAGE;
 
   const limit =
-    Number.isFinite(requestedLimit) &&
+    Number.isFinite(
+      requestedLimit
+    ) &&
     requestedLimit > 0
       ? Math.min(
           MAX_LIMIT,
-          Math.floor(requestedLimit)
+          Math.floor(
+            requestedLimit
+          )
         )
       : DEFAULT_LIMIT;
 
   const filter:
-    Record<string, unknown> = {};
+    Filter<SavingsTransactionDocument> =
+    {};
 
-  if (options.memberId) {
+  if (
+    typeof options.memberId ===
+      "string" &&
+    options.memberId.trim()
+  ) {
     filter.memberId =
       options.memberId.trim();
   }
 
-  if (options.savingsAccountId) {
+  if (
+    typeof options.savingsAccountId ===
+      "string" &&
+    options.savingsAccountId.trim()
+  ) {
     filter.savingsAccountId =
       options.savingsAccountId.trim();
-  }
-
-  if (options.saccoId) {
-    filter.saccoId =
-      options.saccoId.trim();
   }
 
   if (options.type) {
@@ -1270,7 +2010,8 @@ export async function getSavingsTransactions(
     );
 
   const skip =
-    (safePage - 1) * limit;
+    (safePage - 1) *
+    limit;
 
   const transactions =
     await collection
@@ -1291,7 +2032,8 @@ export async function getSavingsTransactions(
 
     total,
 
-    page: safePage,
+    page:
+      safePage,
 
     limit,
 
@@ -1300,29 +2042,18 @@ export async function getSavingsTransactions(
 }
 
 /* =========================================================
-   GET BALANCE
+   AUTHORITATIVE BALANCE
 ========================================================= */
 
-/**
- * Return the authoritative savings balance.
- *
- * This reads directly from the ledger.
- *
- * The cached account.balance is deliberately
- * not used here.
- */
 export async function getSavingsBalance(
   savingsAccountId: string
 ): Promise<number> {
   const cleanId =
     requireNonEmpty(
       savingsAccountId,
-      "Savings account ID is required"
+      "Savings account ID is required."
     );
 
-  /**
-   * Make sure the account exists.
-   */
   const account =
     await getSavingsAccountById(
       cleanId
@@ -1340,16 +2071,121 @@ export async function getSavingsBalance(
 }
 
 /* =========================================================
+   REBUILD CACHED BALANCE
+========================================================= */
+
+export async function rebuildSavingsAccountBalance(
+  savingsAccountId: string
+): Promise<SavingsAccount> {
+  const cleanId =
+    requireNonEmpty(
+      savingsAccountId,
+      "Savings account ID is required."
+    );
+
+  const accountObjectId =
+    requireObjectId(
+      cleanId,
+      "Invalid savings account ID."
+    );
+
+  await ensureIndexes();
+
+  const accounts =
+    await getAccountCollection();
+
+  const client =
+    await clientPromise;
+
+  const session =
+    client.startSession();
+
+  try {
+    let updated:
+      SavingsAccount | null =
+      null;
+
+    await session.withTransaction(
+      async () => {
+        await lockSavingsAccount(
+          cleanId,
+          session
+        );
+
+        const balance =
+          await calculateLedgerBalance(
+            cleanId,
+            session
+          );
+
+        const result =
+          await accounts.updateOne(
+            {
+              _id:
+                accountObjectId,
+            },
+            {
+              $set: {
+                balance,
+
+                updatedAt:
+                  new Date().toISOString(),
+              },
+            },
+            {
+              session,
+            }
+          );
+
+        if (
+          result.matchedCount !==
+          1
+        ) {
+          throw new Error(
+            "Savings account balance could not be rebuilt."
+          );
+        }
+
+        const account =
+          await accounts.findOne(
+            {
+              _id:
+                accountObjectId,
+            },
+            {
+              session,
+            }
+          );
+
+        if (!account) {
+          throw new Error(
+            "Savings account could not be retrieved after rebuilding."
+          );
+        }
+
+        updated =
+          toSavingsAccount(
+            account
+          );
+      }
+    );
+
+    if (!updated) {
+      throw new Error(
+        "Savings account balance could not be rebuilt."
+      );
+    }
+
+    return updated;
+  } finally {
+    await session.endSession();
+  }
+}
+
+/* =========================================================
    CREATE ADJUSTMENT
 ========================================================= */
 
-/**
- * Create a financial adjustment against
- * an existing transaction.
- *
- * The original transaction is never financially
- * modified.
- */
 export async function createSavingsAdjustment(
   data: CreateSavingsAdjustmentInput
 ): Promise<SavingsTransaction> {
@@ -1358,170 +2194,23 @@ export async function createSavingsAdjustment(
   const originalTransactionId =
     requireNonEmpty(
       data.originalTransactionId,
-      "Original transaction ID is required"
+      "Original transaction ID is required."
     );
 
   const reason =
     requireNonEmpty(
       data.reason,
-      "Adjustment reason is required"
+      "Adjustment reason is required."
     );
 
-  /**
-   * Get original transaction.
-   */
-  const original =
-    await getSavingsTransactionById(
-      originalTransactionId
+  const amount =
+    requireNonZeroNumber(
+      data.amount,
+      "Adjustment amount must be a non-zero number."
     );
 
-  if (!original) {
-    throw new Error(
-      "Original savings transaction not found."
-    );
-  }
-
-  /**
-   * A reversed transaction cannot be
-   * adjusted again.
-   */
-  if (
-    original.status ===
-    "reversed"
-  ) {
-    throw new Error(
-      "A reversed transaction cannot be adjusted."
-    );
-  }
-
-  /**
-   * A reversal is itself a correction mechanism.
-   *
-   * We do not create an adjustment against
-   * a reversal.
-   */
-  if (
-    original.type ===
-    "reversal"
-  ) {
-    throw new Error(
-      "A reversal transaction cannot be adjusted."
-    );
-  }
-
-  /**
-   * Confirm the account still exists and
-   * is active.
-   */
-  const account =
-    await getSavingsAccountById(
-      original.savingsAccountId
-    );
-
-  if (!account) {
-    throw new Error(
-      "Savings account not found."
-    );
-  }
-
-  if (!account.isActive) {
-    throw new Error(
-      "Savings account is inactive."
-    );
-  }
-
-  /**
-   * Only one direct adjustment is allowed
-   * against a transaction.
-   *
-   * This prevents repeatedly changing the
-   * financial meaning of the same record.
-   */
   const transactions =
     await getTransactionCollection();
-
-  const existingAdjustment =
-    await transactions.findOne({
-      type: "adjustment",
-
-      relatedTransactionId:
-        original.id,
-    });
-
-  if (existingAdjustment) {
-    throw new Error(
-      "This transaction already has an adjustment."
-    );
-  }
-
-  const now =
-    new Date().toISOString();
-
-  const adjustment:
-    SavingsTransaction = {
-    id: crypto.randomUUID(),
-
-    savingsAccountId:
-      original.savingsAccountId,
-
-    memberId:
-      original.memberId,
-
-    saccoId:
-      original.saccoId,
-
-    memberName:
-      original.memberName,
-
-    saccoName:
-      original.saccoName,
-
-    amount:
-      data.amount,
-
-    type: "adjustment",
-
-    source: "system",
-
-    status: "confirmed",
-
-    relatedTransactionId:
-      original.id,
-
-    reason,
-
-    recordedBy:
-      data.recordedBy,
-
-    transactionAt:
-      now,
-
-    createdAt:
-      now,
-
-    updatedAt:
-      now,
-
-    synced: true,
-  };
-
-  const normalized =
-    normalizeSavingsTransaction(
-      adjustment
-    );
-
-  const validation =
-    validateSavingsTransaction(
-      normalized
-    );
-
-  if (!validation.valid) {
-    throw new Error(
-      getFirstValidationError(
-        validation.errors
-      )
-    );
-  }
 
   const client =
     await clientPromise;
@@ -1536,9 +2225,68 @@ export async function createSavingsAdjustment(
 
     await session.withTransaction(
       async () => {
-        /**
-         * Recheck that another request did not
-         * create an adjustment concurrently.
+        const original =
+          await transactions.findOne(
+            {
+              _id:
+                originalTransactionId,
+            },
+            {
+              session,
+            }
+          );
+
+        if (!original) {
+          throw new Error(
+            "Original savings transaction not found."
+          );
+        }
+
+        if (
+          !isConfirmedStatus(
+            original.status
+          )
+        ) {
+          throw new Error(
+            "Only confirmed transactions can be adjusted."
+          );
+        }
+
+        if (
+          isReversedStatus(
+            original.status
+          )
+        ) {
+          throw new Error(
+            "A reversed transaction cannot be adjusted."
+          );
+        }
+
+        if (
+          original.type !==
+          "deposit"
+        ) {
+          throw new Error(
+            "Only deposit transactions can be adjusted."
+          );
+        }
+
+        /*
+         * Serialize through account.
+         */
+        const account =
+          await lockSavingsAccount(
+            original.savingsAccountId,
+            session
+          );
+
+        validateAccountOwnership(
+          account,
+          original.memberId
+        );
+
+        /*
+         * Check for existing adjustment.
          */
         const existing =
           await transactions.findOne(
@@ -1547,7 +2295,7 @@ export async function createSavingsAdjustment(
                 "adjustment",
 
               relatedTransactionId:
-                original.id,
+                original._id,
             },
             {
               session,
@@ -1560,71 +2308,90 @@ export async function createSavingsAdjustment(
           );
         }
 
-        const document:
-          SavingsTransactionDocument = {
-          _id:
-            normalized.id,
+        const now =
+          new Date().toISOString();
+
+        const adjustment:
+          SavingsTransaction = {
+          id:
+            randomUUID(),
 
           savingsAccountId:
-            normalized.savingsAccountId,
+            original.savingsAccountId,
 
           memberId:
-            normalized.memberId,
-
-          saccoId:
-            normalized.saccoId,
+            original.memberId,
 
           memberName:
-            normalized.memberName,
+            original.memberName,
 
-          saccoName:
-            normalized.saccoName,
-
-          amount:
-            normalized.amount,
+          /*
+           * Signed delta.
+           *
+           * Positive:
+           * increases savings.
+           *
+           * Negative:
+           * decreases savings.
+           */
+          amount,
 
           type:
-            normalized.type,
+            "adjustment",
 
           source:
-            normalized.source,
+            "system",
 
           status:
-            normalized.status,
-
-          reference:
-            normalized.reference,
-
-          smsId:
-            normalized.smsId,
-
-          sourceReference:
-            normalized.sourceReference,
+            "confirmed",
 
           relatedTransactionId:
-            normalized.relatedTransactionId,
+            original._id,
 
-          reason:
-            normalized.reason,
+          reason,
 
-          recordedBy:
-            normalized.recordedBy,
+          ...(data.recordedBy
+            ? {
+                recordedBy:
+                  data.recordedBy,
+              }
+            : {}),
 
           transactionAt:
-            normalized.transactionAt,
+            now,
 
           createdAt:
-            normalized.createdAt,
+            now,
 
           updatedAt:
-            normalized.updatedAt,
+            now,
 
           synced:
-            normalized.synced,
+            true,
         };
 
+        const normalized =
+          normalizeSavingsTransaction(
+            adjustment
+          );
+
+        const validation =
+          validateSavingsTransaction(
+            normalized
+          );
+
+        if (!validation.valid) {
+          throw new Error(
+            getFirstValidationError(
+              validation.errors
+            )
+          );
+        }
+
         await transactions.insertOne(
-          document,
+          toSavingsTransactionDocument(
+            normalized
+          ),
           {
             session,
           }
@@ -1656,28 +2423,6 @@ export async function createSavingsAdjustment(
    REVERSE TRANSACTION
 ========================================================= */
 
-/**
- * Reverse a confirmed financial transaction.
- *
- * The original transaction is preserved.
- *
- * A new reversal transaction is created with
- * the exact opposite financial effect.
- *
- * Example:
- *
- * Original deposit:
- *   +1,000
- *
- * Reversal:
- *   -1,000
- *
- * Original adjustment:
- *   -300
- *
- * Reversal:
- *   +300
- */
 export async function reverseSavingsTransaction(
   data: ReverseSavingsTransactionInput
 ): Promise<SavingsTransaction> {
@@ -1686,173 +2431,17 @@ export async function reverseSavingsTransaction(
   const transactionId =
     requireNonEmpty(
       data.transactionId,
-      "Transaction ID is required"
+      "Transaction ID is required."
     );
 
   const reason =
     requireNonEmpty(
       data.reason,
-      "Reversal reason is required"
+      "Reversal reason is required."
     );
 
-  /**
-   * Get original transaction.
-   */
-  const original =
-    await getSavingsTransactionById(
-      transactionId
-    );
-
-  if (!original) {
-    throw new Error(
-      "Savings transaction not found."
-    );
-  }
-
-  /**
-   * Cannot reverse something already reversed.
-   */
-  if (
-    original.status ===
-    "reversed"
-  ) {
-    throw new Error(
-      "Transaction has already been reversed."
-    );
-  }
-
-  /**
-   * A reversal cannot itself be reversed.
-   *
-   * If a reversal was created incorrectly,
-   * a controlled correction process should be
-   * used rather than creating reversal chains.
-   */
-  if (
-    original.type ===
-    "reversal"
-  ) {
-    throw new Error(
-      "A reversal transaction cannot be reversed."
-    );
-  }
-
-  /**
-   * Confirm account exists.
-   */
-  const account =
-    await getSavingsAccountById(
-      original.savingsAccountId
-    );
-
-  if (!account) {
-    throw new Error(
-      "Savings account not found."
-    );
-  }
-
-  /**
-   * Find any existing reversal.
-   */
   const transactions =
     await getTransactionCollection();
-
-  const existingReversal =
-    await transactions.findOne({
-      type: "reversal",
-
-      relatedTransactionId:
-        original.id,
-    });
-
-  if (existingReversal) {
-    throw new Error(
-      "This transaction has already been reversed."
-    );
-  }
-
-  /**
-   * IMPORTANT:
-   *
-   * The reversal must be the exact opposite
-   * of the original amount.
-   *
-   * Do NOT use Math.abs().
-   *
-   * +1000 -> -1000
-   * -300  -> +300
-   */
-  const reversalAmount =
-    -original.amount;
-
-  const now =
-    new Date().toISOString();
-
-  const reversal:
-    SavingsTransaction = {
-    id: crypto.randomUUID(),
-
-    savingsAccountId:
-      original.savingsAccountId,
-
-    memberId:
-      original.memberId,
-
-    saccoId:
-      original.saccoId,
-
-    memberName:
-      original.memberName,
-
-    saccoName:
-      original.saccoName,
-
-    amount:
-      reversalAmount,
-
-    type: "reversal",
-
-    source: "system",
-
-    status: "confirmed",
-
-    relatedTransactionId:
-      original.id,
-
-    reason,
-
-    recordedBy:
-      data.recordedBy,
-
-    transactionAt:
-      now,
-
-    createdAt:
-      now,
-
-    updatedAt:
-      now,
-
-    synced: true,
-  };
-
-  const normalized =
-    normalizeSavingsTransaction(
-      reversal
-    );
-
-  const validation =
-    validateSavingsTransaction(
-      normalized
-    );
-
-  if (!validation.valid) {
-    throw new Error(
-      getFirstValidationError(
-        validation.errors
-      )
-    );
-  }
 
   const client =
     await clientPromise;
@@ -1867,46 +2456,71 @@ export async function reverseSavingsTransaction(
 
     await session.withTransaction(
       async () => {
-        /**
-         * Re-read the original inside the
-         * transaction.
-         *
-         * This protects against two simultaneous
-         * reversal requests.
-         */
-        const currentOriginal =
+        const original =
           await transactions.findOne(
             {
               _id:
-                original.id,
+                transactionId,
             },
             {
               session,
             }
           );
 
-        if (!currentOriginal) {
+        if (!original) {
           throw new Error(
-            "Original savings transaction no longer exists."
+            "Savings transaction not found."
           );
         }
 
-        /**
-         * If another request already reversed it,
-         * abort this operation.
-         */
         if (
-          currentOriginal.status ===
-          "reversed"
+          isReversedStatus(
+            original.status
+          )
         ) {
           throw new Error(
             "Transaction has already been reversed."
           );
         }
 
-        /**
-         * Check again for an existing reversal
-         * inside the transaction.
+        if (
+          !isConfirmedStatus(
+            original.status
+          )
+        ) {
+          throw new Error(
+            "Only confirmed transactions can be reversed."
+          );
+        }
+
+        /*
+         * Only original deposits may be directly reversed.
+         */
+        if (
+          original.type !==
+          "deposit"
+        ) {
+          throw new Error(
+            "Only deposit transactions can be directly reversed."
+          );
+        }
+
+        /*
+         * Serialize through account.
+         */
+        const account =
+          await lockSavingsAccount(
+            original.savingsAccountId,
+            session
+          );
+
+        validateAccountOwnership(
+          account,
+          original.memberId
+        );
+
+        /*
+         * Check whether reversal already exists.
          */
         const existing =
           await transactions.findOne(
@@ -1915,7 +2529,7 @@ export async function reverseSavingsTransaction(
                 "reversal",
 
               relatedTransactionId:
-                original.id,
+                original._id,
             },
             {
               session,
@@ -1928,97 +2542,103 @@ export async function reverseSavingsTransaction(
           );
         }
 
-        /**
-         * Create reversal ledger entry.
-         */
-        const document:
-          SavingsTransactionDocument = {
-          _id:
-            normalized.id,
+        const now =
+          new Date().toISOString();
+
+        const reversal:
+          SavingsTransaction = {
+          id:
+            randomUUID(),
 
           savingsAccountId:
-            normalized.savingsAccountId,
+            original.savingsAccountId,
 
           memberId:
-            normalized.memberId,
-
-          saccoId:
-            normalized.saccoId,
+            original.memberId,
 
           memberName:
-            normalized.memberName,
+            original.memberName,
 
-          saccoName:
-            normalized.saccoName,
-
+          /*
+           * EXACT OPPOSITE OF ORIGINAL.
+           */
           amount:
-            normalized.amount,
+            -original.amount,
 
           type:
-            normalized.type,
+            "reversal",
 
           source:
-            normalized.source,
+            "system",
 
           status:
-            normalized.status,
-
-          reference:
-            normalized.reference,
-
-          smsId:
-            normalized.smsId,
-
-          sourceReference:
-            normalized.sourceReference,
+            "confirmed",
 
           relatedTransactionId:
-            normalized.relatedTransactionId,
+            original._id,
 
-          reason:
-            normalized.reason,
+          reason,
 
-          recordedBy:
-            normalized.recordedBy,
+          ...(data.recordedBy
+            ? {
+                recordedBy:
+                  data.recordedBy,
+              }
+            : {}),
 
           transactionAt:
-            normalized.transactionAt,
+            now,
 
           createdAt:
-            normalized.createdAt,
+            now,
 
           updatedAt:
-            normalized.updatedAt,
+            now,
 
           synced:
-            normalized.synced,
+            true,
         };
 
+        const normalized =
+          normalizeSavingsTransaction(
+            reversal
+          );
+
+        const validation =
+          validateSavingsTransaction(
+            normalized
+          );
+
+        if (!validation.valid) {
+          throw new Error(
+            getFirstValidationError(
+              validation.errors
+            )
+          );
+        }
+
+        /*
+         * Insert reversal first.
+         */
         await transactions.insertOne(
-          document,
+          toSavingsTransactionDocument(
+            normalized
+          ),
           {
             session,
           }
         );
 
-        /**
-         * Mark the original transaction as
-         * reversed.
+        /*
+         * Mark original as reversed.
          *
-         * This is metadata only.
-         *
-         * We do NOT modify:
-         * - amount
-         * - reference
-         * - transactionAt
-         * - member
-         * - SACCO
+         * Amount is NEVER modified.
          */
         const updateResult =
           await transactions.updateOne(
             {
               _id:
-                original.id,
+                original._id,
 
               status:
                 "confirmed",
@@ -2046,11 +2666,6 @@ export async function reverseSavingsTransaction(
           );
         }
 
-        /**
-         * Recalculate cached balance from the
-         * complete ledger while still inside
-         * the transaction.
-         */
         await updateCachedAccountBalance(
           original.savingsAccountId,
           session
@@ -2074,143 +2689,258 @@ export async function reverseSavingsTransaction(
 }
 
 /* =========================================================
-   ACCOUNT STATUS
+   DEACTIVATE ACCOUNT
 ========================================================= */
 
-/**
- * Deactivate a savings account.
- *
- * This is NOT a deletion.
- *
- * Historical transactions remain untouched.
- */
 export async function deactivateSavingsAccount(
   savingsAccountId: string
 ): Promise<SavingsAccount> {
   const cleanId =
     requireNonEmpty(
       savingsAccountId,
-      "Savings account ID is required"
+      "Savings account ID is required."
     );
 
-  const accounts =
-    await getAccountCollection();
+  await ensureIndexes();
 
-  const existing =
-    await accounts.findOne({
-      _id: cleanId,
-    });
+  const client =
+    await clientPromise;
 
-  if (!existing) {
-    throw new Error(
-      "Savings account not found."
+  const session =
+    client.startSession();
+
+  try {
+    let updated:
+      SavingsAccount | null =
+      null;
+
+    await session.withTransaction(
+      async () => {
+        const account =
+          await lockSavingsAccount(
+            cleanId,
+            session
+          );
+
+        const currentlyActive =
+          typeof account.isActive ===
+            "boolean"
+            ? account.isActive
+            : account.status ===
+              "active";
+
+        if (!currentlyActive) {
+          updated =
+            toSavingsAccount(
+              account
+            );
+
+          return;
+        }
+
+        const accounts =
+          await getAccountCollection();
+
+        const updatedAt =
+          new Date().toISOString();
+
+        const result =
+          await accounts.updateOne(
+            {
+              _id:
+                account._id,
+
+              $or: [
+                {
+                  isActive:
+                    true,
+                },
+                {
+                  status:
+                    "active",
+                },
+              ],
+            },
+            {
+              $set: {
+                isActive:
+                  false,
+
+                status:
+                  "inactive",
+
+                updatedAt,
+              },
+            },
+            {
+              session,
+            }
+          );
+
+        if (
+          result.matchedCount !==
+          1
+        ) {
+          throw new Error(
+            "Savings account could not be deactivated."
+          );
+        }
+
+        const afterUpdate =
+          await accounts.findOne(
+            {
+              _id:
+                account._id,
+            },
+            {
+              session,
+            }
+          );
+
+        if (!afterUpdate) {
+          throw new Error(
+            "Savings account could not be retrieved after deactivation."
+          );
+        }
+
+        updated =
+          toSavingsAccount(
+            afterUpdate
+          );
+      }
     );
-  }
 
-  if (!existing.isActive) {
-    return toSavingsAccount(
-      existing
-    );
-  }
-
-  await accounts.updateOne(
-    {
-      _id: cleanId,
-
-      isActive: true,
-    },
-    {
-      $set: {
-        isActive: false,
-
-        updatedAt:
-          new Date().toISOString(),
-      },
+    if (!updated) {
+      throw new Error(
+        "Savings account could not be deactivated."
+      );
     }
-  );
 
-  const updated =
-    await accounts.findOne({
-      _id: cleanId,
-    });
-
-  if (!updated) {
-    throw new Error(
-      "Savings account could not be retrieved after deactivation."
-    );
+    return updated;
+  } finally {
+    await session.endSession();
   }
-
-  return toSavingsAccount(
-    updated
-  );
 }
 
 /* =========================================================
    REACTIVATE ACCOUNT
 ========================================================= */
 
-/**
- * Reactivate an existing savings account.
- *
- * This does not alter any historical transaction.
- */
 export async function reactivateSavingsAccount(
   savingsAccountId: string
 ): Promise<SavingsAccount> {
   const cleanId =
     requireNonEmpty(
       savingsAccountId,
-      "Savings account ID is required"
+      "Savings account ID is required."
     );
 
-  const accounts =
-    await getAccountCollection();
+  await ensureIndexes();
 
-  const existing =
-    await accounts.findOne({
-      _id: cleanId,
-    });
+  const client =
+    await clientPromise;
 
-  if (!existing) {
-    throw new Error(
-      "Savings account not found."
+  const session =
+    client.startSession();
+
+  try {
+    let updated:
+      SavingsAccount | null =
+      null;
+
+    await session.withTransaction(
+      async () => {
+        const account =
+          await lockSavingsAccount(
+            cleanId,
+            session
+          );
+
+        const currentlyActive =
+          typeof account.isActive ===
+            "boolean"
+            ? account.isActive
+            : account.status ===
+              "active";
+
+        if (currentlyActive) {
+          updated =
+            toSavingsAccount(
+              account
+            );
+
+          return;
+        }
+
+        const accounts =
+          await getAccountCollection();
+
+        const updatedAt =
+          new Date().toISOString();
+
+        const result =
+          await accounts.updateOne(
+            {
+              _id:
+                account._id,
+            },
+            {
+              $set: {
+                isActive:
+                  true,
+
+                status:
+                  "active",
+
+                updatedAt,
+              },
+            },
+            {
+              session,
+            }
+          );
+
+        if (
+          result.matchedCount !==
+          1
+        ) {
+          throw new Error(
+            "Savings account could not be reactivated."
+          );
+        }
+
+        const afterUpdate =
+          await accounts.findOne(
+            {
+              _id:
+                account._id,
+            },
+            {
+              session,
+            }
+          );
+
+        if (!afterUpdate) {
+          throw new Error(
+            "Savings account could not be retrieved after reactivation."
+          );
+        }
+
+        updated =
+          toSavingsAccount(
+            afterUpdate
+          );
+      }
     );
-  }
 
-  if (existing.isActive) {
-    return toSavingsAccount(
-      existing
-    );
-  }
-
-  await accounts.updateOne(
-    {
-      _id: cleanId,
-
-      isActive: false,
-    },
-    {
-      $set: {
-        isActive: true,
-
-        updatedAt:
-          new Date().toISOString(),
-      },
+    if (!updated) {
+      throw new Error(
+        "Savings account could not be reactivated."
+      );
     }
-  );
 
-  const updated =
-    await accounts.findOne({
-      _id: cleanId,
-    });
-
-  if (!updated) {
-    throw new Error(
-      "Savings account could not be retrieved after reactivation."
-    );
+    return updated;
+  } finally {
+    await session.endSession();
   }
-
-  return toSavingsAccount(
-    updated
-  );
 }

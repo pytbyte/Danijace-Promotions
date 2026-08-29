@@ -16,6 +16,25 @@
  * Database-dependent rules belong in service.ts.
  *
  * Financial records must remain auditable.
+ *
+ * =========================================================
+ * IMPORTANT
+ * =========================================================
+ *
+ * SACCO information is intentionally NOT part of the savings
+ * domain.
+ *
+ * Savings currently belong directly to a member.
+ *
+ * The savings domain therefore contains:
+ *
+ *   Member
+ *      ↓
+ *   Fixed Savings Account
+ *      ↓
+ *   Append-only Savings Ledger
+ *
+ * =========================================================
  */
 
 import type {
@@ -44,15 +63,12 @@ export interface SavingsValidationResult {
  *
  * This is only a safety boundary against malformed input.
  *
- * It is NOT a SACCO business limit.
+ * It is NOT a business limit.
  */
 const MAX_TRANSACTION_AMOUNT = 100_000_000;
 
 /**
  * Maximum length for ordinary textual fields.
- *
- * These limits protect the application from accidentally
- * accepting extremely large strings.
  */
 const MAX_ID_LENGTH = 200;
 const MAX_NAME_LENGTH = 200;
@@ -73,8 +89,8 @@ const isNonEmptyString = (
   value.trim().length > 0;
 
 /**
- * Check whether a value is a non-empty string within
- * the allowed length.
+ * Check whether a value is a non-empty string
+ * within the allowed length.
  */
 const isValidText = (
   value: unknown,
@@ -94,12 +110,6 @@ const isFiniteNumber = (
 
 /**
  * Check whether a value is a valid date string.
- *
- * Date.parse is intentionally used only to establish that
- * the value represents a real date/time.
- *
- * The normalizer does not alter transaction timestamps because
- * transactionAt represents the actual financial event time.
  */
 const isValidDate = (
   value: unknown
@@ -117,10 +127,8 @@ const isValidDate = (
 };
 
 /**
- * Check whether a number has no more than two decimal places.
- *
- * We intentionally inspect the number as a string after it has
- * been established as finite.
+ * Check whether a number has no more than
+ * two decimal places.
  */
 const hasMaximumTwoDecimalPlaces = (
   value: number
@@ -131,12 +139,6 @@ const hasMaximumTwoDecimalPlaces = (
     stringValue.includes("e") ||
     stringValue.includes("E")
   ) {
-    /**
-     * Scientific notation can represent values with more
-     * precision than two monetary decimal places.
-     *
-     * Convert it to a fixed representation for inspection.
-     */
     const fixed = value.toFixed(12);
 
     const decimalPart =
@@ -194,14 +196,16 @@ const isValidTransactionStatus = (
 /**
  * Validate a savings account.
  *
- * This validates the structure and basic financial safety
- * of the account.
+ * This validates structure and basic financial safety.
  *
  * It does NOT verify:
+ *
  * - whether the member exists
- * - whether the SACCO exists
  * - whether another account already exists
+ * - whether the account belongs to the correct member
  * - whether the balance matches the ledger
+ *
+ * Those rules belong in service.ts.
  */
 export function validateSavingsAccount(
   account: Partial<SavingsAccount>
@@ -212,7 +216,12 @@ export function validateSavingsAccount(
      ID
   ------------------------------------------------------- */
 
-  if (!isValidText(account.id, MAX_ID_LENGTH)) {
+  if (
+    !isValidText(
+      account.id,
+      MAX_ID_LENGTH
+    )
+  ) {
     errors.id =
       "Savings account ID is required";
   }
@@ -232,21 +241,7 @@ export function validateSavingsAccount(
   }
 
   /* -------------------------------------------------------
-     SACCO
-  ------------------------------------------------------- */
-
-  if (
-    !isValidText(
-      account.saccoId,
-      MAX_ID_LENGTH
-    )
-  ) {
-    errors.saccoId =
-      "SACCO ID is required";
-  }
-
-  /* -------------------------------------------------------
-     DISPLAY INFORMATION
+     MEMBER NAME
   ------------------------------------------------------- */
 
   if (
@@ -259,24 +254,50 @@ export function validateSavingsAccount(
       "Member name is required";
   }
 
+  /* -------------------------------------------------------
+     ACCOUNT NUMBER
+  ------------------------------------------------------- */
+
   if (
     !isValidText(
-      account.saccoName,
-      MAX_NAME_LENGTH
+      account.accountNumber,
+      MAX_REFERENCE_LENGTH
     )
   ) {
-    errors.saccoName =
-      "SACCO name is required";
+    errors.accountNumber =
+      "Savings account number is required";
+  }
+
+  /* -------------------------------------------------------
+     ACCOUNT TYPE
+  ------------------------------------------------------- */
+
+  if (
+    account.accountType !== "fixed"
+  ) {
+    errors.accountType =
+      "Invalid savings account type";
   }
 
   /* -------------------------------------------------------
      BALANCE
   ------------------------------------------------------- */
 
-  if (!isFiniteNumber(account.balance)) {
+  if (
+    !isFiniteNumber(account.balance)
+  ) {
     errors.balance =
       "Balance must be a valid number";
   } else {
+    /**
+     * A savings account balance must never be
+     * negative.
+     *
+     * IMPORTANT:
+     *
+     * The service layer must ensure this cached
+     * balance agrees with the authoritative ledger.
+     */
     if (account.balance < 0) {
       errors.balance =
         "Savings balance cannot be negative";
@@ -305,22 +326,38 @@ export function validateSavingsAccount(
   ------------------------------------------------------- */
 
   if (
-    typeof account.isActive !== "boolean"
+    account.status !== "active" &&
+    account.status !== "inactive"
   ) {
-    errors.isActive =
-      "Account status is required";
+    errors.status =
+      "Invalid savings account status";
   }
 
   /* -------------------------------------------------------
-     DATES
+     ACTIVE STATE
   ------------------------------------------------------- */
 
-  if (!isValidDate(account.createdAt)) {
+  if (
+    typeof account.isActive !== "boolean"
+  ) {
+    errors.isActive =
+      "Account active state is required";
+  }
+
+  /* -------------------------------------------------------
+     DATE CONSISTENCY
+  ------------------------------------------------------- */
+
+  if (
+    !isValidDate(account.createdAt)
+  ) {
     errors.createdAt =
       "A valid creation date is required";
   }
 
-  if (!isValidDate(account.updatedAt)) {
+  if (
+    !isValidDate(account.updatedAt)
+  ) {
     errors.updatedAt =
       "A valid update date is required";
   }
@@ -341,6 +378,7 @@ export function validateSavingsAccount(
  * Validate a savings transaction.
  *
  * This validates:
+ *
  * - required fields
  * - monetary values
  * - transaction type
@@ -390,18 +428,8 @@ export function validateSavingsTransaction(
       "Member ID is required";
   }
 
-  if (
-    !isValidText(
-      transaction.saccoId,
-      MAX_ID_LENGTH
-    )
-  ) {
-    errors.saccoId =
-      "SACCO ID is required";
-  }
-
   /* =======================================================
-     DISPLAY INFORMATION
+     MEMBER INFORMATION
   ======================================================= */
 
   if (
@@ -414,27 +442,21 @@ export function validateSavingsTransaction(
       "Member name is required";
   }
 
-  if (
-    !isValidText(
-      transaction.saccoName,
-      MAX_NAME_LENGTH
-    )
-  ) {
-    errors.saccoName =
-      "SACCO name is required";
-  }
-
   /* =======================================================
      AMOUNT
   ======================================================= */
 
   if (
-    !isFiniteNumber(transaction.amount)
+    !isFiniteNumber(
+      transaction.amount
+    )
   ) {
     errors.amount =
       "Transaction amount must be a valid number";
   } else {
-    if (transaction.amount === 0) {
+    if (
+      transaction.amount === 0
+    ) {
       errors.amount =
         "Transaction amount cannot be zero";
     }
@@ -810,25 +832,8 @@ export function validateSavingsTransaction(
   }
 
   /* =======================================================
-     STATUS RULES
+     RESULT
   ======================================================= */
-
-  /**
-   * A pending transaction is not yet part of the
-   * confirmed financial ledger.
-   *
-   * Validation does not decide whether a transaction
-   * is allowed to move from pending to confirmed.
-   * That belongs to the service/workflow layer.
-   */
-
-  /**
-   * A reversed status is meaningful only for a
-   * transaction that has actually been reversed.
-   *
-   * The service layer verifies the existence of the
-   * reversal transaction.
-   */
 
   return {
     valid:
@@ -846,17 +851,20 @@ export function validateSavingsTransaction(
  * Normalize a savings transaction before persistence.
  *
  * This function:
+ *
  * - trims safe textual fields
  * - removes empty optional strings
  * - normalizes monetary precision
  *
  * It does NOT:
+ *
  * - change transaction type
  * - change transaction source
  * - change transaction status
  * - change transaction relationships
  * - change transaction dates
  * - calculate balances
+ * - modify an existing transaction
  */
 export function normalizeSavingsTransaction(
   transaction: SavingsTransaction
@@ -873,14 +881,8 @@ export function normalizeSavingsTransaction(
     memberId:
       transaction.memberId.trim(),
 
-    saccoId:
-      transaction.saccoId.trim(),
-
     memberName:
       transaction.memberName.trim(),
-
-    saccoName:
-      transaction.saccoName.trim(),
 
     amount:
       Math.round(

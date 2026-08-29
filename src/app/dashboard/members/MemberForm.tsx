@@ -3,7 +3,6 @@
 import { FormEvent, useState } from "react";
 import {
   Calendar,
-  Mail,
   MapPin,
   Phone,
   User,
@@ -23,7 +22,6 @@ type MemberFormProps = {
 };
 
 type FormData = {
-  membershipNumber: string;
   firstName: string;
   middleName: string;
   lastName: string;
@@ -45,7 +43,6 @@ type FormData = {
 };
 
 const initialForm: FormData = {
-  membershipNumber: "",
   firstName: "",
   middleName: "",
   lastName: "",
@@ -92,14 +89,22 @@ export default function MemberForm({
   ) {
     event.preventDefault();
 
-    if (saving) return;
+    if (saving) {
+      return;
+    }
 
     setError("");
 
-    if (!form.membershipNumber.trim()) {
-      setError("Membership number is required.");
-      return;
-    }
+    /* =====================================================
+       CLIENT-SIDE REQUIRED FIELD CHECKS
+
+       IMPORTANT:
+       No member ID or membership number is collected here.
+
+       The server is responsible for generating:
+       - MongoDB _id
+       - SACCO membership number
+    ===================================================== */
 
     if (!form.firstName.trim()) {
       setError("First name is required.");
@@ -124,69 +129,122 @@ export default function MemberForm({
     try {
       setSaving(true);
 
-      const payload = {
-        membershipNumber:
-          form.membershipNumber.trim(),
+      /* ===================================================
+         BUILD MEMBER PAYLOAD
 
-        firstName: form.firstName.trim(),
+         DO NOT SEND:
+         - memberId
+         - _id
+         - membershipNumber
+
+         Those values belong to the server/database.
+
+         The API should:
+         1. Validate the member data
+         2. Generate the member _id
+         3. Generate the membership number
+         4. Create the member
+         5. Create the savings account
+         6. Return the created member
+      =================================================== */
+
+      const payload = {
+        firstName:
+          form.firstName.trim(),
 
         middleName:
-          form.middleName.trim() || undefined,
+          form.middleName.trim() ||
+          undefined,
 
-        lastName: form.lastName.trim(),
+        lastName:
+          form.lastName.trim(),
 
         gender:
-          form.gender || undefined,
+          form.gender ||
+          undefined,
 
         dateOfBirth:
-          form.dateOfBirth || undefined,
+          form.dateOfBirth ||
+          undefined,
 
-        phone: form.phone.trim(),
+        phone:
+          form.phone.trim(),
 
         email:
-          form.email.trim() || undefined,
+          form.email.trim() ||
+          undefined,
 
         nationalId:
-          form.nationalId.trim() || undefined,
+          form.nationalId.trim() ||
+          undefined,
 
         address:
-          form.address.trim() || undefined,
+          form.address.trim() ||
+          undefined,
 
         city:
-          form.city.trim() || undefined,
+          form.city.trim() ||
+          undefined,
 
         county:
-          form.county.trim() || undefined,
+          form.county.trim() ||
+          undefined,
 
         occupation:
-          form.occupation.trim() || undefined,
+          form.occupation.trim() ||
+          undefined,
 
         nextOfKinName:
-          form.nextOfKinName.trim() || undefined,
+          form.nextOfKinName.trim() ||
+          undefined,
 
         nextOfKinPhone:
-          form.nextOfKinPhone.trim() || undefined,
+          form.nextOfKinPhone.trim() ||
+          undefined,
 
         nextOfKinRelationship:
           form.nextOfKinRelationship.trim() ||
           undefined,
 
-        joinDate: form.joinDate,
+        joinDate:
+          form.joinDate,
 
-        status: form.status,
+        status:
+          form.status,
 
         notes:
-          form.notes.trim() || undefined,
+          form.notes.trim() ||
+          undefined,
       };
 
-      const response = await fetch("/api/members", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      /* ===================================================
+         CREATE MEMBER
+
+         The server controls member identity and
+         savings-account creation.
+      =================================================== */
+
+      const response = await fetch(
+        "/api/members",
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+
+            Accept:
+              "application/json",
+          },
+
+          body:
+            JSON.stringify(payload),
+        }
+      );
+
+      /* ===================================================
+         PARSE SERVER RESPONSE
+      =================================================== */
 
       let result: {
         success: boolean;
@@ -195,30 +253,56 @@ export default function MemberForm({
       };
 
       try {
-        result = await response.json();
+        result =
+          await response.json();
       } catch {
         throw new Error(
           "The server returned an invalid response."
         );
       }
 
-      if (!response.ok || !result.success) {
+      /* ===================================================
+         SERVER ERROR
+      =================================================== */
+
+      if (
+        !response.ok ||
+        !result.success
+      ) {
         throw new Error(
           result.error ||
-            `Unable to add member. Server returned ${response.status}.`
+            `Unable to register member. Server returned ${response.status}.`
         );
       }
 
+      /* ===================================================
+         VERIFY MEMBER DATA
+      =================================================== */
+
       if (!result.data) {
         throw new Error(
-          "Member was saved but no member data was returned."
+          "Member was registered but no member data was returned."
         );
       }
+
+      /* ===================================================
+         SUCCESS
+
+         At this point the API is expected to have
+         completed:
+
+         Member
+             +
+         Savings Account
+
+         The returned member should contain its
+         server-generated identifiers.
+      =================================================== */
 
       onSuccess(result.data);
     } catch (err) {
       console.error(
-        "Failed to add member:",
+        "Failed to register member:",
         err
       );
 
@@ -226,7 +310,7 @@ export default function MemberForm({
         setError(err.message);
       } else {
         setError(
-          "Something went wrong while adding the member."
+          "Something went wrong while registering the member."
         );
       }
     } finally {
@@ -265,7 +349,9 @@ export default function MemberForm({
           sm:rounded-3xl
         "
       >
-        {/* HEADER */}
+        {/* =================================================
+            HEADER
+        ================================================= */}
 
         <div
           className="
@@ -306,7 +392,7 @@ export default function MemberForm({
               </h2>
 
               <p className="mt-0.5 truncate text-[11px] text-white/30">
-                Register a new SACCO member
+                Register a new SACCO member and savings account
               </p>
             </div>
           </div>
@@ -339,17 +425,23 @@ export default function MemberForm({
           </button>
         </div>
 
-        {/* FORM */}
+        {/* =================================================
+            FORM
+        ================================================= */}
 
         <form
           onSubmit={handleSubmit}
           className="min-h-0 flex-1 overflow-y-auto"
         >
           <div className="space-y-7 p-5 sm:p-6">
-            {/* ERROR */}
+
+            {/* =================================================
+                ERROR
+            ================================================= */}
 
             {error && (
               <div
+                role="alert"
                 className="
                   rounded-xl
                   border
@@ -375,34 +467,12 @@ export default function MemberForm({
               title="Personal information"
             >
               <div className="grid gap-4 sm:grid-cols-2">
-                <Input
-                  label="Membership Number"
-                  value={form.membershipNumber}
-                  onChange={(value) =>
-                    updateField(
-                      "membershipNumber",
-                      value
-                    )
-                  }
-                  placeholder="e.g. GEO-001"
-                  required
-                />
-
-                <Input
-                  label="National ID"
-                  value={form.nationalId}
-                  onChange={(value) =>
-                    updateField(
-                      "nationalId",
-                      value
-                    )
-                  }
-                  placeholder="ID number"
-                />
 
                 <Input
                   label="First Name"
-                  value={form.firstName}
+                  value={
+                    form.firstName
+                  }
                   onChange={(value) =>
                     updateField(
                       "firstName",
@@ -415,7 +485,9 @@ export default function MemberForm({
 
                 <Input
                   label="Middle Name"
-                  value={form.middleName}
+                  value={
+                    form.middleName
+                  }
                   onChange={(value) =>
                     updateField(
                       "middleName",
@@ -427,7 +499,9 @@ export default function MemberForm({
 
                 <Input
                   label="Last Name"
-                  value={form.lastName}
+                  value={
+                    form.lastName
+                  }
                   onChange={(value) =>
                     updateField(
                       "lastName",
@@ -438,19 +512,38 @@ export default function MemberForm({
                   required
                 />
 
+                <Input
+                  label="National ID"
+                  value={
+                    form.nationalId
+                  }
+                  onChange={(value) =>
+                    updateField(
+                      "nationalId",
+                      value
+                    )
+                  }
+                  placeholder="ID number"
+                />
+
                 <Select
                   label="Gender"
-                  value={form.gender}
+                  value={
+                    form.gender
+                  }
                   onChange={(value) =>
                     updateField(
                       "gender",
-                      value as MemberGender | ""
+                      value as
+                        | MemberGender
+                        | ""
                     )
                   }
                   options={[
                     {
                       value: "",
-                      label: "Select gender",
+                      label:
+                        "Select gender",
                     },
                     {
                       value: "male",
@@ -470,7 +563,9 @@ export default function MemberForm({
                 <Input
                   label="Date of Birth"
                   type="date"
-                  value={form.dateOfBirth}
+                  value={
+                    form.dateOfBirth
+                  }
                   onChange={(value) =>
                     updateField(
                       "dateOfBirth",
@@ -481,7 +576,9 @@ export default function MemberForm({
 
                 <Input
                   label="Occupation"
-                  value={form.occupation}
+                  value={
+                    form.occupation
+                  }
                   onChange={(value) =>
                     updateField(
                       "occupation",
@@ -490,6 +587,7 @@ export default function MemberForm({
                   }
                   placeholder="Occupation"
                 />
+
               </div>
             </FormSection>
 
@@ -502,10 +600,13 @@ export default function MemberForm({
               title="Contact information"
             >
               <div className="grid gap-4 sm:grid-cols-2">
+
                 <Input
                   label="Phone"
                   type="tel"
-                  value={form.phone}
+                  value={
+                    form.phone
+                  }
                   onChange={(value) =>
                     updateField(
                       "phone",
@@ -519,7 +620,9 @@ export default function MemberForm({
                 <Input
                   label="Email"
                   type="email"
-                  value={form.email}
+                  value={
+                    form.email
+                  }
                   onChange={(value) =>
                     updateField(
                       "email",
@@ -531,7 +634,9 @@ export default function MemberForm({
 
                 <Input
                   label="Address"
-                  value={form.address}
+                  value={
+                    form.address
+                  }
                   onChange={(value) =>
                     updateField(
                       "address",
@@ -543,7 +648,9 @@ export default function MemberForm({
 
                 <Input
                   label="City / Town"
-                  value={form.city}
+                  value={
+                    form.city
+                  }
                   onChange={(value) =>
                     updateField(
                       "city",
@@ -555,7 +662,9 @@ export default function MemberForm({
 
                 <Input
                   label="County"
-                  value={form.county}
+                  value={
+                    form.county
+                  }
                   onChange={(value) =>
                     updateField(
                       "county",
@@ -564,6 +673,7 @@ export default function MemberForm({
                   }
                   placeholder="County"
                 />
+
               </div>
             </FormSection>
 
@@ -576,9 +686,12 @@ export default function MemberForm({
               title="Next of kin"
             >
               <div className="grid gap-4 sm:grid-cols-2">
+
                 <Input
                   label="Name"
-                  value={form.nextOfKinName}
+                  value={
+                    form.nextOfKinName
+                  }
                   onChange={(value) =>
                     updateField(
                       "nextOfKinName",
@@ -591,7 +704,9 @@ export default function MemberForm({
                 <Input
                   label="Phone"
                   type="tel"
-                  value={form.nextOfKinPhone}
+                  value={
+                    form.nextOfKinPhone
+                  }
                   onChange={(value) =>
                     updateField(
                       "nextOfKinPhone",
@@ -614,6 +729,7 @@ export default function MemberForm({
                   }
                   placeholder="e.g. Spouse, Brother"
                 />
+
               </div>
             </FormSection>
 
@@ -626,10 +742,13 @@ export default function MemberForm({
               title="Membership"
             >
               <div className="grid gap-4 sm:grid-cols-2">
+
                 <Input
                   label="Join Date"
                   type="date"
-                  value={form.joinDate}
+                  value={
+                    form.joinDate
+                  }
                   onChange={(value) =>
                     updateField(
                       "joinDate",
@@ -641,7 +760,9 @@ export default function MemberForm({
 
                 <Select
                   label="Status"
-                  value={form.status}
+                  value={
+                    form.status
+                  }
                   onChange={(value) =>
                     updateField(
                       "status",
@@ -663,6 +784,7 @@ export default function MemberForm({
                     },
                   ]}
                 />
+
               </div>
             </FormSection>
 
@@ -675,12 +797,15 @@ export default function MemberForm({
               title="Additional information"
             >
               <div>
+
                 <label className="mb-1.5 block text-[11px] font-medium text-white/45">
                   Notes
                 </label>
 
                 <textarea
-                  value={form.notes}
+                  value={
+                    form.notes
+                  }
                   onChange={(event) =>
                     updateField(
                       "notes",
@@ -707,11 +832,15 @@ export default function MemberForm({
                     focus:ring-yellow-500/10
                   "
                 />
+
               </div>
             </FormSection>
+
           </div>
 
-          {/* FOOTER */}
+          {/* =================================================
+              FOOTER
+          ================================================= */}
 
           <div
             className="
@@ -731,6 +860,7 @@ export default function MemberForm({
               sm:px-6
             "
           >
+
             <button
               type="button"
               onClick={onClose}
@@ -790,7 +920,7 @@ export default function MemberForm({
                     "
                   />
 
-                  Saving...
+                  Registering...
                 </>
               ) : (
                 <>
@@ -803,6 +933,7 @@ export default function MemberForm({
                 </>
               )}
             </button>
+
           </div>
         </form>
       </div>
@@ -826,6 +957,7 @@ function FormSection({
   return (
     <section>
       <div className="mb-4 flex items-center gap-2">
+
         <span className="text-yellow-400">
           {icon}
         </span>
@@ -833,6 +965,7 @@ function FormSection({
         <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-white/50">
           {title}
         </h3>
+
       </div>
 
       {children}
@@ -861,6 +994,7 @@ function Input({
 }) {
   return (
     <div>
+
       <label className="mb-1.5 block text-[11px] font-medium text-white/45">
         {label}
 
@@ -875,9 +1009,13 @@ function Input({
         type={type}
         value={value}
         onChange={(event) =>
-          onChange(event.target.value)
+          onChange(
+            event.target.value
+          )
         }
-        placeholder={placeholder}
+        placeholder={
+          placeholder
+        }
         required={required}
         className="
           h-11
@@ -898,6 +1036,7 @@ function Input({
           focus:ring-yellow-500/10
         "
       />
+
     </div>
   );
 }
@@ -922,6 +1061,7 @@ function Select({
 }) {
   return (
     <div>
+
       <label className="mb-1.5 block text-[11px] font-medium text-white/45">
         {label}
       </label>
@@ -929,7 +1069,9 @@ function Select({
       <select
         value={value}
         onChange={(event) =>
-          onChange(event.target.value)
+          onChange(
+            event.target.value
+          )
         }
         className="
           h-11
@@ -949,16 +1091,25 @@ function Select({
           focus:ring-yellow-500/10
         "
       >
-        {options.map((option) => (
-          <option
-            key={option.value}
-            value={option.value}
-            className="bg-[#111] text-white"
-          >
-            {option.label}
-          </option>
-        ))}
+        {options.map(
+          (option) => (
+            <option
+              key={
+                option.value
+              }
+              value={
+                option.value
+              }
+              className="bg-[#111] text-white"
+            >
+              {
+                option.label
+              }
+            </option>
+          )
+        )}
       </select>
+
     </div>
   );
 }
