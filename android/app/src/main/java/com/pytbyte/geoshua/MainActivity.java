@@ -13,7 +13,7 @@ public class MainActivity extends BridgeActivity {
 
         super.onCreate(savedInstanceState);
 
-        handleIntent(getIntent());
+        handleDeepLink(getIntent());
     }
 
     @Override
@@ -22,28 +22,35 @@ public class MainActivity extends BridgeActivity {
 
         setIntent(intent);
 
-        handleIntent(intent);
+        handleDeepLink(intent);
     }
 
-    private void handleIntent(Intent intent) {
+    private void handleDeepLink(Intent intent) {
         if (intent == null) {
             return;
         }
 
-        String action = intent.getAction();
-
-        if (Intent.ACTION_VIEW.equals(action)) {
-            String url = intent.getDataString();
-
-            if (url != null) {
-                getBridge().getWebView().evaluateJavascript(
-                    "window.dispatchEvent(new CustomEvent('capacitorDeepLink', { detail: " +
-                    JSONObjectEscape(url) +
-                    " }));",
-                    null
-                );
-            }
+        if (!Intent.ACTION_VIEW.equals(intent.getAction())) {
+            return;
         }
+
+        if (intent.getData() == null) {
+            return;
+        }
+
+        String url = intent.getData().toString();
+
+        String escapedUrl = JSONObjectEscape(url);
+
+        String javascript =
+            "window.dispatchEvent(new CustomEvent(" +
+            "'capacitorDeepLink'," +
+            "{ detail: " + escapedUrl + " }" +
+            "));";
+
+        getBridge()
+            .getWebView()
+            .evaluateJavascript(javascript, null);
     }
 
     private String JSONObjectEscape(String value) {
@@ -52,7 +59,8 @@ public class MainActivity extends BridgeActivity {
                 .replace("\\", "\\\\")
                 .replace("\"", "\\\"")
                 .replace("\n", "\\n")
-                .replace("\r", "\\r") +
+                .replace("\r", "\\r")
+                .replace("\t", "\\t") +
             "\"";
     }
 }
