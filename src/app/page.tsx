@@ -7,17 +7,17 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
 
   const handleGoogleLogin = async () => {
-  setLoading(true);
+    setLoading(true);
 
-  try {
-    await signIn("google", {
-      callbackUrl: "geoshua://auth",
-    });
-  } catch (error) {
-    console.error("Google sign-in error:", error);
-    setLoading(false);
-  }
-};
+    try {
+      await signIn("google", {
+        callbackUrl: "/dashboard",
+      });
+    } catch (error) {
+      console.error("Google sign-in error:", error);
+      setLoading(false);
+    }
+  };
 
   return (
     <main className="relative min-h-[100dvh] overflow-hidden bg-[#050505] text-white">
