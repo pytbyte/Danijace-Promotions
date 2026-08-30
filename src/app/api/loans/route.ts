@@ -48,16 +48,9 @@ function errorResponse(
 }
 
 /* =========================================================
-   SESSION USER TYPE
+   SESSION USER
 ========================================================= */
 
-/**
- * We deliberately define only the session fields required
- * by the loan domain.
- *
- * This avoids depending on the overloaded TypeScript type
- * exposed by the auth() export.
- */
 type AuthenticatedSession = {
   user?: {
     name?: string | null;
@@ -69,13 +62,6 @@ type AuthenticatedSession = {
    ACTOR
 ========================================================= */
 
-/**
- * Convert the authenticated NextAuth user into the
- * LoanActor expected by the loan service.
- *
- * The browser must never be allowed to choose who
- * created or authorized a financial record.
- */
 function getSessionActor(
   session: AuthenticatedSession,
 ) {
@@ -102,7 +88,7 @@ function getSessionActor(
 }
 
 /* =========================================================
-   STRING HELPERS
+   GENERIC HELPERS
 ========================================================= */
 
 function getOptionalString(
@@ -116,6 +102,72 @@ function getOptionalString(
   }
 
   return value.trim();
+}
+
+function isRecord(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
+/* =========================================================
+   GUARANTOR VALIDATION
+========================================================= */
+
+/**
+ * We deliberately build the guarantor object field-by-field.
+ *
+ * DO NOT cast:
+ *
+ *   guarantor as LoanGuarantor
+ *
+ * because request JSON is untrusted data.
+ *
+ * This also fixes:
+ *
+ * TS2352:
+ * Conversion of type Record<string, unknown>
+ * to type LoanGuarantor may be a mistake.
+ */
+function parseGuarantor(
+  value: unknown,
+): CreateLoanInput["guarantor"] {
+  if (!isRecord(value)) {
+    throw new Error(
+      "A valid guarantor is required.",
+    );
+  }
+
+  const name =
+    typeof value.name === "string"
+      ? value.name.trim()
+      : "";
+
+  const phone =
+    typeof value.phone === "string"
+      ? value.phone.trim()
+      : "";
+
+  if (!name) {
+    throw new Error(
+      "Guarantor name is required.",
+    );
+  }
+
+  if (!phone) {
+    throw new Error(
+      "Guarantor phone number is required.",
+    );
+  }
+
+  return {
+    name,
+    phone,
+  };
 }
 
 /* =========================================================
@@ -293,24 +345,16 @@ export async function GET(
         page,
         limit,
         ...(search
-          ? {
-              search,
-            }
+          ? { search }
           : {}),
         ...(memberId
-          ? {
-              memberId,
-            }
+          ? { memberId }
           : {}),
         ...(status
-          ? {
-              status,
-            }
+          ? { status }
           : {}),
         ...(type
-          ? {
-              type,
-            }
+          ? { type }
           : {}),
       });
 
@@ -355,27 +399,27 @@ export async function GET(
 /**
  * Create a loan.
  *
- * The authenticated user becomes the financial actor.
+ * SECURITY / DATA INTEGRITY:
  *
- * The client supplies only the actual loan request:
- *
- * - memberId
- * - type
- * - principal
- * - guarantor
- * - optional dailyFine
- * - optional disbursementDate
- *
- * The loan service calculates:
+ * The client is NOT trusted for:
  *
  * - loan number
- * - member information
- * - savings eligibility
- * - interest
+ * - member name
+ * - member number
+ * - interest rate
+ * - interest amount
  * - total due
- * - first due date
- * - initial outstanding balance
- * - authorization information
+ * - amount paid
+ * - outstanding balance
+ * - fines
+ * - loan status
+ * - authorization
+ * - audit fields
+ *
+ * The service calculates and controls these values.
+ *
+ * The authenticated session user becomes the creator
+ * and authorizer under the current workflow.
  */
 export async function POST(
   request: NextRequest,
@@ -399,7 +443,7 @@ export async function POST(
       getSessionActor(session);
 
     /* -------------------------------------------------------
-       READ BODY
+       READ JSON
     ------------------------------------------------------- */
 
     let body: unknown;
@@ -415,73 +459,241 @@ export async function POST(
     }
 
     /* -------------------------------------------------------
-       BODY VALIDATION
+       BODY MUST BE OBJECT
     ------------------------------------------------------- */
 
-    if (
-      !body ||
-      typeof body !== "object" ||
-      Array.isArray(body)
-    ) {
+    if (!isRecord(body)) {
       return errorResponse(
         "Request body must be a JSON object.",
         400,
       );
     }
 
-    const payload =
-      body as Record<
-        string,
-        unknown
-      >;
-
     /* -------------------------------------------------------
-       SERVER-CONTROLLED FIELDS
+       MEMBER ID
     ------------------------------------------------------- */
 
-    /**
-     * Never allow the client to inject financial,
-     * identity, or authorization state.
+    const memberId =
+      typeof body.memberId === "string"
+        ? body.memberId.trim()
+        : "";
+
+    if (!memberId) {
+      return errorResponse(
+        "Member ID is required.",
+        400,
+      );
+    }
+
+    /* -------------------------------------------------------
+       LOAN TYPE
+    ------------------------------------------------------- */
+
+    const type =
+      typeof body.type === "string"
+        ? body.type.trim()
+        : "";
+
+    if (
+      type !== "emergency" &&
+      type !== "regular"
+    ) {
+      return errorResponse(
+        "Loan type must be either emergency or regular.",
+        400,
+      );
+    }
+
+    /* -------------------------------------------------------
+       PRINCIPAL
+    ------------------------------------------------------- */
+
+    const principal =
+      typeof body.principal === "number"
+        ? body.principal
+        : NaN;
+
+    if (
+      !Number.isFinite(principal) ||
+      principal <= 0
+    ) {
+      return errorResponse(
+        "Principal must be a positive number.",
+        400,
+      );
+    }
+
+    /*
+     * Reject absurd numeric values.
      *
-     * These values are calculated/controlled by the
-     * loan service.
+     * This prevents Infinity / NaN / extremely large
+     * values from entering financial calculations.
      */
-    delete payload.id;
-    delete payload.loanNumber;
-    delete payload.memberNumber;
-    delete payload.memberName;
-
-    delete payload.interestRate;
-    delete payload.interestAmount;
-
-    delete payload.totalDue;
-    delete payload.amountPaid;
-    delete payload.totalFines;
-    delete payload.outstandingBalance;
-
-    delete payload.fineSource;
-    delete payload.fineStatus;
-
-    delete payload.status;
-
-    delete payload.createdBy;
-    delete payload.authorizedBy;
-    delete payload.authorizedAt;
-
-    delete payload.createdAt;
-    delete payload.updatedAt;
+    if (
+      !Number.isSafeInteger(
+        Math.round(principal * 100),
+      )
+    ) {
+      return errorResponse(
+        "Principal is outside the supported financial range.",
+        400,
+      );
+    }
 
     /* -------------------------------------------------------
-       BUILD CREATE INPUT
+       GUARANTOR
     ------------------------------------------------------- */
 
-    const input =
-      payload as unknown as CreateLoanInput;
+    let guarantor:
+      CreateLoanInput["guarantor"];
+
+    try {
+      guarantor =
+        parseGuarantor(
+          body.guarantor,
+        );
+    } catch (error) {
+      return errorResponse(
+        error instanceof Error
+          ? error.message
+          : "A valid guarantor is required.",
+        400,
+      );
+    }
+
+    /* -------------------------------------------------------
+       DAILY FINE
+    ------------------------------------------------------- */
+
+    let cleanDailyFine:
+      | number
+      | undefined;
+
+    if (
+      body.dailyFine !== undefined
+    ) {
+      if (
+        typeof body.dailyFine !==
+          "number" ||
+        !Number.isFinite(
+          body.dailyFine,
+        ) ||
+        body.dailyFine < 0
+      ) {
+        return errorResponse(
+          "Daily fine must be a valid non-negative number.",
+          400,
+        );
+      }
+
+      if (
+        !Number.isSafeInteger(
+          Math.round(
+            body.dailyFine * 100,
+          ),
+        )
+      ) {
+        return errorResponse(
+          "Daily fine is outside the supported financial range.",
+          400,
+        );
+      }
+
+      cleanDailyFine =
+        body.dailyFine;
+    }
+
+    /* -------------------------------------------------------
+       DISBURSEMENT DATE
+    ------------------------------------------------------- */
+
+    let cleanDisbursementDate:
+      | Date
+      | undefined;
+
+    if (
+      body.disbursementDate !==
+      undefined
+    ) {
+      if (
+        typeof body.disbursementDate !==
+        "string"
+      ) {
+        return errorResponse(
+          "Disbursement date must be a valid date string.",
+          400,
+        );
+      }
+
+      const parsed =
+        new Date(
+          body.disbursementDate,
+        );
+
+      if (
+        Number.isNaN(
+          parsed.getTime(),
+        )
+      ) {
+        return errorResponse(
+          "Invalid disbursement date.",
+          400,
+        );
+      }
+
+      cleanDisbursementDate =
+        parsed;
+    }
+
+    /* -------------------------------------------------------
+       BUILD SAFE CREATE INPUT
+    ------------------------------------------------------- */
+
+    const input: CreateLoanInput = {
+      memberId,
+
+      type: type as LoanType,
+
+      principal,
+
+      guarantor,
+
+      ...(cleanDailyFine !==
+      undefined
+        ? {
+            dailyFine:
+              cleanDailyFine,
+          }
+        : {}),
+
+      ...(cleanDisbursementDate
+        ? {
+            disbursementDate:
+              cleanDisbursementDate,
+          }
+        : {}),
+    };
 
     /* -------------------------------------------------------
        CREATE LOAN
     ------------------------------------------------------- */
 
+    /**
+     * IMPORTANT:
+     *
+     * createLoan() performs the authoritative member lookup.
+     *
+     * The service contains:
+     *
+     *   if (member.status !== "active") {
+     *     throw new Error(
+     *       "Only active members can receive loans."
+     *     );
+     *   }
+     *
+     * Therefore manipulating this API request cannot bypass
+     * the inactive-member restriction.
+     */
     const loan =
       await createLoan(
         input,
@@ -505,7 +717,7 @@ export async function POST(
         : "Failed to create loan.";
 
     /* -------------------------------------------------------
-       KNOWN DOMAIN / VALIDATION ERRORS
+       DOMAIN / VALIDATION ERRORS
     ------------------------------------------------------- */
 
     const knownError =
@@ -544,6 +756,15 @@ export async function POST(
       ) ||
       message.includes(
         "valid actor",
+      ) ||
+      message.includes(
+        "cannot receive loans",
+      ) ||
+      message.includes(
+        "must be",
+      ) ||
+      message.includes(
+        "outside the supported financial range",
       );
 
     return errorResponse(
