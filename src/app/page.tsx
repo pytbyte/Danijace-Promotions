@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { Capacitor } from "@capacitor/core";
+import { useRouter } from "next/navigation";
 import { loginWithAndroidGoogle } from "@/lib/auth/androidGoogle";
 
 export default function Home() {
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   const handleGoogleLogin = async () => {
     if (loading) {
@@ -19,8 +21,10 @@ export default function Home() {
       /*
        * ANDROID / CAPACITOR
        *
-       * Capacitor uses native Google authentication.
-       * This does NOT use NextAuth's browser redirect.
+       * Android uses native Google authentication through
+       * @capgo/capacitor-social-login.
+       *
+       * This does NOT use NextAuth.
        */
       if (Capacitor.isNativePlatform()) {
         const result = await loginWithAndroidGoogle();
@@ -28,8 +32,9 @@ export default function Home() {
         console.log("ANDROID GOOGLE LOGIN RESULT:", result);
 
         /*
-         * The plugin can return different Google response types.
-         * Only the online response contains an ID token.
+         * The Google plugin supports different response types.
+         *
+         * The online response contains the ID token.
          */
         const idToken =
           "idToken" in result.result
@@ -43,31 +48,83 @@ export default function Home() {
         }
 
         /*
-         * Do NOT log the actual ID token.
+         * The ID token is a JWT.
          *
-         * The next stage will send this token securely to:
+         * For this first stage, we only decode the payload
+         * so that we can obtain the Google account information.
          *
-         * /api/auth/android
+         * IMPORTANT:
+         * This is temporary.
          *
-         * where our backend will:
-         *
-         * 1. Verify the Google token
-         * 2. Verify the Google issuer
-         * 3. Verify the audience
-         * 4. Check expiration
-         * 5. Check email_verified
-         * 6. Check the two authorized administrator emails
-         * 7. Create the GEO-SHUA application session
-         *
-         * For this stage we only prove that Android Google
-         * authentication successfully returned an ID token.
+         * Later the Vercel backend will verify the ID token
+         * before trusting the identity.
          */
+        const tokenParts = idToken.split(".");
 
-        console.log("ANDROID GOOGLE ID TOKEN RECEIVED");
+        if (tokenParts.length !== 3) {
+          throw new Error("Invalid Google ID token.");
+        }
 
-        alert("Google authentication succeeded.");
+        let payload: {
+          email?: string;
+          name?: string;
+          picture?: string;
+        };
 
-        setLoading(false);
+        try {
+          payload = JSON.parse(atob(tokenParts[1]));
+        } catch {
+          throw new Error("Unable to read Google account information.");
+        }
+
+        /*
+         * Basic Google account information.
+         */
+        const googleUser = {
+          email: payload.email ?? "",
+          name: payload.name ?? "",
+          picture: payload.picture ?? "",
+        };
+
+        /*
+         * Make sure Google actually returned an email.
+         */
+        if (!googleUser.email) {
+          throw new Error(
+            "Google authentication succeeded, but no email address was returned.",
+          );
+        }
+
+        console.log("ANDROID GOOGLE USER:", {
+          email: googleUser.email,
+          name: googleUser.name,
+        });
+
+        /*
+         * TEMPORARY ANDROID SESSION
+         *
+         * We are using localStorage only for this first milestone.
+         *
+         * Later this will be replaced with a secure server-created
+         * GEO-SHUA session after the Vercel backend verifies the
+         * Google ID token.
+         */
+        localStorage.setItem(
+          "android_google_user",
+          JSON.stringify(googleUser),
+        );
+
+        localStorage.setItem(
+          "android_google_authenticated",
+          "true",
+        );
+
+        /*
+         * Android authentication is successful.
+         *
+         * For now, go directly to the dashboard.
+         */
+        router.push("/dashboard");
 
         return;
       }
@@ -75,8 +132,7 @@ export default function Home() {
       /*
        * WEB BROWSER
        *
-       * Keep the existing NextAuth Google authentication.
-       * This preserves the web login that already works.
+       * Keep the existing NextAuth Google login.
        */
       await signIn("google", {
         callbackUrl: "/dashboard",
