@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 import {
   Bell,
@@ -20,6 +20,12 @@ type MenuItem = {
   label: string;
   icon: React.ReactNode;
   href: string;
+};
+
+type AndroidGoogleUser = {
+  email?: string;
+  name?: string;
+  picture?: string;
 };
 
 const menuItems: MenuItem[] = [
@@ -59,16 +65,136 @@ export default function TopBar() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  /*
+   * ============================================================
+   * ANDROID GOOGLE USER
+   * ============================================================
+   *
+   * Android authentication currently stores the Google account
+   * in localStorage because it does not yet create a NextAuth
+   * session.
+   *
+   * We read that account here so the TopBar can display the
+   * authenticated Android user's name, email and picture.
+   */
+  const [androidUser, setAndroidUser] =
+    useState<AndroidGoogleUser | null>(null);
+
+  useEffect(() => {
+    /*
+     * localStorage only exists in the browser.
+     */
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const authenticated =
+        localStorage.getItem("android_google_authenticated");
+
+      const storedUser =
+        localStorage.getItem("android_google_user");
+
+      if (authenticated === "true" && storedUser) {
+        const parsed: AndroidGoogleUser = JSON.parse(storedUser);
+
+        setAndroidUser(parsed);
+      }
+    } catch (error) {
+      console.error(
+        "Unable to read Android Google user:",
+        error,
+      );
+
+      setAndroidUser(null);
+    }
+  }, []);
+
+  /*
+   * ============================================================
+   * AUTHENTICATED USER
+   * ============================================================
+   *
+   * WEB:
+   *   session.user
+   *
+   * ANDROID:
+   *   android_google_user
+   *
+   * NextAuth takes priority when available.
+   */
   const user = session?.user;
 
-  const name = user?.name || "User";
-  const email = user?.email || "";
-  const image = user?.image;
+  const name =
+    user?.name ||
+    androidUser?.name ||
+    "User";
 
+  const email =
+    user?.email ||
+    androidUser?.email ||
+    "";
+
+  const image =
+    user?.image ||
+    androidUser?.picture ||
+    null;
+
+  /*
+   * ============================================================
+   * NAVIGATION
+   * ============================================================
+   */
   const navigateTo = (href: string) => {
     setProfileOpen(false);
     setMobileOpen(false);
+
     router.push(href);
+  };
+
+  /*
+   * ============================================================
+   * ANDROID SIGN OUT
+   * ============================================================
+   *
+   * Android does not currently use NextAuth, so we need to clear
+   * the temporary Android authentication state as well.
+   */
+  const handleSignOut = async () => {
+    try {
+      /*
+       * Clear Android temporary authentication.
+       */
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("android_google_user");
+        localStorage.removeItem("android_google_authenticated");
+      }
+
+      setAndroidUser(null);
+
+      /*
+       * If a NextAuth session exists, sign it out too.
+       */
+      if (session) {
+        await signOut({
+          callbackUrl: "/",
+        });
+
+        return;
+      }
+
+      /*
+       * Android-only authentication.
+       */
+      router.push("/");
+    } catch (error) {
+      console.error("Sign out error:", error);
+
+      /*
+       * Make sure the user still gets returned to login.
+       */
+      router.push("/");
+    }
   };
 
   return (
@@ -80,9 +206,14 @@ export default function TopBar() {
       <header className="fixed inset-x-0 top-0 z-50 h-16 w-full border-b border-white/[0.08] bg-[#050505]/95 backdrop-blur-xl">
         {/* =================================================
             MOBILE TOP BAR
+
+            LEFT  = MENU
+            RIGHT = PROFILE
+
+            NO CENTER LOGO
         ================================================= */}
 
-        <div className="grid h-full w-full grid-cols-3 items-center px-3 lg:hidden">
+        <div className="flex h-full w-full items-center justify-between px-3 lg:hidden">
           {/* LEFT — MENU */}
 
           <div className="flex min-w-0 items-center justify-start">
@@ -95,23 +226,9 @@ export default function TopBar() {
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/60 transition hover:bg-white/[0.06] hover:text-white"
               aria-label="Open menu"
             >
-              <Menu size={23} strokeWidth={1.8} />
-            </button>
-          </div>
-
-          {/* CENTER — LOGO / ICON ONLY */}
-
-          <div className="flex min-w-0 items-center justify-center">
-            <button
-              type="button"
-              onClick={() => navigateTo("/dashboard")}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-              aria-label="Go to dashboard"
-            >
-              <img
-                src="/logo.png"
-                alt="GEO-SHUA"
-                className="h-9 w-9 object-contain"
+              <Menu
+                size={23}
+                strokeWidth={1.8}
               />
             </button>
           </div>
@@ -141,7 +258,9 @@ export default function TopBar() {
               )}
             </button>
 
-            {/* MOBILE PROFILE DROPDOWN */}
+            {/* =================================================
+                MOBILE PROFILE DROPDOWN
+            ================================================= */}
 
             {profileOpen && (
               <div className="absolute right-0 top-12 z-[80] w-[min(285px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-white/10 bg-[#101010] shadow-[0_25px_70px_rgba(0,0,0,0.55)]">
@@ -165,7 +284,7 @@ export default function TopBar() {
                       </p>
 
                       <p className="mt-1 truncate text-xs text-white/35">
-                        {email}
+                        {email || "No email"}
                       </p>
                     </div>
                   </div>
@@ -176,25 +295,31 @@ export default function TopBar() {
                     type="button"
                     onClick={() => {
                       setProfileOpen(false);
-                      navigateTo("/dashboard/settings");
+                      navigateTo(
+                        "/dashboard/settings",
+                      );
                     }}
                     className="flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-sm text-white/60 transition hover:bg-white/[0.06] hover:text-white"
                   >
-                    <Settings size={18} strokeWidth={1.8} />
+                    <Settings
+                      size={18}
+                      strokeWidth={1.8}
+                    />
 
-                    <span>Account settings</span>
+                    <span>
+                      Account settings
+                    </span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() =>
-                      signOut({
-                        callbackUrl: "/",
-                      })
-                    }
+                    onClick={handleSignOut}
                     className="mt-1 flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-sm text-red-400 transition hover:bg-red-500/[0.08]"
                   >
-                    <LogOut size={18} strokeWidth={1.8} />
+                    <LogOut
+                      size={18}
+                      strokeWidth={1.8}
+                    />
 
                     <span>Sign out</span>
                   </button>
@@ -213,7 +338,9 @@ export default function TopBar() {
 
           <button
             type="button"
-            onClick={() => navigateTo("/dashboard")}
+            onClick={() =>
+              navigateTo("/dashboard")
+            }
             className="shrink-0"
             aria-label="Go to dashboard"
           >
@@ -236,20 +363,26 @@ export default function TopBar() {
             </div>
           </button>
 
-          {/* DESKTOP NAVIGATION */}
+          {/* =================================================
+              DESKTOP NAVIGATION
+          ================================================= */}
 
           <nav className="ml-auto flex min-w-0 items-center gap-1">
             {menuItems.map((item) => {
               const active =
                 pathname === item.href ||
                 (item.href !== "/dashboard" &&
-                  pathname.startsWith(`${item.href}/`));
+                  pathname.startsWith(
+                    `${item.href}/`,
+                  ));
 
               return (
                 <button
                   key={item.label}
                   type="button"
-                  onClick={() => navigateTo(item.href)}
+                  onClick={() =>
+                    navigateTo(item.href)
+                  }
                   className={`
                     flex h-10 shrink-0 items-center justify-center
                     gap-2 rounded-xl px-2.5
@@ -273,7 +406,9 @@ export default function TopBar() {
             })}
           </nav>
 
-          {/* DESKTOP PROFILE */}
+          {/* =================================================
+              DESKTOP PROFILE
+          ================================================= */}
 
           <div className="relative ml-3 shrink-0 xl:ml-5">
             <button
@@ -303,12 +438,18 @@ export default function TopBar() {
                 className={`
                   hidden text-white/35 transition-transform
                   xl:block
-                  ${profileOpen ? "rotate-180" : ""}
+                  ${
+                    profileOpen
+                      ? "rotate-180"
+                      : ""
+                  }
                 `}
               />
             </button>
 
-            {/* DESKTOP PROFILE DROPDOWN */}
+            {/* =================================================
+                DESKTOP PROFILE DROPDOWN
+            ================================================= */}
 
             {profileOpen && (
               <div className="absolute right-0 top-14 z-[80] w-[min(285px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-white/10 bg-[#101010] shadow-[0_25px_70px_rgba(0,0,0,0.55)]">
@@ -332,7 +473,7 @@ export default function TopBar() {
                       </p>
 
                       <p className="mt-1 truncate text-xs text-white/35">
-                        {email}
+                        {email || "No email"}
                       </p>
                     </div>
                   </div>
@@ -343,25 +484,31 @@ export default function TopBar() {
                     type="button"
                     onClick={() => {
                       setProfileOpen(false);
-                      navigateTo("/dashboard/settings");
+                      navigateTo(
+                        "/dashboard/settings",
+                      );
                     }}
                     className="flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-sm text-white/60 transition hover:bg-white/[0.06] hover:text-white"
                   >
-                    <Settings size={18} strokeWidth={1.8} />
+                    <Settings
+                      size={18}
+                      strokeWidth={1.8}
+                    />
 
-                    <span>Account settings</span>
+                    <span>
+                      Account settings
+                    </span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() =>
-                      signOut({
-                        callbackUrl: "/",
-                      })
-                    }
+                    onClick={handleSignOut}
                     className="mt-1 flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-sm text-red-400 transition hover:bg-red-500/[0.08]"
                   >
-                    <LogOut size={18} strokeWidth={1.8} />
+                    <LogOut
+                      size={18}
+                      strokeWidth={1.8}
+                    />
 
                     <span>Sign out</span>
                   </button>
@@ -399,10 +546,16 @@ export default function TopBar() {
           shadow-[20px_0_70px_rgba(0,0,0,0.5)]
           transition-transform duration-300
           lg:hidden
-          ${mobileOpen ? "translate-x-0" : "-translate-x-full"}
+          ${
+            mobileOpen
+              ? "translate-x-0"
+              : "-translate-x-full"
+          }
         `}
       >
-        {/* MOBILE SIDEBAR HEADER */}
+        {/* =================================================
+            MOBILE SIDEBAR HEADER
+        ================================================= */}
 
         <div className="flex shrink-0 items-center justify-between border-b border-white/[0.08] px-4 py-4">
           <div className="flex items-center gap-2.5">
@@ -425,15 +578,22 @@ export default function TopBar() {
 
           <button
             type="button"
-            onClick={() => setMobileOpen(false)}
+            onClick={() =>
+              setMobileOpen(false)
+            }
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/45 transition hover:bg-white/[0.06] hover:text-white"
             aria-label="Close menu"
           >
-            <X size={20} strokeWidth={1.8} />
+            <X
+              size={20}
+              strokeWidth={1.8}
+            />
           </button>
         </div>
 
-        {/* MOBILE USER */}
+        {/* =================================================
+            MOBILE USER
+        ================================================= */}
 
         <div className="shrink-0 border-b border-white/[0.08] p-5">
           <div className="flex items-center gap-3.5">
@@ -455,13 +615,15 @@ export default function TopBar() {
               </p>
 
               <p className="mt-1 truncate text-xs text-white/35">
-                {email}
+                {email || "No email"}
               </p>
             </div>
           </div>
         </div>
 
-        {/* MOBILE NAVIGATION */}
+        {/* =================================================
+            MOBILE NAVIGATION
+        ================================================= */}
 
         <nav className="min-h-0 flex-1 overflow-y-auto p-4">
           <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.25em] text-white/25">
@@ -473,13 +635,17 @@ export default function TopBar() {
               const active =
                 pathname === item.href ||
                 (item.href !== "/dashboard" &&
-                  pathname.startsWith(`${item.href}/`));
+                  pathname.startsWith(
+                    `${item.href}/`,
+                  ));
 
               return (
                 <button
                   key={item.label}
                   type="button"
-                  onClick={() => navigateTo(item.href)}
+                  onClick={() =>
+                    navigateTo(item.href)
+                  }
                   className={`
                     flex w-full items-center gap-3.5
                     rounded-xl px-3.5 py-3
@@ -501,19 +667,20 @@ export default function TopBar() {
           </div>
         </nav>
 
-        {/* MOBILE FOOTER */}
+        {/* =================================================
+            MOBILE FOOTER
+        ================================================= */}
 
         <div className="shrink-0 border-t border-white/[0.08] p-4">
           <button
             type="button"
-            onClick={() =>
-              signOut({
-                callbackUrl: "/",
-              })
-            }
+            onClick={handleSignOut}
             className="flex w-full items-center gap-3.5 rounded-xl px-3.5 py-3 text-sm font-medium text-red-400 transition hover:bg-red-500/[0.08]"
           >
-            <LogOut size={18} strokeWidth={1.8} />
+            <LogOut
+              size={18}
+              strokeWidth={1.8}
+            />
 
             <span>Sign out</span>
           </button>

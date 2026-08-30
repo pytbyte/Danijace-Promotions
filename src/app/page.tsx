@@ -6,9 +6,117 @@ import { Capacitor } from "@capacitor/core";
 import { useRouter } from "next/navigation";
 import { loginWithAndroidGoogle } from "@/lib/auth/androidGoogle";
 
+/* =========================================================
+   TYPES
+========================================================= */
+
+type GoogleUser = {
+  email: string;
+  name: string;
+  picture: string;
+};
+
+/* =========================================================
+   SAFE GOOGLE JWT PAYLOAD DECODER
+========================================================= */
+
+function decodeGoogleIdToken(idToken: string): GoogleUser {
+  const tokenParts = idToken.split(".");
+
+  if (tokenParts.length !== 3) {
+    throw new Error("Invalid Google ID token.");
+  }
+
+  const payloadPart = tokenParts[1];
+
+  if (!payloadPart) {
+    throw new Error("Google ID token payload is missing.");
+  }
+
+  try {
+    /*
+     * JWT uses base64url rather than normal base64.
+     *
+     * Convert it into a format that atob() understands.
+     */
+    const base64 = payloadPart
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+
+    const paddedBase64 =
+      base64 +
+      "=".repeat(
+        (4 - (base64.length % 4)) % 4,
+      );
+
+    const json = atob(paddedBase64);
+
+    const payload = JSON.parse(json) as {
+      email?: unknown;
+      name?: unknown;
+      picture?: unknown;
+      email_verified?: unknown;
+    };
+
+    const email =
+      typeof payload.email === "string"
+        ? payload.email.trim()
+        : "";
+
+    const name =
+      typeof payload.name === "string"
+        ? payload.name.trim()
+        : "";
+
+    const picture =
+      typeof payload.picture === "string"
+        ? payload.picture.trim()
+        : "";
+
+    /*
+     * We need an email because the email is what will
+     * eventually determine whether this is an administrator
+     * or a registered GEO-SHUA member.
+     */
+    if (!email) {
+      throw new Error(
+        "Google authentication succeeded, but no email address was returned.",
+      );
+    }
+
+    return {
+      email,
+      name,
+      picture,
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes(
+        "no email address was returned",
+      )
+    ) {
+      throw error;
+    }
+
+    throw new Error(
+      "Unable to read Google account information.",
+    );
+  }
+}
+
+/* =========================================================
+   HOME / LOGIN PAGE
+========================================================= */
+
 export default function Home() {
   const [loading, setLoading] = useState(false);
+
   const router = useRouter();
+
+  /* =======================================================
+     GOOGLE LOGIN
+  ======================================================= */
 
   const handleGoogleLogin = async () => {
     if (loading) {
@@ -18,23 +126,27 @@ export default function Home() {
     setLoading(true);
 
     try {
-      /*
-       * ANDROID / CAPACITOR
-       *
-       * Android uses native Google authentication through
-       * @capgo/capacitor-social-login.
-       *
-       * This does NOT use NextAuth.
-       */
-      if (Capacitor.isNativePlatform()) {
-        const result = await loginWithAndroidGoogle();
+      /* ===================================================
+         ANDROID / CAPACITOR
+      =================================================== */
 
-        console.log("ANDROID GOOGLE LOGIN RESULT:", result);
+      if (Capacitor.isNativePlatform()) {
+        /*
+         * Native Android Google authentication.
+         *
+         * This opens the Google account selector and returns
+         * the authenticated Google account.
+         */
+        const result =
+          await loginWithAndroidGoogle();
+
+        console.log(
+          "ANDROID GOOGLE LOGIN RESULT:",
+          result,
+        );
 
         /*
-         * The Google plugin supports different response types.
-         *
-         * The online response contains the ID token.
+         * The online Google response contains the ID token.
          */
         const idToken =
           "idToken" in result.result
@@ -48,66 +160,40 @@ export default function Home() {
         }
 
         /*
-         * The ID token is a JWT.
-         *
-         * For this first stage, we only decode the payload
-         * so that we can obtain the Google account information.
+         * Decode the ID token locally ONLY to obtain the
+         * basic Google profile information.
          *
          * IMPORTANT:
-         * This is temporary.
+         *
+         * We are NOT treating this as secure authorization.
          *
          * Later the Vercel backend will verify the ID token
-         * before trusting the identity.
+         * properly before creating the real application session.
          */
-        const tokenParts = idToken.split(".");
+        const googleUser =
+          decodeGoogleIdToken(idToken);
 
-        if (tokenParts.length !== 3) {
-          throw new Error("Invalid Google ID token.");
-        }
+        console.log(
+          "ANDROID GOOGLE USER:",
+          {
+            email: googleUser.email,
+            name: googleUser.name,
+          },
+        );
 
-        let payload: {
-          email?: string;
-          name?: string;
-          picture?: string;
-        };
-
-        try {
-          payload = JSON.parse(atob(tokenParts[1]));
-        } catch {
-          throw new Error("Unable to read Google account information.");
-        }
+        /* =================================================
+           TEMPORARY ANDROID USER DATA
+        ================================================= */
 
         /*
-         * Basic Google account information.
-         */
-        const googleUser = {
-          email: payload.email ?? "",
-          name: payload.name ?? "",
-          picture: payload.picture ?? "",
-        };
-
-        /*
-         * Make sure Google actually returned an email.
-         */
-        if (!googleUser.email) {
-          throw new Error(
-            "Google authentication succeeded, but no email address was returned.",
-          );
-        }
-
-        console.log("ANDROID GOOGLE USER:", {
-          email: googleUser.email,
-          name: googleUser.name,
-        });
-
-        /*
-         * TEMPORARY ANDROID SESSION
+         * Save the Google account information so the dashboard
+         * can immediately display:
          *
-         * We are using localStorage only for this first milestone.
+         * - name
+         * - email
+         * - profile picture
          *
-         * Later this will be replaced with a secure server-created
-         * GEO-SHUA session after the Vercel backend verifies the
-         * Google ID token.
+         * This is only our first-stage Android session.
          */
         localStorage.setItem(
           "android_google_user",
@@ -120,25 +206,36 @@ export default function Home() {
         );
 
         /*
-         * Android authentication is successful.
+         * We deliberately do NOT send the token anywhere yet.
          *
-         * For now, go directly to the dashboard.
+         * We also do NOT create the permanent application
+         * session yet.
+         *
+         * First we get Android -> dashboard working.
          */
         router.push("/dashboard");
 
         return;
       }
 
+      /* ===================================================
+         WEB BROWSER
+      =================================================== */
+
       /*
-       * WEB BROWSER
+       * Keep the existing web authentication exactly as it is.
        *
-       * Keep the existing NextAuth Google login.
+       * NextAuth handles the Google login and redirects to
+       * /dashboard.
        */
       await signIn("google", {
         callbackUrl: "/dashboard",
       });
     } catch (error) {
-      console.error("Google sign-in error:", error);
+      console.error(
+        "Google sign-in error:",
+        error,
+      );
 
       const message =
         error instanceof Error
@@ -151,9 +248,16 @@ export default function Home() {
     }
   };
 
+  /* =======================================================
+     UI
+  ======================================================= */
+
   return (
     <main className="relative min-h-[100dvh] overflow-hidden bg-[#050505] text-white">
-      {/* Ambient background glow */}
+      {/* =================================================
+          AMBIENT BACKGROUND
+      ================================================= */}
+
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-[55%] rounded-full bg-yellow-500/[0.07] blur-[120px]" />
 
@@ -162,13 +266,23 @@ export default function Home() {
         <div className="absolute -bottom-32 -right-32 h-72 w-72 rounded-full bg-yellow-500/[0.04] blur-[100px]" />
       </div>
 
-      {/* Subtle texture / vignette */}
+      {/* =================================================
+          SUBTLE VIGNETTE
+      ================================================= */}
+
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.35)_100%)]" />
 
-      {/* Main content */}
+      {/* =================================================
+          MAIN CONTENT
+      ================================================= */}
+
       <div className="relative z-10 flex min-h-[100dvh] items-center justify-center px-6">
         <div className="flex w-full max-w-md flex-col items-center text-center">
-          {/* Logo */}
+
+          {/* =================================================
+              LOGO
+          ================================================= */}
+
           <div className="relative mb-8">
             <div className="absolute inset-0 scale-75 rounded-full bg-yellow-500/10 blur-3xl" />
 
@@ -186,7 +300,10 @@ export default function Home() {
             />
           </div>
 
-          {/* Welcome text */}
+          {/* =================================================
+              WELCOME TEXT
+          ================================================= */}
+
           <div className="mb-8">
             <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
               Welcome
@@ -197,7 +314,10 @@ export default function Home() {
             </p>
           </div>
 
-          {/* Google login */}
+          {/* =================================================
+              GOOGLE LOGIN BUTTON
+          ================================================= */}
+
           <button
             type="button"
             onClick={handleGoogleLogin}
@@ -262,11 +382,16 @@ export default function Home() {
             )}
 
             <span>
-              {loading ? "Signing you in..." : "Continue with Google"}
+              {loading
+                ? "Signing you in..."
+                : "Continue with Google"}
             </span>
           </button>
 
-          {/* Security message */}
+          {/* =================================================
+              SECURITY MESSAGE
+          ================================================= */}
+
           <div className="mt-6 flex items-center gap-2 text-xs text-white/30">
             <svg
               width="14"
@@ -276,15 +401,26 @@ export default function Home() {
               stroke="currentColor"
               strokeWidth="1.8"
             >
-              <rect x="4" y="10" width="16" height="11" rx="2" />
+              <rect
+                x="4"
+                y="10"
+                width="16"
+                height="11"
+                rx="2"
+              />
 
               <path d="M8 10V7a4 4 0 0 1 8 0v3" />
             </svg>
 
-            <span>Secure sign-in with Google</span>
+            <span>
+              Secure sign-in with Google
+            </span>
           </div>
 
-          {/* Footer */}
+          {/* =================================================
+              FOOTER
+          ================================================= */}
+
           <p className="mt-12 text-[11px] uppercase tracking-[0.25em] text-white/20">
             GEO-SHUA COMPANY
           </p>
