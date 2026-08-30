@@ -20,63 +20,81 @@ type GoogleUser = {
    SAFE GOOGLE JWT PAYLOAD DECODER
 ========================================================= */
 
-function decodeGoogleIdToken(idToken: string): GoogleUser {
-  const tokenParts = idToken.split(".");
+function decodeGoogleIdToken(
+  idToken: string,
+): GoogleUser {
+  const tokenParts =
+    idToken.split(".");
 
   if (tokenParts.length !== 3) {
-    throw new Error("Invalid Google ID token.");
+    throw new Error(
+      "Invalid Google ID token.",
+    );
   }
 
-  const payloadPart = tokenParts[1];
+  const payloadPart =
+    tokenParts[1];
 
   if (!payloadPart) {
-    throw new Error("Google ID token payload is missing.");
+    throw new Error(
+      "Google ID token payload is missing.",
+    );
   }
 
   try {
     /*
      * JWT uses base64url rather than normal base64.
      *
-     * Convert it into a format that atob() understands.
+     * Convert it into a format that atob()
+     * understands.
      */
-    const base64 = payloadPart
-      .replace(/-/g, "+")
-      .replace(/_/g, "/");
+    const base64 =
+      payloadPart
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
 
     const paddedBase64 =
       base64 +
       "=".repeat(
-        (4 - (base64.length % 4)) % 4,
+        (4 -
+          (base64.length % 4)) %
+          4,
       );
 
-    const json = atob(paddedBase64);
+    const json =
+      atob(paddedBase64);
 
-    const payload = JSON.parse(json) as {
-      email?: unknown;
-      name?: unknown;
-      picture?: unknown;
-      email_verified?: unknown;
-    };
+    const payload =
+      JSON.parse(json) as {
+        email?: unknown;
+        name?: unknown;
+        picture?: unknown;
+        email_verified?: unknown;
+      };
 
     const email =
-      typeof payload.email === "string"
+      typeof payload.email ===
+      "string"
         ? payload.email.trim()
         : "";
 
     const name =
-      typeof payload.name === "string"
+      typeof payload.name ===
+      "string"
         ? payload.name.trim()
         : "";
 
     const picture =
-      typeof payload.picture === "string"
+      typeof payload.picture ===
+      "string"
         ? payload.picture.trim()
         : "";
 
     /*
-     * We need an email because the email is what will
-     * eventually determine whether this is an administrator
-     * or a registered GEO-SHUA member.
+     * We need an email because the email
+     * will eventually determine whether this
+     * is an administrator or registered
+     * GEO-SHUA member.
      */
     if (!email) {
       throw new Error(
@@ -110,143 +128,222 @@ function decodeGoogleIdToken(idToken: string): GoogleUser {
 ========================================================= */
 
 export default function Home() {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] =
+    useState(false);
 
-  const router = useRouter();
+  const router =
+    useRouter();
 
   /* =======================================================
      GOOGLE LOGIN
   ======================================================= */
 
-  const handleGoogleLogin = async () => {
-    if (loading) {
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      /* ===================================================
-         ANDROID / CAPACITOR
-      =================================================== */
-
-      if (Capacitor.isNativePlatform()) {
-        /*
-         * Native Android Google authentication.
-         *
-         * This opens the Google account selector and returns
-         * the authenticated Google account.
-         */
-        const result =
-          await loginWithAndroidGoogle();
-
-        console.log(
-          "ANDROID GOOGLE LOGIN RESULT:",
-          result,
-        );
-
-        /*
-         * The online Google response contains the ID token.
-         */
-        const idToken =
-          "idToken" in result.result
-            ? result.result.idToken
-            : undefined;
-
-        if (!idToken) {
-          throw new Error(
-            "Google authentication succeeded, but no ID token was returned.",
-          );
-        }
-
-        /*
-         * Decode the ID token locally ONLY to obtain the
-         * basic Google profile information.
-         *
-         * IMPORTANT:
-         *
-         * We are NOT treating this as secure authorization.
-         *
-         * Later the Vercel backend will verify the ID token
-         * properly before creating the real application session.
-         */
-        const googleUser =
-          decodeGoogleIdToken(idToken);
-
-        console.log(
-          "ANDROID GOOGLE USER:",
-          {
-            email: googleUser.email,
-            name: googleUser.name,
-          },
-        );
-
-        /* =================================================
-           TEMPORARY ANDROID USER DATA
-        ================================================= */
-
-        /*
-         * Save the Google account information so the dashboard
-         * can immediately display:
-         *
-         * - name
-         * - email
-         * - profile picture
-         *
-         * This is only our first-stage Android session.
-         */
-        localStorage.setItem(
-          "android_google_user",
-          JSON.stringify(googleUser),
-        );
-
-        localStorage.setItem(
-          "android_google_authenticated",
-          "true",
-        );
-
-        /*
-         * We deliberately do NOT send the token anywhere yet.
-         *
-         * We also do NOT create the permanent application
-         * session yet.
-         *
-         * First we get Android -> dashboard working.
-         */
-        router.push("/dashboard");
-
+  const handleGoogleLogin =
+    async () => {
+      if (loading) {
         return;
       }
 
-      /* ===================================================
-         WEB BROWSER
-      =================================================== */
+      setLoading(true);
 
-      /*
-       * Keep the existing web authentication exactly as it is.
-       *
-       * NextAuth handles the Google login and redirects to
-       * /dashboard.
-       */
-      await signIn("google", {
-        callbackUrl: "/dashboard",
-      });
-    } catch (error) {
-      console.error(
-        "Google sign-in error:",
-        error,
-      );
+      try {
+        /* =================================================
+           ANDROID / CAPACITOR
+        ================================================= */
 
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Google authentication failed.";
+        if (
+          Capacitor.isNativePlatform()
+        ) {
+          /*
+           * Native Android Google authentication.
+           *
+           * This opens the Google account selector
+           * and returns the authenticated Google account.
+           */
+          const result =
+            await loginWithAndroidGoogle();
 
-      alert(message);
+          console.log(
+            "ANDROID GOOGLE LOGIN RESULT:",
+            result,
+          );
 
-      setLoading(false);
-    }
-  };
+          /* -----------------------------------------------
+             GET GOOGLE ID TOKEN
+          ----------------------------------------------- */
+
+          const idToken =
+            "idToken" in
+            result.result
+              ? result.result.idToken
+              : undefined;
+
+          if (!idToken) {
+            throw new Error(
+              "Google authentication succeeded, but no ID token was returned.",
+            );
+          }
+
+          /* -----------------------------------------------
+             DECODE PROFILE FOR UI ONLY
+          ----------------------------------------------- */
+
+          /*
+           * This decoding is ONLY for displaying the
+           * Google user's basic information.
+           *
+           * It is NOT used for authorization.
+           *
+           * The server will independently verify the
+           * Google ID token through the NextAuth
+           * Credentials provider.
+           */
+          const googleUser =
+            decodeGoogleIdToken(
+              idToken,
+            );
+
+          console.log(
+            "ANDROID GOOGLE USER:",
+            {
+              email:
+                googleUser.email,
+              name:
+                googleUser.name,
+            },
+          );
+
+          /* -----------------------------------------------
+             CREATE REAL NEXTAUTH SESSION
+          ----------------------------------------------- */
+
+          /*
+           * THIS IS THE IMPORTANT CHANGE.
+           *
+           * Previously Android only saved the Google
+           * account to localStorage.
+           *
+           * That meant:
+           *
+           *     auth()
+           *
+           * on the server could not see the user.
+           *
+           * We now pass the Google ID token to the
+           * NextAuth Android Credentials provider.
+           *
+           * NextAuth will verify the token server-side
+           * and create the normal NextAuth JWT session.
+           */
+          const sessionResult =
+            await signIn(
+              "android-google",
+              {
+                idToken,
+                redirect: false,
+              },
+            );
+
+          console.log(
+            "ANDROID NEXTAUTH SESSION RESULT:",
+            sessionResult,
+          );
+
+          /* -----------------------------------------------
+             CHECK NEXTAUTH RESULT
+          ----------------------------------------------- */
+
+          if (
+            !sessionResult ||
+            sessionResult.error
+          ) {
+            throw new Error(
+              sessionResult?.error ||
+                "Unable to create the application session.",
+            );
+          }
+
+          /* -----------------------------------------------
+             SAVE PROFILE FOR TOPBAR
+          ----------------------------------------------- */
+
+          /*
+           * These values are ONLY used by the TopBar
+           * for immediate profile display.
+           *
+           * Financial APIs must NEVER trust these values.
+           */
+          localStorage.setItem(
+            "android_google_user",
+            JSON.stringify(
+              googleUser,
+            ),
+          );
+
+          localStorage.setItem(
+            "android_google_authenticated",
+            "true",
+          );
+
+          /* -----------------------------------------------
+             ALLOW SESSION COOKIE TO PERSIST
+          ----------------------------------------------- */
+
+          /*
+           * Give the browser a short moment to persist
+           * the NextAuth session cookie before navigation.
+           */
+          await new Promise<void>(
+            (resolve) => {
+              window.setTimeout(
+                resolve,
+                150,
+              );
+            },
+          );
+
+          /* -----------------------------------------------
+             DASHBOARD
+          ----------------------------------------------- */
+
+          router.replace(
+            "/dashboard",
+          );
+
+          return;
+        }
+
+        /* =================================================
+           WEB BROWSER
+        ================================================= */
+
+        /*
+         * Keep the existing web authentication exactly
+         * as it is.
+         *
+         * NextAuth handles Google login and redirects
+         * to /dashboard.
+         */
+        await signIn("google", {
+          callbackUrl:
+            "/dashboard",
+        });
+      } catch (error) {
+        console.error(
+          "Google sign-in error:",
+          error,
+        );
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Google authentication failed.";
+
+        alert(message);
+
+        setLoading(false);
+      }
+    };
 
   /* =======================================================
      UI
@@ -320,7 +417,9 @@ export default function Home() {
 
           <button
             type="button"
-            onClick={handleGoogleLogin}
+            onClick={
+              handleGoogleLogin
+            }
             disabled={loading}
             className="
               group
