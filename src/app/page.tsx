@@ -2,19 +2,95 @@
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
+import { Capacitor } from "@capacitor/core";
+import { loginWithAndroidGoogle } from "@/lib/auth/androidGoogle";
 
 export default function Home() {
   const [loading, setLoading] = useState(false);
 
   const handleGoogleLogin = async () => {
+    if (loading) {
+      return;
+    }
+
     setLoading(true);
 
     try {
+      /*
+       * ANDROID / CAPACITOR
+       *
+       * Capacitor uses native Google authentication.
+       * This does NOT use NextAuth's browser redirect.
+       */
+      if (Capacitor.isNativePlatform()) {
+        const result = await loginWithAndroidGoogle();
+
+        console.log("ANDROID GOOGLE LOGIN RESULT:", result);
+
+        /*
+         * The plugin can return different Google response types.
+         * Only the online response contains an ID token.
+         */
+        const idToken =
+          "idToken" in result.result
+            ? result.result.idToken
+            : undefined;
+
+        if (!idToken) {
+          throw new Error(
+            "Google authentication succeeded, but no ID token was returned.",
+          );
+        }
+
+        /*
+         * Do NOT log the actual ID token.
+         *
+         * The next stage will send this token securely to:
+         *
+         * /api/auth/android
+         *
+         * where our backend will:
+         *
+         * 1. Verify the Google token
+         * 2. Verify the Google issuer
+         * 3. Verify the audience
+         * 4. Check expiration
+         * 5. Check email_verified
+         * 6. Check the two authorized administrator emails
+         * 7. Create the GEO-SHUA application session
+         *
+         * For this stage we only prove that Android Google
+         * authentication successfully returned an ID token.
+         */
+
+        console.log("ANDROID GOOGLE ID TOKEN RECEIVED");
+
+        alert("Google authentication succeeded.");
+
+        setLoading(false);
+
+        return;
+      }
+
+      /*
+       * WEB BROWSER
+       *
+       * Keep the existing NextAuth Google authentication.
+       * This preserves the web login that already works.
+       */
       await signIn("google", {
         callbackUrl: "/dashboard",
       });
     } catch (error) {
       console.error("Google sign-in error:", error);
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Google authentication failed.";
+
+      alert(message);
+
       setLoading(false);
     }
   };
@@ -36,7 +112,6 @@ export default function Home() {
       {/* Main content */}
       <div className="relative z-10 flex min-h-[100dvh] items-center justify-center px-6">
         <div className="flex w-full max-w-md flex-col items-center text-center">
-
           {/* Logo */}
           <div className="relative mb-8">
             <div className="absolute inset-0 scale-75 rounded-full bg-yellow-500/10 blur-3xl" />
@@ -146,6 +221,7 @@ export default function Home() {
               strokeWidth="1.8"
             >
               <rect x="4" y="10" width="16" height="11" rx="2" />
+
               <path d="M8 10V7a4 4 0 0 1 8 0v3" />
             </svg>
 
