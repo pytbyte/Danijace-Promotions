@@ -8,10 +8,16 @@
  * - Conversion happens at the persistence boundary.
  *
  * Financial records are append-oriented.
- * Repayments, fines and audit records are never permanently deleted.
+ *
+ * Repayments, fines and audit records are never
+ * permanently deleted.
  */
 
-import { ObjectId, type Collection, type Db } from "mongodb";
+import {
+  ObjectId,
+  type Collection,
+  type Db,
+} from "mongodb";
 
 import clientPromise from "@/lib/mongodb";
 
@@ -41,14 +47,26 @@ import {
 ========================================================= */
 
 const DB_NAME =
-  process.env.MONGODB_DB || "geo-shua";
+  process.env.MONGODB_DB ||
+  "geo-shua";
 
-const LOANS_COLLECTION = "loans";
-const LOAN_SETTINGS_COLLECTION = "loanSettings";
-const LOAN_REPAYMENTS_COLLECTION = "loanRepayments";
-const LOAN_FINES_COLLECTION = "loanFines";
-const LOAN_AUDIT_COLLECTION = "loanAudit";
-const COUNTERS_COLLECTION = "counters";
+const LOANS_COLLECTION =
+  "loans";
+
+const LOAN_SETTINGS_COLLECTION =
+  "loanSettings";
+
+const LOAN_REPAYMENTS_COLLECTION =
+  "loanRepayments";
+
+const LOAN_FINES_COLLECTION =
+  "loanFines";
+
+const LOAN_AUDIT_COLLECTION =
+  "loanAudit";
+
+const COUNTERS_COLLECTION =
+  "counters";
 
 const SYSTEM_ACTOR: LoanActor = {
   name: "System",
@@ -58,17 +76,6 @@ const SYSTEM_ACTOR: LoanActor = {
 /* =========================================================
    MONGODB DOCUMENT TYPES
 ========================================================= */
-
-/**
- * IMPORTANT:
- *
- * The application/domain layer uses string IDs.
- *
- * MongoDB relations use ObjectId.
- *
- * Therefore these persistence types deliberately differ
- * from the public domain interfaces.
- */
 
 type LoanDocument = Omit<
   Loan,
@@ -144,6 +151,7 @@ export type LoanSummary = {
   completedLoans: number;
   pendingLoans: number;
   cancelledLoans: number;
+
   totalPrincipal: number;
   totalInterest: number;
   totalFines: number;
@@ -156,8 +164,11 @@ export type LoanSummary = {
 ========================================================= */
 
 type LoanCollections = {
-  client: Awaited<typeof clientPromise>;
+  client: Awaited<
+    typeof clientPromise
+  >;
   db: Db;
+
   loans: Collection<LoanDocument>;
   settings: Collection<LoanSettingsDocument>;
   repayments: Collection<LoanRepaymentDocument>;
@@ -167,36 +178,45 @@ type LoanCollections = {
 };
 
 async function getCollections(): Promise<LoanCollections> {
-  const client = await clientPromise;
-  const db = client.db(DB_NAME);
+  const client =
+    await clientPromise;
+
+  const db =
+    client.db(DB_NAME);
 
   return {
     client,
     db,
 
-    loans: db.collection<LoanDocument>(
-      LOANS_COLLECTION,
-    ),
+    loans:
+      db.collection<LoanDocument>(
+        LOANS_COLLECTION,
+      ),
 
-    settings: db.collection<LoanSettingsDocument>(
-      LOAN_SETTINGS_COLLECTION,
-    ),
+    settings:
+      db.collection<LoanSettingsDocument>(
+        LOAN_SETTINGS_COLLECTION,
+      ),
 
-    repayments: db.collection<LoanRepaymentDocument>(
-      LOAN_REPAYMENTS_COLLECTION,
-    ),
+    repayments:
+      db.collection<LoanRepaymentDocument>(
+        LOAN_REPAYMENTS_COLLECTION,
+      ),
 
-    fines: db.collection<LoanFineDocument>(
-      LOAN_FINES_COLLECTION,
-    ),
+    fines:
+      db.collection<LoanFineDocument>(
+        LOAN_FINES_COLLECTION,
+      ),
 
-    audit: db.collection<LoanAuditDocument>(
-      LOAN_AUDIT_COLLECTION,
-    ),
+    audit:
+      db.collection<LoanAuditDocument>(
+        LOAN_AUDIT_COLLECTION,
+      ),
 
-    counters: db.collection<CounterDocument>(
-      COUNTERS_COLLECTION,
-    ),
+    counters:
+      db.collection<CounterDocument>(
+        COUNTERS_COLLECTION,
+      ),
   };
 }
 
@@ -204,14 +224,30 @@ async function getCollections(): Promise<LoanCollections> {
    HELPERS
 ========================================================= */
 
-function createObjectId(id: string): ObjectId {
-  if (!ObjectId.isValid(id)) {
-    throw new Error("Invalid ID.");
+/**
+ * Convert a valid domain ID to MongoDB ObjectId.
+ *
+ * IDs are deliberately converted only at the
+ * persistence boundary.
+ */
+function createObjectId(
+  id: string,
+): ObjectId {
+  if (
+    typeof id !== "string" ||
+    !ObjectId.isValid(id)
+  ) {
+    throw new Error(
+      "Invalid ID.",
+    );
   }
 
   return new ObjectId(id);
 }
 
+/**
+ * Detect MongoDB duplicate-key errors.
+ */
 function isDuplicateKeyError(
   error: unknown,
 ): boolean {
@@ -219,25 +255,51 @@ function isDuplicateKeyError(
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
-    (error as { code?: unknown }).code === 11000
+    (error as {
+      code?: unknown;
+    }).code === 11000
   );
 }
 
+/**
+ * Return the first validation error.
+ */
+function firstError(
+  errors: string[],
+): string {
+  return (
+    errors[0] ||
+    "Invalid loan data."
+  );
+}
+
+/**
+ * Normalize and validate an actor.
+ */
 function normalizeActor(
   actor?: LoanActor,
 ): LoanActor {
-  if (!actor || typeof actor !== "object") {
+  if (
+    !actor ||
+    typeof actor !== "object"
+  ) {
     return SYSTEM_ACTOR;
   }
 
   const name =
-    typeof actor.name === "string"
-      ? normalizeText(actor.name)
+    typeof actor.name ===
+    "string"
+      ? normalizeText(
+          actor.name,
+        )
       : "";
 
   const email =
-    typeof actor.email === "string"
-      ? actor.email.trim().toLowerCase()
+    typeof actor.email ===
+    "string"
+      ? actor.email
+          .trim()
+          .toLowerCase()
       : "";
 
   if (!name || !email) {
@@ -252,116 +314,25 @@ function normalizeActor(
   };
 }
 
-function firstError(
-  errors: string[],
-): string {
-  return (
-    errors[0] ||
-    "Invalid loan data."
-  );
-}
-
-/* =========================================================
-   MONGO -> DOMAIN CONVERSION
-========================================================= */
-
 /**
- * Never expose MongoDB ObjectId values through the
- * application/domain layer.
+ * Round monetary values to two decimal places.
  */
-
-function toLoan(
-  document: LoanDocument,
-): Loan {
-  if (!document._id) {
+function money(
+  value: number,
+): number {
+  if (
+    !Number.isFinite(value)
+  ) {
     throw new Error(
-      "Loan has no MongoDB ID.",
+      "Invalid monetary value.",
     );
   }
 
-  return {
-    ...document,
-    id: document._id.toString(),
-    memberId: document.memberId.toString(),
-  };
-}
-
-function toSettings(
-  document: LoanSettingsDocument,
-): LoanSettings {
-  if (!document._id) {
-    throw new Error(
-      "Loan settings have no MongoDB ID.",
-    );
-  }
-
-  return {
-    ...document,
-    id: document._id.toString(),
-  };
-}
-
-function toRepayment(
-  document: LoanRepaymentDocument,
-): LoanRepayment {
-  if (!document._id) {
-    throw new Error(
-      "Repayment has no MongoDB ID.",
-    );
-  }
-
-  return {
-    ...document,
-    id: document._id.toString(),
-    loanId: document.loanId.toString(),
-    memberId: document.memberId.toString(),
-  };
-}
-
-function toFine(
-  document: LoanFineDocument,
-): LoanFine {
-  if (!document._id) {
-    throw new Error(
-      "Fine has no MongoDB ID.",
-    );
-  }
-
-  return {
-    ...document,
-    id: document._id.toString(),
-    loanId: document.loanId.toString(),
-    memberId: document.memberId.toString(),
-  };
-}
-
-function toAudit(
-  document: LoanAuditDocument,
-): LoanAuditEntry {
-  if (!document._id) {
-    throw new Error(
-      "Audit entry has no MongoDB ID.",
-    );
-  }
-
-  return {
-    ...document,
-    id: document._id.toString(),
-    loanId: document.loanId.toString(),
-  };
-}
-
-/* =========================================================
-   MONEY / DATE HELPERS
-========================================================= */
-
-/**
- * Round money safely to two decimal places.
- */
-function money(value: number): number {
   return (
     Math.round(
-      (value + Number.EPSILON) * 100,
+      (value +
+        Number.EPSILON) *
+        100,
     ) / 100
   );
 }
@@ -374,9 +345,10 @@ function addDays(
   date: Date,
   days: number,
 ): Date {
-  const result = new Date(
-    date.getTime(),
-  );
+  const result =
+    new Date(
+      date.getTime(),
+    );
 
   result.setDate(
     result.getDate() + days,
@@ -391,7 +363,8 @@ function addDays(
 function startOfDay(
   date: Date,
 ): Date {
-  const result = new Date(date);
+  const result =
+    new Date(date);
 
   result.setHours(
     0,
@@ -409,7 +382,8 @@ function startOfDay(
 function endOfDay(
   date: Date,
 ): Date {
-  const result = startOfDay(date);
+  const result =
+    startOfDay(date);
 
   result.setHours(
     23,
@@ -422,9 +396,7 @@ function endOfDay(
 }
 
 /**
- * Business day key.
- *
- * Used only for diagnostics/idempotency concepts.
+ * Business-day key used for diagnostics.
  */
 function dayKey(
   date: Date,
@@ -440,6 +412,130 @@ function dayKey(
   ].join("-");
 }
 
+/**
+ * Escape user input before placing it
+ * inside a MongoDB regular expression.
+ */
+function escapeRegex(
+  value: string,
+): string {
+  return value.replace(
+    /[.*+?^${}()|[\]\\]/g,
+    "\\$&",
+  );
+}
+
+/* =========================================================
+   MONGO -> DOMAIN
+========================================================= */
+
+/**
+ * Convert MongoDB loan document into
+ * public domain representation.
+ */
+function toLoan(
+  document: LoanDocument,
+): Loan {
+  if (!document._id) {
+    throw new Error(
+      "Loan has no MongoDB ID.",
+    );
+  }
+
+  return {
+    ...document,
+
+    id:
+      document._id.toString(),
+
+    memberId:
+      document.memberId.toString(),
+  };
+}
+
+function toSettings(
+  document: LoanSettingsDocument,
+): LoanSettings {
+  if (!document._id) {
+    throw new Error(
+      "Loan settings have no MongoDB ID.",
+    );
+  }
+
+  return {
+    ...document,
+
+    id:
+      document._id.toString(),
+  };
+}
+
+function toRepayment(
+  document: LoanRepaymentDocument,
+): LoanRepayment {
+  if (!document._id) {
+    throw new Error(
+      "Repayment has no MongoDB ID.",
+    );
+  }
+
+  return {
+    ...document,
+
+    id:
+      document._id.toString(),
+
+    loanId:
+      document.loanId.toString(),
+
+    memberId:
+      document.memberId.toString(),
+  };
+}
+
+function toFine(
+  document: LoanFineDocument,
+): LoanFine {
+  if (!document._id) {
+    throw new Error(
+      "Fine has no MongoDB ID.",
+    );
+  }
+
+  return {
+    ...document,
+
+    id:
+      document._id.toString(),
+
+    loanId:
+      document.loanId.toString(),
+
+    memberId:
+      document.memberId.toString(),
+  };
+}
+
+function toAudit(
+  document: LoanAuditDocument,
+): LoanAuditEntry {
+  if (!document._id) {
+    throw new Error(
+      "Audit entry has no MongoDB ID.",
+    );
+  }
+
+  return {
+    ...document,
+
+    id:
+      document._id.toString(),
+
+    loanId:
+      document.loanId.toString(),
+  };
+}
+
 /* =========================================================
    DATABASE INDEXES
 ========================================================= */
@@ -451,7 +547,8 @@ export async function ensureLoanIndexes(): Promise<void> {
     repayments,
     fines,
     audit,
-  } = await getCollections();
+  } =
+    await getCollections();
 
   await Promise.all([
     loans.createIndex(
@@ -460,7 +557,8 @@ export async function ensureLoanIndexes(): Promise<void> {
       },
       {
         unique: true,
-        name: "loans_loanNumber_unique",
+        name:
+          "loans_loanNumber_unique",
       },
     ),
 
@@ -470,7 +568,8 @@ export async function ensureLoanIndexes(): Promise<void> {
         status: 1,
       },
       {
-        name: "loans_member_status",
+        name:
+          "loans_member_status",
       },
     ),
 
@@ -480,7 +579,8 @@ export async function ensureLoanIndexes(): Promise<void> {
         _id: -1,
       },
       {
-        name: "loans_createdAt_id_desc",
+        name:
+          "loans_createdAt_id_desc",
       },
     ),
 
@@ -499,6 +599,7 @@ export async function ensureLoanIndexes(): Promise<void> {
       {
         loanId: 1,
         transactionDate: 1,
+        _id: 1,
       },
       {
         name:
@@ -521,9 +622,11 @@ export async function ensureLoanIndexes(): Promise<void> {
     fines.createIndex(
       {
         loanId: 1,
+        fineDate: 1,
       },
       {
-        name: "loanFines_loanId",
+        name:
+          "loanFines_loanId_date",
       },
     ),
 
@@ -559,10 +662,13 @@ export async function ensureLoanIndexes(): Promise<void> {
 async function getNextSequence(
   counterId: string,
 ): Promise<number> {
-  const { counters } =
+  const {
+    counters,
+  } =
     await getCollections();
 
-  const now = new Date();
+  const now =
+    new Date();
 
   const result =
     await counters.findOneAndUpdate(
@@ -580,7 +686,8 @@ async function getNextSequence(
       },
       {
         upsert: true,
-        returnDocument: "after",
+        returnDocument:
+          "after",
       },
     );
 
@@ -614,22 +721,36 @@ async function generateLoanNumber(): Promise<string> {
 
 const DEFAULT_SETTINGS: Omit<
   LoanSettings,
-  "id" | "createdAt" | "updatedAt"
+  | "id"
+  | "createdAt"
+  | "updatedAt"
 > = {
-  regularInterestRate: 0.3,
-  emergencyInterestRate: 0.4,
+  regularInterestRate:
+    0.3,
 
-  regularMinimumSavings: 10000,
-  regularSavingsMultiplier: 2,
+  emergencyInterestRate:
+    0.4,
 
-  repaymentGraceDays: 7,
+  regularMinimumSavings:
+    10_000,
 
-  defaultDailyFine: 200,
+  regularSavingsMultiplier:
+    2,
 
-  emergencyLoansEnabled: true,
-  regularLoansEnabled: true,
+  repaymentGraceDays:
+    7,
 
-  updatedBy: SYSTEM_ACTOR,
+  defaultDailyFine:
+    200,
+
+  emergencyLoansEnabled:
+    true,
+
+  regularLoansEnabled:
+    true,
+
+  updatedBy:
+    SYSTEM_ACTOR,
 };
 
 /* =========================================================
@@ -637,7 +758,9 @@ const DEFAULT_SETTINGS: Omit<
 ========================================================= */
 
 export async function getLoanSettings(): Promise<LoanSettings> {
-  const { settings } =
+  const {
+    settings,
+  } =
     await getCollections();
 
   const existing =
@@ -652,13 +775,18 @@ export async function getLoanSettings(): Promise<LoanSettings> {
     );
 
   if (existing) {
-    return toSettings(existing);
+    return toSettings(
+      existing,
+    );
   }
 
-  const now = new Date();
+  const now =
+    new Date();
 
-  const document: LoanSettingsDocument = {
+  const document:
+    LoanSettingsDocument = {
     ...DEFAULT_SETTINGS,
+
     createdAt: now,
     updatedAt: now,
   };
@@ -671,10 +799,15 @@ export async function getLoanSettings(): Promise<LoanSettings> {
 
     return toSettings({
       ...document,
-      _id: result.insertedId,
+      _id:
+        result.insertedId,
     });
   } catch (error) {
-    if (isDuplicateKeyError(error)) {
+    if (
+      isDuplicateKeyError(
+        error,
+      )
+    ) {
       const retry =
         await settings.findOne(
           {},
@@ -687,7 +820,9 @@ export async function getLoanSettings(): Promise<LoanSettings> {
         );
 
       if (retry) {
-        return toSettings(retry);
+        return toSettings(
+          retry,
+        );
       }
     }
 
@@ -704,25 +839,38 @@ export async function updateLoanSettings(
   updatedBy: LoanActor,
 ): Promise<LoanSettings> {
   const actor =
-    normalizeActor(updatedBy);
+    normalizeActor(
+      updatedBy,
+    );
 
   const validation =
-    validateLoanSettings(changes);
+    validateLoanSettings(
+      changes,
+    );
 
   if (!validation.valid) {
     throw new Error(
-      firstError(validation.errors),
+      firstError(
+        validation.errors,
+      ),
     );
   }
 
   const current =
     await getLoanSettings();
 
+  /**
+   * Never allow callers to overwrite system-managed
+   * fields through the changes object.
+   */
   const {
     id: _ignoredId,
-    createdAt: _ignoredCreatedAt,
-    updatedAt: _ignoredUpdatedAt,
-    updatedBy: _ignoredUpdatedBy,
+    createdAt:
+      _ignoredCreatedAt,
+    updatedAt:
+      _ignoredUpdatedAt,
+    updatedBy:
+      _ignoredUpdatedBy,
     ...safeChanges
   } = changes;
 
@@ -731,26 +879,40 @@ export async function updateLoanSettings(
   void _ignoredUpdatedAt;
   void _ignoredUpdatedBy;
 
-  const now = new Date();
+  const now =
+    new Date();
 
-  const { settings } =
+  const {
+    settings,
+  } =
     await getCollections();
 
   const currentId =
-    createObjectId(current.id);
+    createObjectId(
+      current.id,
+    );
 
-  await settings.updateOne(
-    {
-      _id: currentId,
-    },
-    {
-      $set: {
-        ...safeChanges,
-        updatedBy: actor,
-        updatedAt: now,
+  const result =
+    await settings.updateOne(
+      {
+        _id: currentId,
       },
-    },
-  );
+      {
+        $set: {
+          ...safeChanges,
+          updatedBy: actor,
+          updatedAt: now,
+        },
+      },
+    );
+
+  if (
+    result.matchedCount !== 1
+  ) {
+    throw new Error(
+      "Loan settings could not be found for update.",
+    );
+  }
 
   const updated =
     await settings.findOne({
@@ -763,7 +925,9 @@ export async function updateLoanSettings(
     );
   }
 
-  return toSettings(updated);
+  return toSettings(
+    updated,
+  );
 }
 
 /* =========================================================
@@ -772,27 +936,41 @@ export async function updateLoanSettings(
 
 type MemberForLoan = {
   _id: ObjectId;
+
   membershipNumber: string;
+
   firstName: string;
   middleName?: string;
   lastName: string;
+
   status: string;
 };
 
 type SavingsAccountForLoan = {
   _id?: ObjectId;
+
   memberId: ObjectId;
+
   accountNumber: string;
   accountType: string;
+
   balance: number;
+
   status: string;
 };
 
 async function getMemberForLoan(
   memberId: string,
 ): Promise<MemberForLoan> {
-  const { db } =
+  const {
+    db,
+  } =
     await getCollections();
+
+  const objectId =
+    createObjectId(
+      memberId,
+    );
 
   const member =
     await db
@@ -800,9 +978,7 @@ async function getMemberForLoan(
         "members",
       )
       .findOne({
-        _id: createObjectId(
-          memberId,
-        ),
+        _id: objectId,
       });
 
   if (!member) {
@@ -817,7 +993,9 @@ async function getMemberForLoan(
 async function getSavingsBalance(
   memberId: ObjectId,
 ): Promise<number> {
-  const { db } =
+  const {
+    db,
+  } =
     await getCollections();
 
   const account =
@@ -827,8 +1005,12 @@ async function getSavingsBalance(
       )
       .findOne({
         memberId,
-        accountType: "fixed",
-        status: "active",
+
+        accountType:
+          "fixed",
+
+        status:
+          "active",
       });
 
   if (!account) {
@@ -838,7 +1020,8 @@ async function getSavingsBalance(
   }
 
   if (
-    typeof account.balance !== "number" ||
+    typeof account.balance !==
+      "number" ||
     !Number.isFinite(
       account.balance,
     ) ||
@@ -849,7 +1032,9 @@ async function getSavingsBalance(
     );
   }
 
-  return money(account.balance);
+  return money(
+    account.balance,
+  );
 }
 
 /* =========================================================
@@ -859,12 +1044,15 @@ async function getSavingsBalance(
 async function getExistingOpenLoan(
   memberId: ObjectId,
 ): Promise<Loan | null> {
-  const { loans } =
+  const {
+    loans,
+  } =
     await getCollections();
 
   const existing =
     await loans.findOne({
       memberId,
+
       status: {
         $in: [
           "pending",
@@ -885,7 +1073,9 @@ async function getExistingOpenLoan(
 async function getLoanFineTotal(
   loanId: ObjectId,
 ): Promise<number> {
-  const { fines } =
+  const {
+    fines,
+  } =
     await getCollections();
 
   const result =
@@ -899,9 +1089,11 @@ async function getLoanFineTotal(
             loanId,
           },
         },
+
         {
           $group: {
             _id: null,
+
             total: {
               $sum: "$amount",
             },
@@ -912,7 +1104,8 @@ async function getLoanFineTotal(
 
   return money(
     Number(
-      result[0]?.total || 0,
+      result[0]?.total ||
+        0,
     ),
   );
 }
@@ -920,7 +1113,9 @@ async function getLoanFineTotal(
 async function getLoanPaidTotal(
   loanId: ObjectId,
 ): Promise<number> {
-  const { repayments } =
+  const {
+    repayments,
+  } =
     await getCollections();
 
   const result =
@@ -934,9 +1129,11 @@ async function getLoanPaidTotal(
             loanId,
           },
         },
+
         {
           $group: {
             _id: null,
+
             total: {
               $sum: "$amount",
             },
@@ -947,7 +1144,8 @@ async function getLoanPaidTotal(
 
   return money(
     Number(
-      result[0]?.total || 0,
+      result[0]?.total ||
+        0,
     ),
   );
 }
@@ -959,7 +1157,9 @@ async function getLoanPaidTotal(
 async function recalculateLoan(
   loanId: ObjectId,
 ): Promise<Loan> {
-  const { loans } =
+  const {
+    loans,
+  } =
     await getCollections();
 
   const loan =
@@ -1001,28 +1201,38 @@ async function recalculateLoan(
   let status =
     loan.status;
 
+  /**
+   * A loan becomes completed when its entire
+   * liability has been paid.
+   */
   if (
-    loan.status !== "cancelled" &&
+    loan.status !==
+      "cancelled" &&
     outstandingBalance <= 0
   ) {
-    status = "completed";
+    status =
+      "completed";
   }
 
   /**
-   * Do not resurrect a cancelled loan.
+   * Never resurrect a cancelled loan.
    */
-  if (loan.status === "cancelled") {
-    status = "cancelled";
+  if (
+    loan.status ===
+    "cancelled"
+  ) {
+    status =
+      "cancelled";
   }
 
-  const now = new Date();
+  const now =
+    new Date();
 
-  /**
-   * Only update when values actually need changing.
-   */
   const changed =
-    loan.amountPaid !== amountPaid ||
-    loan.totalFines !== totalFines ||
+    loan.amountPaid !==
+      amountPaid ||
+    loan.totalFines !==
+      totalFines ||
     loan.outstandingBalance !==
       outstandingBalance ||
     loan.status !== status;
@@ -1055,7 +1265,9 @@ async function recalculateLoan(
     );
   }
 
-  return toLoan(updated);
+  return toLoan(
+    updated,
+  );
 }
 
 /* =========================================================
@@ -1067,13 +1279,20 @@ async function writeAudit(
   loanNumber: string,
   action: LoanAuditEntry["action"],
   actor: LoanActor,
-  details?: Record<string, unknown>,
+  details?: Record<
+    string,
+    unknown
+  >,
 ): Promise<void> {
-  const { audit } =
+  const {
+    audit,
+  } =
     await getCollections();
 
-  const document: LoanAuditDocument = {
-    _id: new ObjectId(),
+  const document:
+    LoanAuditDocument = {
+    _id:
+      new ObjectId(),
 
     loanId,
 
@@ -1089,7 +1308,8 @@ async function writeAudit(
         }
       : {}),
 
-    createdAt: new Date(),
+    createdAt:
+      new Date(),
   };
 
   await audit.insertOne(
@@ -1107,19 +1327,26 @@ export async function createLoan(
   authorizedBy?: LoanActor,
 ): Promise<Loan> {
   const creator =
-    normalizeActor(createdBy);
+    normalizeActor(
+      createdBy,
+    );
 
   const authorizer =
     normalizeActor(
-      authorizedBy || creator,
+      authorizedBy ||
+        creator,
     );
 
   const validation =
-    validateCreateLoan(input);
+    validateCreateLoan(
+      input,
+    );
 
   if (!validation.valid) {
     throw new Error(
-      firstError(validation.errors),
+      firstError(
+        validation.errors,
+      ),
     );
   }
 
@@ -1128,7 +1355,10 @@ export async function createLoan(
       input.memberId,
     );
 
-  if (member.status !== "active") {
+  if (
+    member.status !==
+    "active"
+  ) {
     throw new Error(
       "Only active members can receive loans.",
     );
@@ -1138,7 +1368,8 @@ export async function createLoan(
     await getLoanSettings();
 
   if (
-    input.type === "emergency" &&
+    input.type ===
+      "emergency" &&
     !settings.emergencyLoansEnabled
   ) {
     throw new Error(
@@ -1147,7 +1378,8 @@ export async function createLoan(
   }
 
   if (
-    input.type === "regular" &&
+    input.type ===
+      "regular" &&
     !settings.regularLoansEnabled
   ) {
     throw new Error(
@@ -1173,7 +1405,10 @@ export async function createLoan(
     | number
     | null = null;
 
-  if (input.type === "regular") {
+  if (
+    input.type ===
+    "regular"
+  ) {
     savingsBalance =
       await getSavingsBalance(
         member._id,
@@ -1202,68 +1437,84 @@ export async function createLoan(
         `Regular loan cannot exceed KSh ${maximumLoan.toLocaleString()} based on current savings.`,
       );
     }
+  }
 
-    /**
-     * Protect against inconsistent legacy data.
-     *
-     * A completed/cancelled record must not be treated
-     * as open, but an outstanding liability on a legacy
-     * completed record must still block a new loan.
-     */
-    const { loans } =
-      await getCollections();
+  /**
+   * Protect against inconsistent legacy data.
+   *
+   * A cancelled loan is not an active liability.
+   *
+   * However, a non-cancelled historical loan that still
+   * contains an outstanding balance must block a new loan.
+   */
+  const {
+    loans,
+  } =
+    await getCollections();
 
-    const previousLoans =
-      await loans
-        .find({
-          memberId:
-            member._id,
-          status: {
-            $ne: "cancelled",
-          },
-        })
-        .toArray();
+  const previousLoans =
+    await loans
+      .find({
+        memberId:
+          member._id,
 
-    for (
-      const previous of previousLoans
+        status: {
+          $ne:
+            "cancelled",
+        },
+      })
+      .toArray();
+
+  for (
+    const previous of
+      previousLoans
+  ) {
+    if (
+      previous.outstandingBalance >
+      0
     ) {
-      if (
-        previous.outstandingBalance >
-        0
-      ) {
-        throw new Error(
-          `Member has an outstanding balance on loan ${previous.loanNumber}.`,
-        );
-      }
+      throw new Error(
+        `Member has an outstanding balance on loan ${previous.loanNumber}.`,
+      );
     }
   }
 
   /**
    * Interest is a snapshot.
    *
-   * Changing future loan settings does not alter
-   * this existing loan.
+   * Changing global settings later does not modify
+   * this loan.
    */
   const rate =
-    input.type === "emergency"
+    input.type ===
+    "emergency"
       ? settings.emergencyInterestRate
       : settings.regularInterestRate;
 
+  const principal =
+    money(
+      input.principal,
+    );
+
   const interestAmount =
     money(
-      input.principal *
+      principal *
         rate,
     );
 
   const dailyFine =
-    input.dailyFine !== undefined
-      ? money(input.dailyFine)
+    input.dailyFine !==
+    undefined
+      ? money(
+          input.dailyFine,
+        )
       : money(
           settings.defaultDailyFine,
         );
 
   const fineSource: FineSource =
-    input.dailyFine !== undefined
+    input.dailyFine !==
+    undefined
       ? "custom"
       : "default";
 
@@ -1292,7 +1543,7 @@ export async function createLoan(
 
   const totalDue =
     money(
-      input.principal +
+      principal +
         interestAmount,
     );
 
@@ -1304,10 +1555,13 @@ export async function createLoan(
       input.guarantor,
     );
 
-  const now = new Date();
+  const now =
+    new Date();
 
-  const loanDocument: LoanDocument = {
-    _id: new ObjectId(),
+  const loanDocument:
+    LoanDocument = {
+    _id:
+      new ObjectId(),
 
     loanNumber,
 
@@ -1328,12 +1582,13 @@ export async function createLoan(
           .join(" "),
       ),
 
-    type: input.type,
+    type:
+      input.type,
 
-    principal:
-      money(input.principal),
+    principal,
 
-    interestRate: rate,
+    interestRate:
+      rate,
 
     interestAmount,
 
@@ -1347,38 +1602,47 @@ export async function createLoan(
 
     totalDue,
 
-    amountPaid: 0,
+    amountPaid:
+      0,
 
-    totalFines: 0,
+    totalFines:
+      0,
 
     outstandingBalance:
       totalDue,
 
-    fineStatus: "active",
+    fineStatus:
+      "active",
 
     guarantor,
 
     /**
-     * Loan authorization is recorded at creation
-     * under the current workflow.
+     * Current workflow authorizes the loan at creation.
      */
-    status: "active",
+    status:
+      "active",
 
-    createdBy: creator,
+    createdBy:
+      creator,
 
-    authorizedBy: authorizer,
+    authorizedBy:
+      authorizer,
 
-    authorizedAt: now,
+    authorizedAt:
+      now,
 
-    createdAt: now,
+    createdAt:
+      now,
 
-    updatedAt: now,
+    updatedAt:
+      now,
   };
 
+  /**
+   * Make sure required unique indexes exist before
+   * inserting financial records.
+   */
   await ensureLoanIndexes();
-
-  const { loans } =
-    await getCollections();
 
   try {
     await loans.insertOne(
@@ -1386,7 +1650,9 @@ export async function createLoan(
     );
   } catch (error) {
     if (
-      isDuplicateKeyError(error)
+      isDuplicateKeyError(
+        error,
+      )
     ) {
       throw new Error(
         "A loan with this loan number already exists. Please retry.",
@@ -1398,7 +1664,8 @@ export async function createLoan(
 
   const created =
     await loans.findOne({
-      _id: loanDocument._id,
+      _id:
+        loanDocument._id,
     });
 
   if (!created) {
@@ -1416,22 +1683,33 @@ export async function createLoan(
     "created",
     creator,
     {
-      type: input.type,
-      principal: loan.principal,
+      type:
+        input.type,
+
+      principal:
+        loan.principal,
+
       interestRate:
         loan.interestRate,
+
       interestAmount:
         loan.interestAmount,
+
       dailyFine:
         loan.dailyFine,
+
       fineSource:
         loan.fineSource,
+
       disbursementDate:
         loan.disbursementDate,
+
       firstDueDate:
         loan.firstDueDate,
+
       totalDue:
         loan.totalDue,
+
       savingsBalance,
     },
   );
@@ -1442,7 +1720,8 @@ export async function createLoan(
     "authorized",
     authorizer,
     {
-      authorizedAt: now,
+      authorizedAt:
+        now,
     },
   );
 
@@ -1456,11 +1735,15 @@ export async function createLoan(
 export async function getLoanById(
   id: string,
 ): Promise<Loan | null> {
-  if (!ObjectId.isValid(id)) {
+  if (
+    !ObjectId.isValid(id)
+  ) {
     return null;
   }
 
-  const { loans } =
+  const {
+    loans,
+  } =
     await getCollections();
 
   const objectId =
@@ -1475,7 +1758,9 @@ export async function getLoanById(
     return null;
   }
 
-  await accrueLoanFines(id);
+  await accrueLoanFines(
+    id,
+  );
 
   return recalculateLoan(
     objectId,
@@ -1490,13 +1775,18 @@ export async function getLoanByNumber(
   loanNumber: string,
 ): Promise<Loan | null> {
   const normalized =
-    loanNumber.trim();
+    typeof loanNumber ===
+    "string"
+      ? loanNumber.trim()
+      : "";
 
   if (!normalized) {
     return null;
   }
 
-  const { loans } =
+  const {
+    loans,
+  } =
     await getCollections();
 
   const loan =
@@ -1505,7 +1795,10 @@ export async function getLoanByNumber(
         normalized,
     });
 
-  if (!loan || !loan._id) {
+  if (
+    !loan ||
+    !loan._id
+  ) {
     return null;
   }
 
@@ -1525,7 +1818,9 @@ export async function getLoanByNumber(
 export async function getLoans(
   options: LoanListOptions = {},
 ): Promise<PaginatedLoans> {
-  const { loans } =
+  const {
+    loans,
+  } =
     await getCollections();
 
   const requestedPage =
@@ -1600,13 +1895,9 @@ export async function getLoans(
       : "";
 
   if (search) {
-    /**
-     * Escape user-provided regex characters.
-     */
     const escaped =
-      search.replace(
-        /[.*+?^${}()|[\]\\]/g,
-        "\\$&",
+      escapeRegex(
+        search,
       );
 
     const regex =
@@ -1620,18 +1911,22 @@ export async function getLoans(
         loanNumber:
           regex,
       },
+
       {
         memberNumber:
           regex,
       },
+
       {
         memberName:
           regex,
       },
+
       {
         "guarantor.name":
           regex,
       },
+
       {
         "guarantor.phone":
           regex,
@@ -1674,10 +1969,12 @@ export async function getLoans(
       .limit(limit)
       .toArray();
 
-  const result: Loan[] = [];
+  const result: Loan[] =
+    [];
 
   for (
-    const document of documents
+    const document of
+      documents
   ) {
     if (!document._id) {
       continue;
@@ -1708,33 +2005,40 @@ export async function getLoans(
 ========================================================= */
 
 /**
- * Create one fine record for every overdue day.
- *
- * Important:
+ * Create one fine record for every overdue calendar day.
  *
  * Due date itself is NOT fined.
- *
- * First fine day is the calendar day after
- * firstDueDate.
  *
  * Example:
  *
  * Disbursement: 1st
- * Grace: 7 days
- * Due: 8th
- * First fine: 9th
+ * Grace:        7 days
+ * Due:          8th
+ * First fine:   9th
+ *
+ * IMPORTANT:
+ * Fine records are append-only.
+ *
+ * A unique database index guarantees that concurrent
+ * requests cannot create two fines for the same
+ * loan/date.
  */
 export async function accrueLoanFines(
   loanId: string,
   asOfDate: Date = new Date(),
 ): Promise<number> {
-  if (!ObjectId.isValid(loanId)) {
+  if (
+    !ObjectId.isValid(
+      loanId,
+    )
+  ) {
     throw new Error(
       "Invalid loan ID.",
     );
   }
 
   if (
+    !(asOfDate instanceof Date) ||
     Number.isNaN(
       asOfDate.getTime(),
     )
@@ -1747,10 +2051,13 @@ export async function accrueLoanFines(
   const {
     loans,
     fines,
-  } = await getCollections();
+  } =
+    await getCollections();
 
   const objectId =
-    createObjectId(loanId);
+    createObjectId(
+      loanId,
+    );
 
   const loan =
     await loans.findOne({
@@ -1763,21 +2070,30 @@ export async function accrueLoanFines(
     );
   }
 
+  /**
+   * Completed and cancelled loans must never receive
+   * additional fines.
+   */
   if (
-    loan.status === "cancelled" ||
-    loan.status === "completed"
+    loan.status ===
+      "cancelled" ||
+    loan.status ===
+      "completed"
   ) {
     return 0;
   }
 
   if (
-    loan.fineStatus === "stopped"
+    loan.fineStatus ===
+    "stopped"
   ) {
     return 0;
   }
 
   const today =
-    startOfDay(asOfDate);
+    startOfDay(
+      asOfDate,
+    );
 
   const firstFineDate =
     addDays(
@@ -1788,12 +2104,14 @@ export async function accrueLoanFines(
     );
 
   if (
-    today < firstFineDate
+    today <
+    firstFineDate
   ) {
     return 0;
   }
 
-  let createdCount = 0;
+  let createdCount =
+    0;
 
   let current =
     new Date(
@@ -1804,23 +2122,27 @@ export async function accrueLoanFines(
     current <= today
   ) {
     const fineDate =
-      startOfDay(current);
+      startOfDay(
+        current,
+      );
 
     /**
-     * Exact calendar-day query.
-     *
-     * This avoids relying on Date object equality
-     * if legacy records contain a different time.
+     * We query by date range because MongoDB Date values
+     * include time.
      */
     const existing =
       await fines.findOne({
         loanId:
           objectId,
+
         fineDate: {
-          $gte: fineDate,
-          $lte: endOfDay(
+          $gte:
             fineDate,
-          ),
+
+          $lte:
+            endOfDay(
+              fineDate,
+            ),
         },
       });
 
@@ -1888,10 +2210,9 @@ export async function accrueLoanFines(
         );
       } catch (error) {
         /**
-         * Concurrent calls are expected to race here.
+         * Concurrent requests can race here.
          *
-         * The unique index guarantees that only one
-         * fine for the loan/date can survive.
+         * The unique database index is the final authority.
          */
         if (
           !isDuplicateKeyError(
@@ -1924,7 +2245,11 @@ export async function stopLoanFines(
     stoppedBy: LoanActor;
   },
 ): Promise<Loan> {
-  if (!ObjectId.isValid(loanId)) {
+  if (
+    !ObjectId.isValid(
+      loanId,
+    )
+  ) {
     throw new Error(
       "Invalid loan ID.",
     );
@@ -1949,11 +2274,15 @@ export async function stopLoanFines(
       input.stoppedBy,
     );
 
-  const { loans } =
+  const {
+    loans,
+  } =
     await getCollections();
 
   const objectId =
-    createObjectId(loanId);
+    createObjectId(
+      loanId,
+    );
 
   const loan =
     await loans.findOne({
@@ -1967,28 +2296,62 @@ export async function stopLoanFines(
   }
 
   if (
-    loan.fineStatus === "stopped"
+    loan.status ===
+    "cancelled"
+  ) {
+    throw new Error(
+      "Fines cannot be changed on a cancelled loan.",
+    );
+  }
+
+  if (
+    loan.status ===
+    "completed"
+  ) {
+    throw new Error(
+      "Fines cannot be changed on a completed loan.",
+    );
+  }
+
+  if (
+    loan.fineStatus ===
+    "stopped"
   ) {
     return recalculateLoan(
       objectId,
     );
   }
 
-  const now = new Date();
+  const now =
+    new Date();
 
-  await loans.updateOne(
-    {
-      _id: objectId,
-    },
-    {
-      $set: {
+  const result =
+    await loans.updateOne(
+      {
+        _id: objectId,
+
         fineStatus:
-          "stopped",
-        updatedAt:
-          now,
+          "active",
       },
-    },
-  );
+      {
+        $set: {
+          fineStatus:
+            "stopped",
+
+          updatedAt:
+            now,
+        },
+      },
+    );
+
+  if (
+    result.modifiedCount !==
+    1
+  ) {
+    return recalculateLoan(
+      objectId,
+    );
+  }
 
   await writeAudit(
     objectId,
@@ -1997,7 +2360,9 @@ export async function stopLoanFines(
     actor,
     {
       reason,
-      stoppedAt: now,
+
+      stoppedAt:
+        now,
     },
   );
 
@@ -2015,7 +2380,11 @@ export async function resumeLoanFines(
   resumedBy: LoanActor,
   reason: string,
 ): Promise<Loan> {
-  if (!ObjectId.isValid(loanId)) {
+  if (
+    !ObjectId.isValid(
+      loanId,
+    )
+  ) {
     throw new Error(
       "Invalid loan ID.",
     );
@@ -2027,8 +2396,11 @@ export async function resumeLoanFines(
     );
 
   const cleanReason =
-    typeof reason === "string"
-      ? normalizeText(reason)
+    typeof reason ===
+    "string"
+      ? normalizeText(
+          reason,
+        )
       : "";
 
   if (!cleanReason) {
@@ -2037,11 +2409,15 @@ export async function resumeLoanFines(
     );
   }
 
-  const { loans } =
+  const {
+    loans,
+  } =
     await getCollections();
 
   const objectId =
-    createObjectId(loanId);
+    createObjectId(
+      loanId,
+    );
 
   const loan =
     await loans.findOne({
@@ -2055,24 +2431,40 @@ export async function resumeLoanFines(
   }
 
   if (
-    loan.status === "cancelled" ||
-    loan.status === "completed"
+    loan.status ===
+      "cancelled" ||
+    loan.status ===
+      "completed"
   ) {
     throw new Error(
       "Fines cannot be resumed on a completed or cancelled loan.",
     );
   }
 
-  const now = new Date();
+  if (
+    loan.fineStatus ===
+    "active"
+  ) {
+    return recalculateLoan(
+      objectId,
+    );
+  }
+
+  const now =
+    new Date();
 
   await loans.updateOne(
     {
       _id: objectId,
+
+      fineStatus:
+        "stopped",
     },
     {
       $set: {
         fineStatus:
           "active",
+
         updatedAt:
           now,
       },
@@ -2087,8 +2479,10 @@ export async function resumeLoanFines(
     {
       action:
         "fines_resumed",
+
       reason:
         cleanReason,
+
       resumedAt:
         now,
     },
@@ -2110,13 +2504,18 @@ export async function resumeLoanFines(
 async function resolveLoanForRepayment(
   input: CreateLoanRepaymentInput,
 ): Promise<LoanDocument> {
-  const { loans } =
+  const {
+    loans,
+  } =
     await getCollections();
 
   let loan:
     | LoanDocument
     | null = null;
 
+  /**
+   * Prefer explicit loan ID.
+   */
   if (input.loanId) {
     if (
       !ObjectId.isValid(
@@ -2130,13 +2529,20 @@ async function resolveLoanForRepayment(
 
     loan =
       await loans.findOne({
-        _id: createObjectId(
-          input.loanId,
-        ),
+        _id:
+          createObjectId(
+            input.loanId,
+          ),
       });
   }
 
-  if (!loan && input.memberId) {
+  /**
+   * Otherwise resolve using member ID.
+   */
+  if (
+    !loan &&
+    input.memberId
+  ) {
     if (
       !ObjectId.isValid(
         input.memberId,
@@ -2152,14 +2558,11 @@ async function resolveLoanForRepayment(
         input.memberId,
       );
 
-    /**
-     * Find all open loans rather than silently
-     * selecting an arbitrary one.
-     */
     const openLoans =
       await loans
         .find({
           memberId,
+
           status: {
             $in: [
               "pending",
@@ -2174,19 +2577,29 @@ async function resolveLoanForRepayment(
         .limit(2)
         .toArray();
 
-    if (openLoans.length > 1) {
+    if (
+      openLoans.length >
+      1
+    ) {
       throw new Error(
         "Member has multiple open loans. Loan ID is required to record this repayment safely.",
       );
     }
 
     loan =
-      openLoans[0] || null;
+      openLoans[0] ||
+      null;
   }
 
   if (!loan) {
     throw new Error(
       "No active loan could be resolved for this repayment.",
+    );
+  }
+
+  if (!loan._id) {
+    throw new Error(
+      "Resolved loan has no MongoDB ID.",
     );
   }
 
@@ -2207,14 +2620,22 @@ export async function createLoanRepayment(
 
   if (!validation.valid) {
     throw new Error(
-      firstError(validation.errors),
+      firstError(
+        validation.errors,
+      ),
     );
   }
 
   const {
     repayments,
-  } = await getCollections();
+  } =
+    await getCollections();
 
+  /**
+   * Normalize the transaction reference.
+   *
+   * This becomes the immutable idempotency key.
+   */
   const reference =
     normalizeText(
       input.transactionReference,
@@ -2255,9 +2676,20 @@ export async function createLoanRepayment(
     );
   }
 
+  if (
+    loan.status ===
+    "completed"
+  ) {
+    throw new Error(
+      "Completed loans cannot receive repayments.",
+    );
+  }
+
   /**
-   * Reconcile overdue fines before calculating
-   * the current amount owed.
+   * The transaction date is the financial date.
+   *
+   * Fines are accrued up to this date before
+   * calculating the outstanding balance.
    */
   await accrueLoanFines(
     loan._id.toString(),
@@ -2270,7 +2702,9 @@ export async function createLoanRepayment(
     );
 
   const amount =
-    money(input.amount);
+    money(
+      input.amount,
+    );
 
   if (
     amount >
@@ -2278,6 +2712,30 @@ export async function createLoanRepayment(
   ) {
     throw new Error(
       `Repayment exceeds the outstanding balance of KSh ${currentLoan.outstandingBalance.toLocaleString()}.`,
+    );
+  }
+
+  /**
+   * Protect against zero/invalid normalized amounts.
+   */
+  if (amount <= 0) {
+    throw new Error(
+      "Repayment amount must be greater than zero.",
+    );
+  }
+
+  const transactionDate =
+    new Date(
+      input.transactionDate,
+    );
+
+  if (
+    Number.isNaN(
+      transactionDate.getTime(),
+    )
+  ) {
+    throw new Error(
+      "Invalid transaction date.",
     );
   }
 
@@ -2303,10 +2761,7 @@ export async function createLoanRepayment(
     transactionReference:
       reference,
 
-    transactionDate:
-      new Date(
-        input.transactionDate,
-      ),
+    transactionDate,
 
     source:
       input.source,
@@ -2332,17 +2787,14 @@ export async function createLoanRepayment(
   };
 
   try {
+    /**
+     * Unique transactionReference index provides
+     * the final idempotency guarantee.
+     */
     await repayments.insertOne(
       document,
     );
   } catch (error) {
-    /**
-     * SMS/M-Pesa idempotency.
-     *
-     * If another request inserted this transaction
-     * at the same time, return that existing transaction
-     * rather than creating another financial record.
-     */
     if (
       isDuplicateKeyError(
         error,
@@ -2397,8 +2849,8 @@ export async function createLoanRepayment(
   );
 
   /**
-   * Recalculate after the append-only transaction
-   * has been successfully stored.
+   * Recalculate AFTER the append-only transaction
+   * has been successfully persisted.
    */
   const updatedLoan =
     await recalculateLoan(
@@ -2406,8 +2858,8 @@ export async function createLoanRepayment(
     );
 
   /**
-   * Write completion audit once the loan transitions
-   * into completed state.
+   * Write completion audit exactly when the loan
+   * transitions into completed state.
    */
   if (
     updatedLoan.status ===
@@ -2423,10 +2875,13 @@ export async function createLoanRepayment(
       {
         completedAt:
           new Date(),
+
         finalAmountPaid:
           updatedLoan.amountPaid,
+
         totalDue:
           updatedLoan.totalDue,
+
         totalFines:
           updatedLoan.totalFines,
       },
@@ -2443,7 +2898,11 @@ export async function createLoanRepayment(
 export async function getLoanRepayments(
   loanId: string,
 ): Promise<LoanRepayment[]> {
-  if (!ObjectId.isValid(loanId)) {
+  if (
+    !ObjectId.isValid(
+      loanId,
+    )
+  ) {
     throw new Error(
       "Invalid loan ID.",
     );
@@ -2451,10 +2910,13 @@ export async function getLoanRepayments(
 
   const {
     repayments,
-  } = await getCollections();
+  } =
+    await getCollections();
 
   const objectId =
-    createObjectId(loanId);
+    createObjectId(
+      loanId,
+    );
 
   const documents =
     await repayments
@@ -2463,9 +2925,14 @@ export async function getLoanRepayments(
           objectId,
       })
       .sort({
-        transactionDate: -1,
-        createdAt: -1,
-        _id: -1,
+        transactionDate:
+          -1,
+
+        createdAt:
+          -1,
+
+        _id:
+          -1,
       })
       .toArray();
 
@@ -2481,17 +2948,25 @@ export async function getLoanRepayments(
 export async function getLoanFines(
   loanId: string,
 ): Promise<LoanFine[]> {
-  if (!ObjectId.isValid(loanId)) {
+  if (
+    !ObjectId.isValid(
+      loanId,
+    )
+  ) {
     throw new Error(
       "Invalid loan ID.",
     );
   }
 
-  const { fines } =
+  const {
+    fines,
+  } =
     await getCollections();
 
   const objectId =
-    createObjectId(loanId);
+    createObjectId(
+      loanId,
+    );
 
   const documents =
     await fines
@@ -2500,8 +2975,11 @@ export async function getLoanFines(
           objectId,
       })
       .sort({
-        fineDate: -1,
-        _id: -1,
+        fineDate:
+          -1,
+
+        _id:
+          -1,
       })
       .toArray();
 
@@ -2517,17 +2995,25 @@ export async function getLoanFines(
 export async function getLoanAudit(
   loanId: string,
 ): Promise<LoanAuditEntry[]> {
-  if (!ObjectId.isValid(loanId)) {
+  if (
+    !ObjectId.isValid(
+      loanId,
+    )
+  ) {
     throw new Error(
       "Invalid loan ID.",
     );
   }
 
-  const { audit } =
+  const {
+    audit,
+  } =
     await getCollections();
 
   const objectId =
-    createObjectId(loanId);
+    createObjectId(
+      loanId,
+    );
 
   const documents =
     await audit
@@ -2536,8 +3022,11 @@ export async function getLoanAudit(
           objectId,
       })
       .sort({
-        createdAt: 1,
-        _id: 1,
+        createdAt:
+          1,
+
+        _id:
+          1,
       })
       .toArray();
 
@@ -2555,7 +3044,11 @@ export async function cancelLoan(
   cancelledBy: LoanActor,
   reason: string,
 ): Promise<Loan> {
-  if (!ObjectId.isValid(loanId)) {
+  if (
+    !ObjectId.isValid(
+      loanId,
+    )
+  ) {
     throw new Error(
       "Invalid loan ID.",
     );
@@ -2567,8 +3060,11 @@ export async function cancelLoan(
     );
 
   const cleanReason =
-    typeof reason === "string"
-      ? normalizeText(reason)
+    typeof reason ===
+    "string"
+      ? normalizeText(
+          reason,
+        )
       : "";
 
   if (!cleanReason) {
@@ -2577,11 +3073,15 @@ export async function cancelLoan(
     );
   }
 
-  const { loans } =
+  const {
+    loans,
+  } =
     await getCollections();
 
   const objectId =
-    createObjectId(loanId);
+    createObjectId(
+      loanId,
+    );
 
   const loan =
     await loans.findOne({
@@ -2607,24 +3107,54 @@ export async function cancelLoan(
     loan.status ===
     "cancelled"
   ) {
-    return toLoan(loan);
+    return recalculateLoan(
+      objectId,
+    );
   }
 
-  const now = new Date();
+  const now =
+    new Date();
 
-  await loans.updateOne(
-    {
-      _id: objectId,
-    },
-    {
-      $set: {
-        status:
-          "cancelled",
-        updatedAt:
-          now,
+  const result =
+    await loans.updateOne(
+      {
+        _id: objectId,
+
+        status: {
+          $ne:
+            "cancelled",
+        },
       },
-    },
-  );
+      {
+        $set: {
+          status:
+            "cancelled",
+
+          updatedAt:
+            now,
+        },
+      },
+    );
+
+  if (
+    result.modifiedCount !==
+    1
+  ) {
+    const current =
+      await loans.findOne({
+        _id: objectId,
+      });
+
+    if (!current) {
+      throw new Error(
+        "Loan not found after cancellation attempt.",
+      );
+    }
+
+    return recalculateLoan(
+      objectId,
+    );
+  }
 
   await writeAudit(
     objectId,
@@ -2634,6 +3164,7 @@ export async function cancelLoan(
     {
       reason:
         cleanReason,
+
       cancelledAt:
         now,
     },
@@ -2649,23 +3180,30 @@ export async function cancelLoan(
 ========================================================= */
 
 export async function getLoanSummary(): Promise<LoanSummary> {
-  const { loans } =
+  const {
+    loans,
+  } =
     await getCollections();
 
   const documents =
-    await loans.find({}).toArray();
+    await loans
+      .find({})
+      .toArray();
 
   /**
-   * Accrue fines for open loans.
+   * Accrue fines for open loans first.
    */
   for (
-    const loan of documents
+    const loan of
+      documents
   ) {
     if (
       loan._id &&
       (
-        loan.status === "active" ||
-        loan.status === "pending"
+        loan.status ===
+          "active" ||
+        loan.status ===
+          "pending"
       )
     ) {
       await accrueLoanFines(
@@ -2675,21 +3213,40 @@ export async function getLoanSummary(): Promise<LoanSummary> {
   }
 
   const refreshed =
-    await loans.find({}).toArray();
+    await loans
+      .find({})
+      .toArray();
 
-  let totalPrincipal = 0;
-  let totalInterest = 0;
-  let totalFines = 0;
-  let totalPaid = 0;
-  let totalOutstanding = 0;
+  let totalPrincipal =
+    0;
 
-  let activeLoans = 0;
-  let completedLoans = 0;
-  let pendingLoans = 0;
-  let cancelledLoans = 0;
+  let totalInterest =
+    0;
+
+  let totalFines =
+    0;
+
+  let totalPaid =
+    0;
+
+  let totalOutstanding =
+    0;
+
+  let activeLoans =
+    0;
+
+  let completedLoans =
+    0;
+
+  let pendingLoans =
+    0;
+
+  let cancelledLoans =
+    0;
 
   for (
-    const loan of refreshed
+    const loan of
+      refreshed
   ) {
     if (!loan._id) {
       continue;
@@ -2751,18 +3308,28 @@ export async function getLoanSummary(): Promise<LoanSummary> {
     cancelledLoans,
 
     totalPrincipal:
-      money(totalPrincipal),
+      money(
+        totalPrincipal,
+      ),
 
     totalInterest:
-      money(totalInterest),
+      money(
+        totalInterest,
+      ),
 
     totalFines:
-      money(totalFines),
+      money(
+        totalFines,
+      ),
 
     totalPaid:
-      money(totalPaid),
+      money(
+        totalPaid,
+      ),
 
     totalOutstanding:
-      money(totalOutstanding),
+      money(
+        totalOutstanding,
+      ),
   };
 }
