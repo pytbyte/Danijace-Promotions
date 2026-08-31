@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -12,11 +11,23 @@ import {
   AlertCircle,
   ArrowRight,
   Bell,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  FileText,
   HandCoins,
+  Inbox,
+  Info,
+  Loader2,
   RefreshCw,
+  Send,
+  Server,
+  Smartphone,
   Users,
   Wallet,
-  FileText,
+  XCircle,
+  Zap,
 } from "lucide-react";
 
 import TopBar from "@/components/dashboard/TopBar";
@@ -113,6 +124,30 @@ type NotificationRecord = {
   updatedAt?: string;
   read?: boolean;
   status?: string;
+};
+
+type SmsLogStatus =
+  | "scanning"
+  | "received"
+  | "sending"
+  | "processed"
+  | "duplicate"
+  | "ignored"
+  | "financial-change"
+  | "error"
+  | "complete";
+
+type SmsLog = {
+  id: string;
+  status: SmsLogStatus;
+  timestamp: number;
+  address: string | null;
+  date?: number;
+  body?: string;
+  message?: string;
+  httpStatus?: number;
+  response?: unknown;
+  error?: string;
 };
 
 const DEFAULT_STATS: DashboardStats = {
@@ -221,6 +256,20 @@ function formatCurrency(value: number) {
   )}`;
 }
 
+function formatSmsDate(date?: number) {
+  if (!date || !Number.isFinite(date)) {
+    return "Unknown date";
+  }
+
+  return new Date(date).toLocaleString(
+    "en-KE",
+    {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }
+  );
+}
+
 /* =========================================================
    API RESPONSE EXTRACTION
 ========================================================= */
@@ -281,17 +330,71 @@ export default function DashboardPage() {
   const [mounted, setMounted] =
     useState(false);
 
+  /* =======================================================
+     SMS DEBUG STATE
+  ======================================================= */
+
+  const [smsLogs, setSmsLogs] =
+    useState<SmsLog[]>([]);
+
+  const [smsRunning, setSmsRunning] =
+    useState(false);
+
+  const [smsExpanded, setSmsExpanded] =
+    useState(true);
+
+  const [smsSummary, setSmsSummary] =
+    useState({
+      found: 0,
+      processed: 0,
+      duplicates: 0,
+      ignored: 0,
+      errors: 0,
+      financialChanges: 0,
+    });
+
   /*
-   * Prevent duplicate SMS synchronization during the
-   * same dashboard lifecycle.
+   * Prevent duplicate SMS synchronization.
    */
   const smsSyncStarted = useRef(false);
 
   /*
-   * Prevent dashboard refresh after the component has
-   * been unmounted.
+   * Prevent dashboard updates after unmount.
    */
   const dashboardMounted = useRef(true);
+
+  /*
+   * Abort active SMS requests on unmount.
+   */
+  const smsAbortController =
+    useRef<AbortController | null>(null);
+
+  /* =======================================================
+     SMS LOG HELPER
+  ======================================================= */
+
+  const addSmsLog = useCallback(
+    (log: Omit<SmsLog, "id" | "timestamp">) => {
+      const entry: SmsLog = {
+        ...log,
+        id:
+          typeof crypto !== "undefined" &&
+          typeof crypto.randomUUID ===
+            "function"
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random()}`,
+        timestamp: Date.now(),
+      };
+
+      setSmsLogs((previous) => [
+        ...previous,
+        entry,
+      ]);
+
+      return entry.id;
+    },
+    []
+  );
 
   /* =======================================================
      MOUNT / UNMOUNT
@@ -304,6 +407,8 @@ export default function DashboardPage() {
 
     return () => {
       dashboardMounted.current = false;
+
+      smsAbortController.current?.abort();
     };
   }, []);
 
@@ -321,13 +426,6 @@ export default function DashboardPage() {
         }
 
         setError("");
-
-        /*
-         * Run the domain APIs independently.
-         *
-         * A failure in one domain must not destroy
-         * the entire dashboard.
-         */
 
         const [
           savingsResponse,
@@ -635,31 +733,22 @@ export default function DashboardPage() {
 
         const nextStats: DashboardStats = {
           members: totalMembers,
-
           activeMembers,
-
           savings: safeNumber(
             savings.totalBalance
           ),
-
           deposits: safeNumber(
             savings.totalDeposits
           ),
-
           adjustments: safeNumber(
             savings.totalAdjustments
           ),
-
           reversals: safeNumber(
             savings.totalReversals
           ),
-
           loans: loanCount,
-
           outstandingLoans,
-
           defaulters,
-
           notifications:
             notificationCount,
         };
@@ -674,10 +763,6 @@ export default function DashboardPage() {
 
         const nextActivities: DashboardActivity[] =
           [];
-
-        /*
-         * MEMBER ACTIVITY
-         */
 
         members
           .slice()
@@ -703,26 +788,18 @@ export default function DashboardPage() {
                   member,
                   String(index)
                 )}`,
-
                 title:
                   "Member activity",
-
                 description:
                   `${name} was recently recorded.`,
-
                 time:
                   formatRelativeTime(
                     getDate(member)
                   ),
-
                 type: "member",
               });
             }
           );
-
-        /*
-         * LOAN ACTIVITY
-         */
 
         loans
           .slice()
@@ -743,28 +820,20 @@ export default function DashboardPage() {
                   loan,
                   String(index)
                 )}`,
-
                 title:
                   "Loan activity",
-
                 description:
                   loan.memberName
                     ? `${loan.memberName} has loan activity.`
                     : "A loan record was recently updated.",
-
                 time:
                   formatRelativeTime(
                     getDate(loan)
                   ),
-
                 type: "loan",
               });
             }
           );
-
-        /*
-         * NOTIFICATION ACTIVITY
-         */
 
         notifications
           .slice()
@@ -788,36 +857,24 @@ export default function DashboardPage() {
                   notification,
                   String(index)
                 )}`,
-
                 title:
                   notification.title ||
                   "Notification",
-
                 description:
                   notification.message ||
                   notification.description ||
                   "New notification.",
-
                 time:
                   formatRelativeTime(
                     getDate(
                       notification
                     )
                   ),
-
                 type:
                   "notification",
               });
             }
           );
-
-        /*
-         * The savings summary currently supplies
-         * aggregate figures only.
-         *
-         * We intentionally do not manufacture
-         * savings activity records.
-         */
 
         if (dashboardMounted.current) {
           setActivities(
@@ -881,23 +938,17 @@ export default function DashboardPage() {
 
   /* =======================================================
      SMS INBOX SYNCHRONIZATION
-     
-     Runs when the dashboard opens.
-
-     IMPORTANT:
-     - Dashboard loading is independent from SMS loading.
-     - One bad SMS cannot stop the remaining messages.
-     - Duplicate financial transactions are expected to be
-       rejected by /api/sms/process.
-     - Dashboard is refreshed once if financial data changed.
   ======================================================= */
 
   const syncSmsInbox = useCallback(
     async () => {
       if (smsSyncStarted.current) {
-        console.log(
-          "[SMS] Synchronization already started."
-        );
+        addSmsLog({
+          status: "ignored",
+          address: null,
+          message:
+            "SMS synchronization was already started for this dashboard lifecycle.",
+        });
 
         return;
       }
@@ -907,14 +958,34 @@ export default function DashboardPage() {
       const controller =
         new AbortController();
 
-      try {
-        console.log(
-          "[SMS] Starting inbox synchronization..."
-        );
+      smsAbortController.current =
+        controller;
 
-        /*
-         * Read the current Android SMS inbox.
-         */
+      setSmsRunning(true);
+
+      setSmsLogs([]);
+
+      setSmsSummary({
+        found: 0,
+        processed: 0,
+        duplicates: 0,
+        ignored: 0,
+        errors: 0,
+        financialChanges: 0,
+      });
+
+      addSmsLog({
+        status: "scanning",
+        address: null,
+        message:
+          "Starting Android SMS inbox scan...",
+      });
+
+      try {
+        /* =================================================
+           READ ANDROID INBOX
+        ================================================= */
+
         const result =
           await SmsReader.readInbox();
 
@@ -923,57 +994,104 @@ export default function DashboardPage() {
             ? result.messages
             : [];
 
-        console.log(
-          `[SMS] Found ${messages.length} messages.`
-        );
+        setSmsSummary((previous) => ({
+          ...previous,
+          found: messages.length,
+        }));
+
+        addSmsLog({
+          status: "received",
+          address: null,
+          message:
+            `Android SMS reader returned ${messages.length} message${
+              messages.length === 1
+                ? ""
+                : "s"
+            }.`,
+          response: result.diagnostic,
+        });
 
         if (messages.length === 0) {
-          console.log(
-            "[SMS] No SMS messages found."
-          );
+          addSmsLog({
+            status: "complete",
+            address: null,
+            message:
+              "SMS inbox is empty. Nothing to process.",
+          });
 
           return;
         }
 
-        /*
-         * Track whether at least one SMS caused
-         * a financial change.
-         *
-         * We refresh the dashboard only once after
-         * the complete batch has been processed.
-         */
         let financialChange = false;
 
-        /*
-         * Process sequentially.
-         *
-         * This is deliberately NOT Promise.all().
-         *
-         * Sequential processing reduces the possibility
-         * of racing financial transactions against each
-         * other and makes server logs easier to audit.
-         */
-        for (const sms of messages) {
-          if (controller.signal.aborted) {
-            console.log(
-              "[SMS] Synchronization aborted."
-            );
+        /* =================================================
+           PROCESS EACH SMS
+        ================================================= */
+
+        for (
+          let index = 0;
+          index < messages.length;
+          index++
+        ) {
+          if (
+            controller.signal.aborted
+          ) {
+            addSmsLog({
+              status: "ignored",
+              address: null,
+              message:
+                "SMS synchronization was aborted.",
+            });
 
             break;
           }
 
-          /*
-           * Basic client-side validation.
-           *
-           * The server MUST perform its own validation.
-           */
+          const sms = messages[index];
+
+          const smsLabel = `SMS ${index + 1}/${messages.length}`;
+
+          /* -----------------------------------------------
+             SHOW RECEIVED SMS
+          ------------------------------------------------ */
+
+          addSmsLog({
+            status: "received",
+            address:
+              sms.address ?? null,
+            date: sms.date,
+            body: sms.body,
+            message:
+              `${smsLabel}: SMS received from ${
+                sms.address ||
+                "unknown sender"
+              }.`,
+          });
+
+          /* -----------------------------------------------
+             VALIDATE SMS
+          ------------------------------------------------ */
+
           if (
             typeof sms.body !== "string" ||
             sms.body.trim().length === 0
           ) {
-            console.warn(
-              "[SMS] Skipping SMS with empty body."
-            );
+            setSmsSummary((previous) => ({
+              ...previous,
+              errors:
+                previous.errors + 1,
+            }));
+
+            addSmsLog({
+              status: "error",
+              address:
+                sms.address ?? null,
+              date: sms.date,
+              body: sms.body,
+              message:
+                `${smsLabel}: SMS skipped because the body is empty.`,
+              error:
+                "SMS body is empty.",
+            });
 
             continue;
           }
@@ -982,12 +1100,40 @@ export default function DashboardPage() {
             typeof sms.date !== "number" ||
             !Number.isFinite(sms.date)
           ) {
-            console.warn(
-              "[SMS] Skipping SMS with invalid date."
-            );
+            setSmsSummary((previous) => ({
+              ...previous,
+              errors:
+                previous.errors + 1,
+            }));
+
+            addSmsLog({
+              status: "error",
+              address:
+                sms.address ?? null,
+              date: sms.date,
+              body: sms.body,
+              message:
+                `${smsLabel}: SMS skipped because its date is invalid.`,
+              error:
+                "SMS date is invalid.",
+            });
 
             continue;
           }
+
+          /* -----------------------------------------------
+             SEND TO SERVER
+          ------------------------------------------------ */
+
+          addSmsLog({
+            status: "sending",
+            address:
+              sms.address ?? null,
+            date: sms.date,
+            body: sms.body,
+            message:
+              `${smsLabel}: Sending SMS to /api/sms/process...`,
+          });
 
           try {
             const response =
@@ -1020,6 +1166,10 @@ export default function DashboardPage() {
                 }
               );
 
+            /* ---------------------------------------------
+               PARSE SERVER RESPONSE
+            --------------------------------------------- */
+
             let data:
               | SmsProcessResponse
               | null = null;
@@ -1028,34 +1178,43 @@ export default function DashboardPage() {
               data =
                 (await response.json()) as SmsProcessResponse;
             } catch {
-              /*
-               * The endpoint returned a non-JSON
-               * response. Treat it as a failed SMS
-               * without stopping the batch.
-               */
               data = null;
             }
 
-            if (!response.ok) {
-              console.error(
-                "[SMS] Processing failed:",
-                {
-                  status:
-                    response.status,
+            /* ---------------------------------------------
+               HTTP ERROR
+            --------------------------------------------- */
 
-                  error:
-                    data?.error ||
-                    "Unknown SMS processing error.",
-                }
-              );
+            if (!response.ok) {
+              setSmsSummary((previous) => ({
+                ...previous,
+                errors:
+                  previous.errors + 1,
+              }));
+
+              addSmsLog({
+                status: "error",
+                address:
+                  sms.address ?? null,
+                date: sms.date,
+                body: sms.body,
+                httpStatus:
+                  response.status,
+                response: data,
+                message:
+                  `${smsLabel}: Server rejected the SMS.`,
+                error:
+                  data?.error ||
+                  `HTTP ${response.status}`,
+              });
 
               continue;
             }
 
-            /*
-             * The API tells us whether this SMS
-             * actually changed financial records.
-             */
+            /* ---------------------------------------------
+               FINANCIAL CHANGE
+            --------------------------------------------- */
+
             if (
               data?.financialChange ===
                 true ||
@@ -1063,145 +1222,286 @@ export default function DashboardPage() {
               data?.updated === true
             ) {
               financialChange = true;
+
+              setSmsSummary((previous) => ({
+                ...previous,
+                financialChanges:
+                  previous.financialChanges +
+                  1,
+              }));
+
+              addSmsLog({
+                status:
+                  "financial-change",
+                address:
+                  sms.address ?? null,
+                date: sms.date,
+                body: sms.body,
+                httpStatus:
+                  response.status,
+                response: data,
+                message:
+                  `${smsLabel}: Financial records changed.`,
+              });
             }
+
+            /* ---------------------------------------------
+               DUPLICATE
+            --------------------------------------------- */
 
             if (
               data?.duplicate === true
             ) {
-              console.log(
-                "[SMS] Duplicate ignored."
-              );
+              setSmsSummary((previous) => ({
+                ...previous,
+                duplicates:
+                  previous.duplicates + 1,
+              }));
+
+              addSmsLog({
+                status: "duplicate",
+                address:
+                  sms.address ?? null,
+                date: sms.date,
+                body: sms.body,
+                httpStatus:
+                  response.status,
+                response: data,
+                message:
+                  `${smsLabel}: Duplicate transaction detected and safely ignored.`,
+              });
 
               continue;
             }
+
+            /* ---------------------------------------------
+               IGNORED
+            --------------------------------------------- */
 
             if (
               data?.ignored === true
             ) {
-              console.log(
-                "[SMS] SMS ignored by processor."
-              );
+              setSmsSummary((previous) => ({
+                ...previous,
+                ignored:
+                  previous.ignored + 1,
+              }));
+
+              addSmsLog({
+                status: "ignored",
+                address:
+                  sms.address ?? null,
+                date: sms.date,
+                body: sms.body,
+                httpStatus:
+                  response.status,
+                response: data,
+                message:
+                  `${smsLabel}: SMS was received but ignored by the server processor.`,
+              });
 
               continue;
             }
+
+            /* ---------------------------------------------
+               PROCESSED
+            --------------------------------------------- */
 
             if (
               data?.processed === true
             ) {
-              console.log(
-                "[SMS] SMS processed successfully."
-              );
+              setSmsSummary((previous) => ({
+                ...previous,
+                processed:
+                  previous.processed + 1,
+              }));
+
+              addSmsLog({
+                status: "processed",
+                address:
+                  sms.address ?? null,
+                date: sms.date,
+                body: sms.body,
+                httpStatus:
+                  response.status,
+                response: data,
+                message:
+                  `${smsLabel}: SMS processed successfully.`,
+              });
 
               continue;
             }
 
-            console.log(
-              "[SMS] SMS API response:",
-              data
-            );
+            /* ---------------------------------------------
+               UNKNOWN SUCCESS RESPONSE
+            --------------------------------------------- */
+
+            addSmsLog({
+              status: "complete",
+              address:
+                sms.address ?? null,
+              date: sms.date,
+              body: sms.body,
+              httpStatus:
+                response.status,
+              response: data,
+              message:
+                `${smsLabel}: Server responded successfully, but returned no recognized processing state.`,
+            });
           } catch (error) {
-            /*
-             * AbortError is expected when the component
-             * is unmounted.
-             */
+            /* ---------------------------------------------
+               ABORT
+            --------------------------------------------- */
+
             if (
               error instanceof DOMException &&
               error.name ===
                 "AbortError"
             ) {
-              console.log(
-                "[SMS] SMS request aborted."
-              );
+              addSmsLog({
+                status: "ignored",
+                address:
+                  sms.address ?? null,
+                date: sms.date,
+                body: sms.body,
+                message:
+                  `${smsLabel}: Request aborted.`,
+              });
 
               break;
             }
 
-            /*
-             * One malformed/unprocessable SMS must
-             * never stop the entire inbox scan.
-             */
-            console.error(
-              "[SMS] Individual SMS processing error:",
-              error
-            );
+            /* ---------------------------------------------
+               NETWORK / UNKNOWN ERROR
+            --------------------------------------------- */
+
+            setSmsSummary((previous) => ({
+              ...previous,
+              errors:
+                previous.errors + 1,
+            }));
+
+            addSmsLog({
+              status: "error",
+              address:
+                sms.address ?? null,
+              date: sms.date,
+              body: sms.body,
+              message:
+                `${smsLabel}: Request failed.`,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Unknown request error.",
+            });
           }
         }
 
-        /*
-         * If SMS processing created or updated financial
-         * records, reload dashboard data ONCE.
-         */
+        /* =================================================
+           FINAL DASHBOARD REFRESH
+        ================================================= */
+
         if (
           financialChange &&
           !controller.signal.aborted &&
           dashboardMounted.current
         ) {
-          console.log(
-            "[SMS] Financial records changed. Refreshing dashboard..."
-          );
+          addSmsLog({
+            status:
+              "financial-change",
+            address: null,
+            message:
+              "At least one SMS changed financial data. Refreshing dashboard aggregates...",
+          });
 
           await loadDashboard(true);
-        }
 
-        console.log(
-          "[SMS] Inbox synchronization complete."
-        );
+          addSmsLog({
+            status: "complete",
+            address: null,
+            message:
+              "Dashboard successfully refreshed after SMS financial changes.",
+          });
+        } else {
+          addSmsLog({
+            status: "complete",
+            address: null,
+            message:
+              "SMS synchronization completed. No dashboard financial refresh was required.",
+          });
+        }
       } catch (error) {
         if (
           error instanceof DOMException &&
           error.name === "AbortError"
         ) {
-          console.log(
-            "[SMS] Inbox synchronization aborted."
-          );
+          addSmsLog({
+            status: "ignored",
+            address: null,
+            message:
+              "SMS inbox synchronization was aborted.",
+          });
 
           return;
         }
 
-        /*
-         * SMS failure must NEVER break the dashboard.
-         */
-        console.error(
-          "[SMS] Failed to synchronize inbox:",
-          error
-        );
+        setSmsSummary((previous) => ({
+          ...previous,
+          errors:
+            previous.errors + 1,
+        }));
+
+        addSmsLog({
+          status: "error",
+          address: null,
+          message:
+            "Android SMS inbox synchronization failed.",
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unknown SMS reader error.",
+        });
       } finally {
-        controller.abort();
+        if (dashboardMounted.current) {
+          setSmsRunning(false);
+        }
+
+        smsAbortController.current =
+          null;
       }
     },
-    [loadDashboard]
+    [addSmsLog, loadDashboard]
   );
 
   /* =======================================================
      INITIAL LOAD
-
-     Dashboard and SMS synchronization start independently.
   ======================================================= */
 
   useEffect(() => {
     if (!mounted) return;
 
-    /*
-     * Load dashboard immediately.
-     */
     void loadDashboard();
 
-    /*
-     * Start SMS synchronization independently.
-     *
-     * IMPORTANT:
-     * Do not await this.
-     *
-     * The dashboard should never wait for Android's
-     * SMS reader or for potentially hundreds of SMS
-     * processing requests.
-     */
     void syncSmsInbox();
   }, [
     mounted,
     loadDashboard,
     syncSmsInbox,
   ]);
+
+  /* =======================================================
+     MANUAL SMS RESCAN
+  ======================================================= */
+
+  function handleSmsRescan() {
+    if (smsRunning) {
+      return;
+    }
+
+    smsSyncStarted.current = false;
+
+    void syncSmsInbox();
+  }
 
   /* =======================================================
      REFRESH
@@ -1298,6 +1598,23 @@ export default function DashboardPage() {
               </button>
             </div>
           </section>
+
+          {/* =================================================
+              SMS MONITOR
+          ================================================= */}
+
+          <SmsMonitor
+            logs={smsLogs}
+            summary={smsSummary}
+            running={smsRunning}
+            expanded={smsExpanded}
+            onToggle={() =>
+              setSmsExpanded(
+                (value) => !value
+              )
+            }
+            onRescan={handleSmsRescan}
+          />
 
           {/* =================================================
               ERROR
@@ -1451,12 +1768,9 @@ export default function DashboardPage() {
 
               <section className="mt-6 grid w-full min-w-0 gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(300px,0.75fr)]">
 
-                {/* =================================================
-                    RECENT ACTIVITY
-                ================================================= */}
+                {/* RECENT ACTIVITY */}
 
                 <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
-
                   <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-4 sm:px-5">
                     <div>
                       <h2 className="text-sm font-semibold text-white">
@@ -1495,17 +1809,7 @@ export default function DashboardPage() {
                       </div>
                     </div>
                   ) : (
-                    <div
-                      className="
-                        max-h-[280px]
-                        overflow-y-auto
-                        overscroll-contain
-                        scrollbar-thin
-                        scrollbar-track-transparent
-                        scrollbar-thumb-white/10
-                        hover:scrollbar-thumb-white/20
-                      "
-                    >
+                    <div className="max-h-[280px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
                       <div className="divide-y divide-white/[0.05]">
                         {activities.map(
                           (activity) => (
@@ -1524,12 +1828,9 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                {/* =================================================
-                    QUICK ACCESS
-                ================================================= */}
+                {/* QUICK ACCESS */}
 
                 <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
-
                   <div className="border-b border-white/[0.07] px-4 py-4 sm:px-5">
                     <h2 className="text-sm font-semibold text-white">
                       Quick Access
@@ -1540,17 +1841,7 @@ export default function DashboardPage() {
                     </p>
                   </div>
 
-                  <div
-                    className="
-                      max-h-[280px]
-                      overflow-y-auto
-                      overscroll-contain
-                      scrollbar-thin
-                      scrollbar-track-transparent
-                      scrollbar-thumb-white/10
-                      hover:scrollbar-thumb-white/20
-                    "
-                  >
+                  <div className="max-h-[280px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
                     <div className="grid gap-2 p-3 sm:p-4">
                       <QuickAccess
                         label="Members"
@@ -1609,9 +1900,6 @@ export default function DashboardPage() {
               ================================================= */}
 
               <section className="mt-6 grid w-full min-w-0 gap-6 md:grid-cols-2">
-
-                {/* MEMBER OVERVIEW */}
-
                 <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
                   <div className="flex items-start justify-between gap-4">
                     <div>
@@ -1695,8 +1983,6 @@ export default function DashboardPage() {
                   </button>
                 </div>
 
-                {/* SAVINGS OVERVIEW */}
-
                 <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
                   <div className="flex items-start justify-between gap-4">
                     <div>
@@ -1767,10 +2053,6 @@ export default function DashboardPage() {
                 </div>
               </section>
 
-              {/* =================================================
-                  FOOTER
-              ================================================= */}
-
               <div className="mt-6 flex w-full min-w-0 flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-[10px] text-white/20">
                   GEO-SHUA SACCO Management
@@ -1786,6 +2068,538 @@ export default function DashboardPage() {
       </div>
     </main>
   );
+}
+
+/* =========================================================
+   SMS MONITOR
+========================================================= */
+
+function SmsMonitor({
+  logs,
+  summary,
+  running,
+  expanded,
+  onToggle,
+  onRescan,
+}: {
+  logs: SmsLog[];
+  summary: {
+    found: number;
+    processed: number;
+    duplicates: number;
+    ignored: number;
+    errors: number;
+    financialChanges: number;
+  };
+  running: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onRescan: () => void;
+}) {
+  return (
+    <section className="mb-6 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
+
+      {/* =====================================================
+          HEADER
+      ===================================================== */}
+
+      <div className="border-b border-white/[0.07] px-4 py-4 sm:px-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
+              <Smartphone
+                size={19}
+                strokeWidth={1.8}
+              />
+            </div>
+
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-white">
+                  SMS Synchronization
+                </h2>
+
+                {running && (
+                  <span className="flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-[9px] font-medium text-blue-400">
+                    <Loader2
+                      size={10}
+                      className="animate-spin"
+                    />
+                    Running
+                  </span>
+                )}
+
+                {!running &&
+                  logs.length > 0 && (
+                    <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[9px] font-medium text-green-400">
+                      Complete
+                    </span>
+                  )}
+              </div>
+
+              <p className="mt-1 text-xs text-white/30">
+                Android inbox → SMS processor → financial records
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onRescan}
+              disabled={running}
+              className="flex h-9 items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 text-[10px] font-medium text-white/45 transition hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              <RefreshCw
+                size={13}
+                className={
+                  running
+                    ? "animate-spin"
+                    : ""
+                }
+              />
+
+              Rescan
+            </button>
+
+            <button
+              type="button"
+              onClick={onToggle}
+              className="flex h-9 items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 text-[10px] font-medium text-white/45 transition hover:bg-white/[0.05] hover:text-white"
+            >
+              {expanded ? (
+                <>
+                  <ChevronUp size={13} />
+                  Hide
+                </>
+              ) : (
+                <>
+                  <ChevronDown size={13} />
+                  Show
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* ===================================================
+            SUMMARY
+        =================================================== */}
+
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <SmsSummaryMetric
+            label="Found"
+            value={summary.found}
+            icon={
+              <Inbox size={13} />
+            }
+          />
+
+          <SmsSummaryMetric
+            label="Processed"
+            value={summary.processed}
+            icon={
+              <CheckCircle2
+                size={13}
+              />
+            }
+          />
+
+          <SmsSummaryMetric
+            label="Duplicates"
+            value={summary.duplicates}
+            icon={
+              <Info size={13} />
+            }
+          />
+
+          <SmsSummaryMetric
+            label="Ignored"
+            value={summary.ignored}
+            icon={
+              <Clock size={13} />
+            }
+          />
+
+          <SmsSummaryMetric
+            label="Errors"
+            value={summary.errors}
+            icon={
+              <XCircle size={13} />
+            }
+          />
+
+          <SmsSummaryMetric
+            label="Financial changes"
+            value={
+              summary.financialChanges
+            }
+            icon={
+              <Zap size={13} />
+            }
+          />
+        </div>
+      </div>
+
+      {/* =====================================================
+          LOG STREAM
+      ===================================================== */}
+
+      {expanded && (
+        <div className="max-h-[520px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10">
+
+          {logs.length === 0 ? (
+            <div className="flex min-h-[180px] items-center justify-center p-8">
+              <div className="text-center">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-white/20">
+                  <Smartphone
+                    size={20}
+                  />
+                </div>
+
+                <p className="mt-4 text-sm text-white/40">
+                  Waiting for SMS synchronization
+                </p>
+
+                <p className="mt-2 text-xs text-white/20">
+                  Android SMS activity will appear here.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="divide-y divide-white/[0.05]">
+              {logs.map((log) => (
+                <SmsLogRow
+                  key={log.id}
+                  log={log}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* =========================================================
+   SMS SUMMARY METRIC
+========================================================= */
+
+function SmsSummaryMetric({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: number;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0 rounded-xl border border-white/[0.06] bg-black/20 px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-white/25">
+        {icon}
+
+        <span className="truncate text-[9px] uppercase tracking-[0.1em]">
+          {label}
+        </span>
+      </div>
+
+      <p className="mt-1 text-sm font-semibold text-white/70">
+        {value.toLocaleString()}
+      </p>
+    </div>
+  );
+}
+
+/* =========================================================
+   SMS LOG ROW
+========================================================= */
+
+function SmsLogRow({
+  log,
+}: {
+  log: SmsLog;
+}) {
+  const [expanded, setExpanded] =
+    useState(false);
+
+  const config =
+    getSmsStatusConfig(log.status);
+
+  return (
+    <div className="px-4 py-4 sm:px-5">
+
+      <div className="flex min-w-0 items-start gap-3">
+
+        {/* STATUS ICON */}
+
+        <div
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${config.background} ${config.text}`}
+        >
+          {config.icon}
+        </div>
+
+        {/* MAIN CONTENT */}
+
+        <div className="min-w-0 flex-1">
+
+          <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+
+            <div className="min-w-0">
+              <p
+                className={`text-xs font-medium ${config.text}`}
+              >
+                {log.message}
+              </p>
+
+              {log.address && (
+                <p className="mt-1 truncate text-[10px] text-white/25">
+                  Sender: {log.address}
+                </p>
+              )}
+            </div>
+
+            <span className="shrink-0 text-[9px] text-white/20">
+              {new Date(
+                log.timestamp
+              ).toLocaleTimeString(
+                "en-KE",
+                {
+                  hour: "2-digit",
+                  minute:
+                    "2-digit",
+                  second:
+                    "2-digit",
+                }
+              )}
+            </span>
+          </div>
+
+          {/* SMS METADATA */}
+
+          {(log.body ||
+            log.httpStatus ||
+            log.date) && (
+            <div className="mt-2 flex flex-wrap gap-2">
+
+              {log.date && (
+                <span className="rounded-md bg-white/[0.035] px-2 py-1 text-[9px] text-white/25">
+                  SMS date:{" "}
+                  {formatSmsDate(
+                    log.date
+                  )}
+                </span>
+              )}
+
+              {log.httpStatus && (
+                <span className="rounded-md bg-white/[0.035] px-2 py-1 text-[9px] text-white/25">
+                  HTTP{" "}
+                  {log.httpStatus}
+                </span>
+              )}
+
+              {log.body && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpanded(
+                      (value) =>
+                        !value
+                    )
+                  }
+                  className="rounded-md bg-white/[0.035] px-2 py-1 text-[9px] text-white/35 transition hover:bg-white/[0.06] hover:text-white/60"
+                >
+                  {expanded
+                    ? "Hide SMS"
+                    : "View SMS"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* =================================================
+              SMS BODY + SERVER RESPONSE
+          ================================================= */}
+
+          {expanded && (
+            <div className="mt-3 space-y-3">
+
+              {log.body && (
+                <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-black/30">
+                  <div className="flex items-center gap-2 border-b border-white/[0.05] px-3 py-2">
+                    <Inbox
+                      size={12}
+                      className="text-white/25"
+                    />
+
+                    <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-white/25">
+                      SMS received
+                    </span>
+                  </div>
+
+                  <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-[10px] leading-5 text-white/50">
+                    {log.body}
+                  </pre>
+                </div>
+              )}
+
+              {log.response !==
+                undefined && (
+                <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-black/30">
+                  <div className="flex items-center gap-2 border-b border-white/[0.05] px-3 py-2">
+                    <Server
+                      size={12}
+                      className="text-white/25"
+                    />
+
+                    <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-white/25">
+                      API response
+                    </span>
+                  </div>
+
+                  <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-[10px] leading-5 text-white/50">
+                    {JSON.stringify(
+                      log.response,
+                      null,
+                      2
+                    )}
+                  </pre>
+                </div>
+              )}
+
+              {log.error && (
+                <div className="overflow-hidden rounded-xl border border-red-500/10 bg-red-500/[0.04]">
+                  <div className="flex items-center gap-2 border-b border-red-500/[0.08] px-3 py-2">
+                    <XCircle
+                      size={12}
+                      className="text-red-400"
+                    />
+
+                    <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-red-400/60">
+                      Error
+                    </span>
+                  </div>
+
+                  <pre className="whitespace-pre-wrap break-words p-3 font-mono text-[10px] leading-5 text-red-300/60">
+                    {log.error}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   SMS STATUS CONFIG
+========================================================= */
+
+function getSmsStatusConfig(
+  status: SmsLogStatus
+) {
+  switch (status) {
+    case "scanning":
+      return {
+        background:
+          "bg-blue-500/10",
+        text: "text-blue-400",
+        icon: (
+          <Smartphone
+            size={16}
+          />
+        ),
+      };
+
+    case "received":
+      return {
+        background:
+          "bg-cyan-500/10",
+        text: "text-cyan-400",
+        icon: (
+          <Inbox size={16} />
+        ),
+      };
+
+    case "sending":
+      return {
+        background:
+          "bg-purple-500/10",
+        text: "text-purple-400",
+        icon: (
+          <Send size={16} />
+        ),
+      };
+
+    case "processed":
+      return {
+        background:
+          "bg-green-500/10",
+        text: "text-green-400",
+        icon: (
+          <CheckCircle2
+            size={16}
+          />
+        ),
+      };
+
+    case "financial-change":
+      return {
+        background:
+          "bg-yellow-500/10",
+        text: "text-yellow-400",
+        icon: (
+          <Zap size={16} />
+        ),
+      };
+
+    case "duplicate":
+      return {
+        background:
+          "bg-orange-500/10",
+        text: "text-orange-400",
+        icon: (
+          <Info size={16} />
+        ),
+      };
+
+    case "ignored":
+      return {
+        background:
+          "bg-white/[0.05]",
+        text: "text-white/40",
+        icon: (
+          <Clock size={16} />
+        ),
+      };
+
+    case "error":
+      return {
+        background:
+          "bg-red-500/10",
+        text: "text-red-400",
+        icon: (
+          <XCircle size={16} />
+        ),
+      };
+
+    case "complete":
+    default:
+      return {
+        background:
+          "bg-white/[0.05]",
+        text: "text-white/40",
+        icon: (
+          <CheckCircle2
+            size={16}
+          />
+        ),
+      };
+  }
 }
 
 /* =========================================================
