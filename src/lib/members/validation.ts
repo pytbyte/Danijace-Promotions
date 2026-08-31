@@ -81,6 +81,7 @@ export function validateMember(
     member.membershipNumber
   );
   const phone = clean(member.phone);
+  const mpesaName = clean(member.mpesaName);
   const email = clean(member.email);
   const nationalId = clean(member.nationalId);
   const joinDate = clean(member.joinDate);
@@ -133,6 +134,21 @@ export function validateMember(
     errors.phone =
       "Enter a valid Kenyan phone number.";
   }
+
+  /* ---------------------------------------------
+      M-PESA NAME
+    --------------------------------------------- */
+
+    if (!mpesaName) {
+      errors.mpesaName =
+        "M-Pesa registered name is required.";
+    } else if (mpesaName.length < 2) {
+      errors.mpesaName =
+        "M-Pesa registered name is too short.";
+    } else if (mpesaName.length > 100) {
+      errors.mpesaName =
+        "M-Pesa registered name is too long.";
+    }
 
   /* ---------------------------------------------
      EMAIL
@@ -285,6 +301,11 @@ export function normalizeMember(
     phone: normalizePhone(
       clean(member.phone)
     ),
+    
+    mpesaName:
+    clean(member.mpesaName)
+      .replace(/\s+/g, " ")
+      .toUpperCase() || undefined,
 
     email:
       clean(member.email).toLowerCase() ||

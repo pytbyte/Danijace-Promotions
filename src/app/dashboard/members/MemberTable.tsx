@@ -60,7 +60,7 @@ export default function MemberTable({
       </div>
 
       {/* TABLE SCROLL AREA */}
-      <div className="max-h-[560px] overflow-auto">
+      <div className="max-h-[260px] overflow-auto">
         <table className="w-full min-w-[760px] table-fixed border-collapse text-left">
           <colgroup>
             <col className="w-[32%]" />

@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import {
   AlertCircle,
   Banknote,
@@ -15,17 +21,37 @@ import LoanDashboard from "@/components/loans/LoanDashboard";
 import LoanCard from "@/components/loans/LoanCard";
 import LoanForm from "@/components/loans/LoanForm";
 import LoanSettingsForm from "@/components/loans/LoanSettingsForm";
+import LoanRepaymentModal from "@/components/loans/LoanRepaymentForm";
 
-import type { Loan } from "@/lib/loans/types";
+import type {
+  Loan,
+  TransactionSource,
+} from "@/lib/loans/types";
 
 /* =========================================================
-   RESPONSE TYPE
+   API
+========================================================= */
+
+/**
+ * Change this ONE constant if your repayment API
+ * uses a different route.
+ */
+const REPAYMENT_API = "/api/loans/repayments";
+
+/* =========================================================
+   RESPONSE TYPES
 ========================================================= */
 
 type LoansResponse = {
   success: boolean;
   data?: Loan[];
   count?: number;
+  error?: string;
+};
+
+type RepaymentResponse = {
+  success: boolean;
+  data?: unknown;
   error?: string;
 };
 
@@ -40,21 +66,44 @@ export default function LoansPage() {
 
   const [loans, setLoans] = useState<Loan[]>([]);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] =
+    useState(true);
 
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] =
+    useState(false);
 
-  const [error, setError] = useState("");
+  const [error, setError] =
+    useState("");
 
-  const [mounted, setMounted] = useState(false);
+  const [mounted, setMounted] =
+    useState(false);
 
   /* =======================================================
-     MODALS
+     LOAN FORM
   ======================================================= */
 
-  const [loanFormOpen, setLoanFormOpen] = useState(false);
+  const [loanFormOpen, setLoanFormOpen] =
+    useState(false);
 
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  /* =======================================================
+     SETTINGS
+  ======================================================= */
+
+  const [settingsOpen, setSettingsOpen] =
+    useState(false);
+
+  /* =======================================================
+     REPAYMENT MODAL
+  ======================================================= */
+
+  const [repaymentLoan, setRepaymentLoan] =
+    useState<Loan | null>(null);
+
+  const [repaymentOpen, setRepaymentOpen] =
+    useState(false);
+
+  const [repaymentLoading, setRepaymentLoading] =
+    useState(false);
 
   /* =======================================================
      MOUNT
@@ -79,25 +128,33 @@ export default function LoansPage() {
 
         setError("");
 
-        const response = await fetch("/api/loans", {
-          method: "GET",
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
+        const response = await fetch(
+          "/api/loans",
+          {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              Accept:
+                "application/json",
+            },
           },
-        });
+        );
 
         let result: LoansResponse;
 
         try {
-          result = await response.json();
+          result =
+            await response.json();
         } catch {
           throw new Error(
             "The server returned an invalid response.",
           );
         }
 
-        if (!response.ok || !result.success) {
+        if (
+          !response.ok ||
+          !result.success
+        ) {
           throw new Error(
             result.error ||
               `Unable to load loans. Server returned ${response.status}.`,
@@ -105,7 +162,9 @@ export default function LoansPage() {
         }
 
         setLoans(
-          Array.isArray(result.data)
+          Array.isArray(
+            result.data,
+          )
             ? result.data
             : [],
         );
@@ -117,13 +176,18 @@ export default function LoansPage() {
 
         if (
           err instanceof TypeError &&
-          err.message === "Failed to fetch"
+          err.message ===
+            "Failed to fetch"
         ) {
           setError(
             "Unable to connect to the server. Check your connection and try again.",
           );
-        } else if (err instanceof Error) {
-          setError(err.message);
+        } else if (
+          err instanceof Error
+        ) {
+          setError(
+            err.message,
+          );
         } else {
           setError(
             "Something went wrong while loading loans.",
@@ -147,14 +211,20 @@ export default function LoansPage() {
     }
 
     void loadLoans();
-  }, [mounted, loadLoans]);
+  }, [
+    mounted,
+    loadLoans,
+  ]);
 
   /* =======================================================
      REFRESH
   ======================================================= */
 
   function handleRefresh() {
-    if (loading || refreshing) {
+    if (
+      loading ||
+      refreshing
+    ) {
       return;
     }
 
@@ -176,11 +246,6 @@ export default function LoansPage() {
   function handleLoanCreated() {
     setLoanFormOpen(false);
 
-    /*
-     * Reload from MongoDB so the dashboard and
-     * directory reflect the authoritative database state.
-     */
-
     void loadLoans(true);
   }
 
@@ -197,6 +262,413 @@ export default function LoansPage() {
   }
 
   /* =======================================================
+     OPEN REPAYMENT
+  ======================================================= */
+
+  function handleOpenRepayment(
+    loan: Loan,
+  ) {
+    /*
+     * Only active loans with an outstanding
+     * balance should normally be repayable.
+     *
+     * We still let the backend remain the
+     * authoritative validator.
+     */
+    if (
+      loan.status !== "active"
+    ) {
+      return;
+    }
+
+    if (
+      !Number.isFinite(
+        loan.outstandingBalance,
+      ) ||
+      loan.outstandingBalance <= 0
+    ) {
+      return;
+    }
+
+    setRepaymentLoan(loan);
+    setRepaymentOpen(true);
+  }
+
+  /* =======================================================
+     CLOSE REPAYMENT
+  ======================================================= */
+
+  function handleCloseRepayment() {
+    if (
+      repaymentLoading
+    ) {
+      return;
+    }
+
+    setRepaymentOpen(false);
+    setRepaymentLoan(null);
+  }
+
+
+/* =======================================================
+   RECORD REPAYMENT
+======================================================= */
+
+async function handleRepaymentSubmit(
+  data: {
+    loanId: string;
+    amount: number;
+    transactionReference: string;
+    transactionDate: Date;
+    source: TransactionSource;
+    rawMessage?: string;
+  },
+) {
+  console.group(
+    "💰 GEO-SHUA | REPAYMENT SUBMISSION",
+  );
+
+  console.log(
+    "Repayment data received:",
+    data,
+  );
+
+  /* -------------------------------------------------------
+     DEFENSIVE CHECK
+  ------------------------------------------------------- */
+
+  if (!repaymentLoan) {
+    console.error(
+      "❌ No repayment loan is selected.",
+    );
+
+    console.groupEnd();
+    return;
+  }
+
+  console.log(
+    "Selected repayment loan:",
+    repaymentLoan,
+  );
+
+  /* -------------------------------------------------------
+     STALE LOAN CHECK
+  ------------------------------------------------------- */
+
+  if (
+    repaymentLoan.id !==
+    data.loanId
+  ) {
+    console.error(
+      "❌ Loan ID mismatch.",
+      {
+        selectedLoanId:
+          repaymentLoan.id,
+        submittedLoanId:
+          data.loanId,
+      },
+    );
+
+    console.groupEnd();
+
+    throw new Error(
+      "The selected loan has changed. Please reopen the repayment form.",
+    );
+  }
+
+  console.log(
+    "✅ Loan ID verified:",
+    data.loanId,
+  );
+
+  try {
+    setRepaymentLoading(true);
+    setError("");
+
+    /* -------------------------------------------------------
+       BUILD REQUEST PAYLOAD
+    ------------------------------------------------------- */
+
+    const requestBody = {
+      loanId:
+        data.loanId,
+
+      amount:
+        data.amount,
+
+      transactionReference:
+        data.transactionReference,
+
+      transactionDate:
+        data.transactionDate.toISOString(),
+
+      source:
+        data.source,
+
+      ...(data.rawMessage
+        ? {
+            rawMessage:
+              data.rawMessage,
+          }
+        : {}),
+    };
+
+    console.log(
+      "📤 POST repayment request:",
+      {
+        url: REPAYMENT_API,
+        body: requestBody,
+      },
+    );
+
+    /* -------------------------------------------------------
+       SEND REQUEST
+    ------------------------------------------------------- */
+
+    const response =
+      await fetch(
+        REPAYMENT_API,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+
+            Accept:
+              "application/json",
+          },
+
+          body: JSON.stringify(
+            requestBody,
+          ),
+        },
+      );
+
+    /* -------------------------------------------------------
+       RESPONSE METADATA
+    ------------------------------------------------------- */
+
+    const contentType =
+      response.headers.get(
+        "content-type",
+      ) ?? "";
+
+    console.log(
+      "📥 Repayment API response:",
+      {
+        status:
+          response.status,
+
+        statusText:
+          response.statusText,
+
+        ok:
+          response.ok,
+
+        contentType,
+      },
+    );
+
+    /* -------------------------------------------------------
+       READ RAW RESPONSE
+       
+       IMPORTANT:
+       We use text() first so we can see exactly what
+       the server returned if JSON parsing fails.
+    ------------------------------------------------------- */
+
+    const rawResponse =
+      await response.text();
+
+    console.log(
+      "📄 Raw repayment API response:",
+      rawResponse,
+    );
+
+    /* -------------------------------------------------------
+       PARSE JSON
+    ------------------------------------------------------- */
+
+    let result:
+      | RepaymentResponse
+      | null = null;
+
+    try {
+      result =
+        JSON.parse(
+          rawResponse,
+        ) as RepaymentResponse;
+
+      console.log(
+        "✅ Parsed repayment response:",
+        result,
+      );
+    } catch (parseError) {
+      console.error(
+        "❌ Repayment API returned invalid JSON.",
+        {
+          parseError,
+          status:
+            response.status,
+          contentType,
+          rawResponse,
+        },
+      );
+
+      throw new Error(
+        `The repayment server returned an invalid response (${response.status}).`,
+      );
+    }
+
+    /* -------------------------------------------------------
+       SERVER/API ERROR
+    ------------------------------------------------------- */
+
+    if (
+      !response.ok ||
+      !result.success
+    ) {
+      console.error(
+        "❌ Repayment API rejected request:",
+        {
+          status:
+            response.status,
+
+          statusText:
+            response.statusText,
+
+          result,
+        },
+      );
+
+      throw new Error(
+        result.error ||
+          `Unable to record repayment. Server returned ${response.status}.`,
+      );
+    }
+
+    /* -------------------------------------------------------
+       REPAYMENT SUCCESS
+    ------------------------------------------------------- */
+
+    console.log(
+      "✅ REPAYMENT RECORDED SUCCESSFULLY",
+      {
+        loanId:
+          data.loanId,
+
+        amount:
+          data.amount,
+
+        transactionReference:
+          data.transactionReference,
+
+        transactionDate:
+          data.transactionDate,
+
+        source:
+          data.source,
+
+        serverResult:
+          result,
+      },
+    );
+
+    /*
+     * IMPORTANT:
+     *
+     * At this point the repayment API has confirmed
+     * success.
+     *
+     * MongoDB/service layer is authoritative.
+     *
+     * Do NOT manually update:
+     *
+     * - amountPaid
+     * - outstandingBalance
+     * - totalFines
+     * - loan status
+     */
+
+    setRepaymentOpen(false);
+    setRepaymentLoan(null);
+
+    /* -------------------------------------------------------
+       REFRESH LOANS
+    ------------------------------------------------------- */
+
+    console.log(
+      "🔄 Refreshing loans after successful repayment...",
+    );
+
+    try {
+      await loadLoans(true);
+
+      console.log(
+        "✅ Loans refreshed successfully after repayment.",
+      );
+    } catch (refreshError) {
+      /*
+       * IMPORTANT:
+       *
+       * The repayment already succeeded.
+       *
+       * A failed refresh MUST NOT be reported as a
+       * failed repayment because that could cause the
+       * user to submit the same payment again.
+       */
+
+      console.error(
+        "⚠️ Repayment succeeded, but loan refresh failed:",
+        refreshError,
+      );
+
+      setError(
+        "Repayment was recorded successfully, but the loan list could not be refreshed. Please refresh the page.",
+      );
+    }
+
+    console.log(
+      "🏁 Repayment submission completed.",
+    );
+  } catch (err) {
+    console.error(
+      "❌ FAILED TO RECORD REPAYMENT:",
+      err,
+    );
+
+    const message =
+      err instanceof Error
+        ? err.message
+        : "Something went wrong while recording the repayment.";
+
+    console.error(
+      "Repayment error message:",
+      message,
+    );
+
+    setError(message);
+
+    /*
+     * Re-throw so the repayment modal can handle
+     * its own loading/error state if required.
+     */
+    throw err;
+  } finally {
+    setRepaymentLoading(false);
+
+    console.log(
+      "🔓 Repayment loading state released.",
+    );
+
+    console.groupEnd();
+  }
+}
+
+
+
+  /* =======================================================
      DASHBOARD STATISTICS
   ======================================================= */
 
@@ -211,31 +683,37 @@ export default function LoansPage() {
     let completedLoans = 0;
 
     for (const loan of loans) {
-      totalPrincipal += Number.isFinite(
-        loan.principal,
-      )
-        ? loan.principal
-        : 0;
+      totalPrincipal +=
+        Number.isFinite(
+          loan.principal,
+        )
+          ? loan.principal
+          : 0;
 
-      totalPaid += Number.isFinite(
-        loan.amountPaid,
-      )
-        ? loan.amountPaid
-        : 0;
+      totalPaid +=
+        Number.isFinite(
+          loan.amountPaid,
+        )
+          ? loan.amountPaid
+          : 0;
 
-      totalOutstanding += Number.isFinite(
-        loan.outstandingBalance,
-      )
-        ? loan.outstandingBalance
-        : 0;
+      totalOutstanding +=
+        Number.isFinite(
+          loan.outstandingBalance,
+        )
+          ? loan.outstandingBalance
+          : 0;
 
-      totalFines += Number.isFinite(
-        loan.totalFines,
-      )
-        ? loan.totalFines
-        : 0;
+      totalFines +=
+        Number.isFinite(
+          loan.totalFines,
+        )
+          ? loan.totalFines
+          : 0;
 
-      switch (loan.status) {
+      switch (
+        loan.status
+      ) {
         case "active":
           activeLoans += 1;
           break;
@@ -254,13 +732,21 @@ export default function LoansPage() {
     }
 
     return {
-      totalLoans: loans.length,
+      totalLoans:
+        loans.length,
+
       activeLoans,
+
       pendingLoans,
+
       completedLoans,
+
       totalPrincipal,
+
       totalPaid,
+
       totalOutstanding,
+
       totalFines,
     };
   }, [loans]);
@@ -353,8 +839,8 @@ export default function LoansPage() {
                 </h1>
 
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-white/35">
-                  Monitor loans, repayments, outstanding
-                  balances and fines.
+                  Monitor loans, repayments,
+                  outstanding balances and fines.
                 </p>
               </div>
 
@@ -375,9 +861,12 @@ export default function LoansPage() {
 
                 <button
                   type="button"
-                  onClick={handleRefresh}
+                  onClick={
+                    handleRefresh
+                  }
                   disabled={
-                    loading || refreshing
+                    loading ||
+                    refreshing
                   }
                   className="
                     flex
@@ -416,7 +905,9 @@ export default function LoansPage() {
 
                 <button
                   type="button"
-                  onClick={handleOpenSettings}
+                  onClick={
+                    handleOpenSettings
+                  }
                   className="
                     flex
                     h-11
@@ -457,7 +948,9 @@ export default function LoansPage() {
 
                 <button
                   type="button"
-                  onClick={handleNewLoan}
+                  onClick={
+                    handleNewLoan
+                  }
                   className="
                     flex
                     h-11
@@ -527,7 +1020,7 @@ export default function LoansPage() {
 
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-red-300">
-                      Unable to load loans
+                      Loan operation failed
                     </p>
 
                     <p className="mt-1 break-words text-xs leading-5 text-red-300/50">
@@ -538,9 +1031,10 @@ export default function LoansPage() {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    void loadLoans()
-                  }
+                  onClick={() => {
+                    setError("");
+                    void loadLoans();
+                  }}
                   className="
                     h-10
                     shrink-0
@@ -604,6 +1098,10 @@ export default function LoansPage() {
               ================================================= */}
 
               <section className="mt-6 w-full min-w-0">
+                {/* =================================================
+                    DIRECTORY HEADER
+                ================================================= */}
+
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <h2 className="text-sm font-semibold text-white">
@@ -668,13 +1166,15 @@ export default function LoansPage() {
                       </h2>
 
                       <p className="mt-2 text-xs leading-5 text-white/25">
-                        Loans will appear here after
-                        they are created.
+                        Loans will appear here
+                        after they are created.
                       </p>
 
                       <button
                         type="button"
-                        onClick={handleNewLoan}
+                        onClick={
+                          handleNewLoan
+                        }
                         className="
                           mt-5
                           inline-flex
@@ -692,7 +1192,9 @@ export default function LoansPage() {
                           hover:bg-yellow-400
                         "
                       >
-                        <Plus size={16} />
+                        <Plus
+                          size={16}
+                        />
 
                         Create First Loan
                       </button>
@@ -701,27 +1203,96 @@ export default function LoansPage() {
                 ) : (
                   <>
                     {/* =================================================
-                        DESKTOP
+                        DESKTOP TABLE
                     ================================================= */}
 
                     <div className="hidden w-full min-w-0 lg:block">
-                      <div className="overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
-                        <div className="grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_0.8fr_40px] gap-4 border-b border-white/[0.06] px-4 py-3 text-[10px] font-medium uppercase tracking-wider text-white/25">
-                          <span>Loan</span>
-                          <span>Member</span>
-                          <span>Principal</span>
-                          <span>Balance</span>
-                          <span>Status</span>
-                          <span />
+                      <div
+                        className="
+                          w-full
+                          min-w-0
+                          overflow-hidden
+                          rounded-2xl
+                          border
+                          border-white/[0.08]
+                          bg-white/[0.025]
+                        "
+                      >
+                        {/* FIXED HEADER */}
+
+                        <div
+                          className="
+                            grid
+                            grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_100px]
+                            gap-4
+                            border-b
+                            border-white/[0.06]
+                            bg-[#080808]
+                            px-4
+                            py-3
+                            text-[10px]
+                            font-medium
+                            uppercase
+                            tracking-wider
+                            text-white/25
+                          "
+                        >
+                          <span>
+                            Loan
+                          </span>
+
+                          <span>
+                            Member
+                          </span>
+
+                          <span>
+                            Principal
+                          </span>
+
+                          <span>
+                            Balance
+                          </span>
+
+                          <span>
+                            Status
+                          </span>
+
+                          <span className="text-right">
+                            Action
+                          </span>
                         </div>
 
-                        <div className="divide-y divide-white/[0.05]">
-                          {loans.map((loan) => (
-                            <LoanRow
-                              key={loan.id}
-                              loan={loan}
-                            />
-                          ))}
+                        {/* SCROLLABLE ROWS */}
+
+                        <div
+                          className="
+                            max-h-[400px]
+                            overflow-y-auto
+                            overscroll-contain
+                            scrollbar-thin
+                            scrollbar-track-transparent
+                            scrollbar-thumb-white/10
+                          "
+                        >
+                          <div className="divide-y divide-white/[0.05]">
+                            {loans.map(
+                              (
+                                loan,
+                              ) => (
+                                <LoanRow
+                                  key={
+                                    loan.id
+                                  }
+                                  loan={
+                                    loan
+                                  }
+                                  onRepay={
+                                    handleOpenRepayment
+                                  }
+                                />
+                              ),
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -730,13 +1301,85 @@ export default function LoansPage() {
                         MOBILE / TABLET
                     ================================================= */}
 
-                    <div className="grid w-full min-w-0 gap-3 lg:hidden">
-                      {loans.map((loan) => (
-                        <LoanCard
-                          key={loan.id}
-                          loan={loan}
-                        />
-                      ))}
+                    <div
+                      className="
+                        grid
+                        max-h-[600px]
+                        w-full
+                        min-w-0
+                        gap-3
+                        overflow-y-auto
+                        overscroll-contain
+                        lg:hidden
+                        scrollbar-thin
+                        scrollbar-track-transparent
+                        scrollbar-thumb-white/10
+                      "
+                    >
+                      {loans.map(
+                        (
+                          loan,
+                        ) => (
+                          <div
+                            key={
+                              loan.id
+                            }
+                            className="min-w-0"
+                          >
+                            <LoanCard
+                              loan={
+                                loan
+                              }
+                            />
+
+                            {/* MOBILE REPAYMENT ACTION */}
+
+                            {loan.status ===
+                              "active" &&
+                              Number.isFinite(
+                                loan.outstandingBalance,
+                              ) &&
+                              loan.outstandingBalance >
+                                0 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleOpenRepayment(
+                                      loan,
+                                    )
+                                  }
+                                  className="
+                                    mt-2
+                                    flex
+                                    h-10
+                                    w-full
+                                    items-center
+                                    justify-center
+                                    gap-2
+                                    rounded-xl
+                                    border
+                                    border-yellow-500/15
+                                    bg-yellow-500/[0.06]
+                                    text-xs
+                                    font-semibold
+                                    text-yellow-400
+                                    transition
+                                    hover:border-yellow-500/25
+                                    hover:bg-yellow-500/10
+                                  "
+                                >
+                                  <Banknote
+                                    size={
+                                      15
+                                    }
+                                  />
+
+                                  Record Repayment
+                                </button>
+                              )}
+                          </div>
+                        ),
+                      )}
                     </div>
                   </>
                 )}
@@ -772,7 +1415,8 @@ export default function LoansPage() {
                   </p>
 
                   <p className="text-[10px] text-white/20">
-                    Data synchronized with MongoDB
+                    Data synchronized with
+                    MongoDB
                   </p>
                 </div>
               )}
@@ -782,13 +1426,21 @@ export default function LoansPage() {
       </div>
 
       {/* =====================================================
-          LOAN FORM MODAL
+          NEW LOAN MODAL
       ===================================================== */}
 
       <LoanForm
-        open={loanFormOpen}
-        onClose={() => setLoanFormOpen(false)}
-        onSuccess={handleLoanCreated}
+        open={
+          loanFormOpen
+        }
+        onClose={() =>
+          setLoanFormOpen(
+            false,
+          )
+        }
+        onSuccess={
+          handleLoanCreated
+        }
       />
 
       {/* =====================================================
@@ -796,8 +1448,34 @@ export default function LoansPage() {
       ===================================================== */}
 
       <LoanSettingsForm
-        open={settingsOpen}
-        onClose={handleCloseSettings}
+        open={
+          settingsOpen
+        }
+        onClose={
+          handleCloseSettings
+        }
+      />
+
+      {/* =====================================================
+          REPAYMENT MODAL
+      ===================================================== */}
+
+      <LoanRepaymentModal
+        loan={
+          repaymentLoan
+        }
+        open={
+          repaymentOpen
+        }
+        onClose={
+          handleCloseRepayment
+        }
+        onSubmit={
+          handleRepaymentSubmit
+        }
+        loading={
+          repaymentLoading
+        }
       />
     </main>
   );
@@ -809,11 +1487,19 @@ export default function LoansPage() {
 
 function LoanRow({
   loan,
+  onRepay,
 }: {
   loan: Loan;
+  onRepay: (loan: Loan) => void;
 }) {
-  function formatMoney(value: number): string {
-    if (!Number.isFinite(value)) {
+  function formatMoney(
+    value: number,
+  ): string {
+    if (
+      !Number.isFinite(
+        value,
+      )
+    ) {
       return "KES 0.00";
     }
 
@@ -829,7 +1515,9 @@ function LoanRow({
   function statusClass(
     status: Loan["status"],
   ): string {
-    switch (status) {
+    switch (
+      status
+    ) {
       case "active":
         return "bg-emerald-500/10 text-emerald-300 border-emerald-500/20";
 
@@ -847,8 +1535,30 @@ function LoanRow({
     }
   }
 
+  const canRepay =
+    loan.status ===
+      "active" &&
+    Number.isFinite(
+      loan.outstandingBalance,
+    ) &&
+    loan.outstandingBalance >
+      0;
+
   return (
-    <div className="grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_0.8fr_40px] items-center gap-4 px-4 py-4 transition hover:bg-white/[0.025]">
+    <div
+      className="
+        grid
+        grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_100px]
+        items-center
+        gap-4
+        px-4
+        py-4
+        transition
+        hover:bg-white/[0.025]
+      "
+    >
+      {/* LOAN */}
+
       <div className="min-w-0">
         <p className="truncate text-xs font-medium text-white">
           {loan.loanNumber}
@@ -858,6 +1568,8 @@ function LoanRow({
           {loan.type} loan
         </p>
       </div>
+
+      {/* MEMBER */}
 
       <div className="min-w-0">
         <p className="truncate text-xs text-white/70">
@@ -869,15 +1581,23 @@ function LoanRow({
         </p>
       </div>
 
+      {/* PRINCIPAL */}
+
       <p className="truncate text-xs font-medium text-white/70">
-        {formatMoney(loan.principal)}
+        {formatMoney(
+          loan.principal,
+        )}
       </p>
+
+      {/* BALANCE */}
 
       <p className="truncate text-xs font-medium text-white/70">
         {formatMoney(
           loan.outstandingBalance,
         )}
       </p>
+
+      {/* STATUS */}
 
       <span
         className={`w-fit rounded-full border px-2.5 py-1 text-[10px] capitalize ${statusClass(
@@ -887,24 +1607,49 @@ function LoanRow({
         {loan.status}
       </span>
 
-      <button
-        type="button"
-        className="
-          flex
-          h-8
-          w-8
-          items-center
-          justify-center
-          rounded-lg
-          text-white/30
-          transition
-          hover:bg-white/[0.05]
-          hover:text-white
-        "
-        aria-label={`View ${loan.loanNumber}`}
-      >
-        →
-      </button>
+      {/* ACTION */}
+
+      <div className="flex justify-end">
+        {canRepay ? (
+          <button
+            type="button"
+            onClick={() =>
+              onRepay(
+                loan,
+              )
+            }
+            className="
+              inline-flex
+              h-8
+              items-center
+              justify-center
+              gap-1.5
+              rounded-lg
+              bg-yellow-500
+              px-3
+              text-[10px]
+              font-semibold
+              text-black
+              transition
+              hover:bg-yellow-400
+              active:scale-[0.98]
+            "
+            aria-label={`Record repayment for ${loan.loanNumber}`}
+            title={`Record repayment for ${loan.loanNumber}`}
+          >
+            <Banknote
+              size={14}
+              strokeWidth={2}
+            />
+
+            Repay
+          </button>
+        ) : (
+          <span className="text-[10px] text-white/15">
+            —
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -919,10 +1664,17 @@ function LoansLoading() {
       {/* DASHBOARD */}
 
       <section className="grid w-full grid-cols-2 gap-3 lg:grid-cols-4">
-        {Array.from({ length: 8 }).map(
-          (_, index) => (
+        {Array.from({
+          length: 8,
+        }).map(
+          (
+            _,
+            index,
+          ) => (
             <div
-              key={index}
+              key={
+                index
+              }
               className="
                 h-[105px]
                 animate-pulse
@@ -939,10 +1691,17 @@ function LoansLoading() {
       {/* MOBILE */}
 
       <section className="grid w-full gap-3 lg:hidden">
-        {Array.from({ length: 3 }).map(
-          (_, index) => (
+        {Array.from({
+          length: 3,
+        }).map(
+          (
+            _,
+            index,
+          ) => (
             <div
-              key={index}
+              key={
+                index
+              }
               className="
                 h-[210px]
                 animate-pulse

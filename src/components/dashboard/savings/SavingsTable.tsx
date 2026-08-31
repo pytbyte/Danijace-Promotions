@@ -16,6 +16,23 @@ import type { SavingsTransaction } from "@/lib/savings/types";
    TYPES
 ========================================================= */
 
+/**
+ * Props accepted by the SavingsTable component.
+ *
+ * transactions:
+ *   The savings ledger transactions to display.
+ *
+ * loading:
+ *   Indicates whether transactions are currently being loaded.
+ *
+ * onAdjust:
+ *   Creates a new adjustment ledger entry.
+ *   It does NOT modify the original transaction.
+ *
+ * onReverse:
+ *   Creates a new reversal ledger entry.
+ *   It does NOT delete or modify the original transaction.
+ */
 type SavingsTableProps = {
   transactions: SavingsTransaction[];
 
@@ -34,6 +51,12 @@ type SavingsTableProps = {
    FORMATTERS
 ========================================================= */
 
+/**
+ * Format an amount as Kenyan Shillings.
+ *
+ * Defensive handling is important here because financial
+ * values should never result in "NaN" being displayed.
+ */
 function formatKES(
   amount: number
 ): string {
@@ -55,6 +78,12 @@ function formatKES(
   ).format(amount);
 }
 
+/**
+ * Format a transaction date.
+ *
+ * If the supplied value is invalid, we show a safe fallback
+ * instead of allowing an invalid date to break the UI.
+ */
 function formatDate(
   value: string
 ): string {
@@ -89,6 +118,10 @@ function formatDate(
    LABELS
 ========================================================= */
 
+/**
+ * Convert the internal transaction type into a
+ * human-readable label.
+ */
 function getTypeLabel(
   type: SavingsTransaction["type"]
 ): string {
@@ -107,6 +140,10 @@ function getTypeLabel(
   }
 }
 
+/**
+ * Convert the internal source value into a
+ * human-readable label.
+ */
 function getSourceLabel(
   source: SavingsTransaction["source"]
 ): string {
@@ -129,6 +166,9 @@ function getSourceLabel(
    ICONS
 ========================================================= */
 
+/**
+ * Return the appropriate icon for a transaction type.
+ */
 function getTypeIcon(
   type: SavingsTransaction["type"]
 ) {
@@ -167,6 +207,9 @@ function getTypeIcon(
   }
 }
 
+/**
+ * Return the appropriate icon for the transaction source.
+ */
 function getSourceIcon(
   source: SavingsTransaction["source"]
 ) {
@@ -209,6 +252,13 @@ function getSourceIcon(
    STATUS BADGE
 ========================================================= */
 
+/**
+ * Displays the current transaction status.
+ *
+ * Financial records are treated as immutable.
+ * A reversal is represented by another ledger entry rather
+ * than modifying the original transaction.
+ */
 function StatusBadge({
   status,
 }: {
@@ -253,7 +303,7 @@ function StatusBadge({
 /**
  * Financial records are immutable.
  *
- * These actions DO NOT edit/delete the existing record.
+ * These actions DO NOT edit or delete the existing record.
  * They create a new adjustment/reversal ledger entry.
  *
  * Only confirmed deposits can currently be directly
@@ -268,6 +318,11 @@ function isAdjustable(
   );
 }
 
+/**
+ * Determine whether a transaction can be reversed.
+ *
+ * At the moment, only confirmed deposits are reversible.
+ */
 function isReversible(
   transaction: SavingsTransaction
 ): boolean {
@@ -278,14 +333,20 @@ function isReversible(
 }
 
 /* =========================================================
-   LOADING
+   LOADING ROWS
 ========================================================= */
 
+/**
+ * Loading state for the transaction body.
+ *
+ * We deliberately render FIVE rows because the table is
+ * designed to display five entries at a time.
+ */
 function LoadingRows() {
   return (
     <>
       {Array.from(
-        { length: 6 },
+        { length: 5 },
         (_, index) => (
           <tr key={index}>
             <td
@@ -305,6 +366,9 @@ function LoadingRows() {
    EMPTY STATE
 ========================================================= */
 
+/**
+ * Displayed when there are no transactions to show.
+ */
 function EmptyState() {
   return (
     <tr>
@@ -336,6 +400,9 @@ function EmptyState() {
    TRANSACTION ROW
 ========================================================= */
 
+/**
+ * Represents one immutable savings ledger transaction.
+ */
 function TransactionRow({
   transaction,
   onAdjust,
@@ -351,21 +418,34 @@ function TransactionRow({
     transaction: SavingsTransaction
   ) => void;
 }) {
+  /**
+   * Normalize the amount before performing any
+   * financial comparison.
+   */
   const amount =
     Number(
       transaction.amount
     );
 
+  /**
+   * Positive transactions are displayed as credits.
+   */
   const positive =
     Number.isFinite(amount) &&
     amount > 0;
 
+  /**
+   * Determine whether the Adjust button should be shown.
+   */
   const adjustable =
     isAdjustable(
       transaction
     ) &&
     Boolean(onAdjust);
 
+  /**
+   * Determine whether the Reverse button should be shown.
+   */
   const reversible =
     isReversible(
       transaction
@@ -382,12 +462,14 @@ function TransactionRow({
         hover:bg-white/[0.015]
       "
     >
+
       {/* =====================================================
           TRANSACTION
       ===================================================== */}
 
       <td className="px-4 py-4">
         <div className="flex items-center gap-3">
+
           <div
             className={`
               flex
@@ -410,6 +492,7 @@ function TransactionRow({
           </div>
 
           <div className="min-w-0">
+
             <p className="text-xs font-medium text-white">
               {getTypeLabel(
                 transaction.type
@@ -422,6 +505,7 @@ function TransactionRow({
                 {transaction.id}
               </span>
             </p>
+
           </div>
         </div>
       </td>
@@ -431,6 +515,7 @@ function TransactionRow({
       ===================================================== */}
 
       <td className="max-w-[180px] px-4 py-4">
+
         <p className="truncate text-xs font-medium text-white/70">
           {transaction.memberName ||
             "Unknown member"}
@@ -439,6 +524,7 @@ function TransactionRow({
         <p className="mt-0.5 truncate font-mono text-[10px] text-white/20">
           {transaction.memberId}
         </p>
+
       </td>
 
       {/* =====================================================
@@ -446,6 +532,7 @@ function TransactionRow({
       ===================================================== */}
 
       <td className="px-4 py-4">
+
         <span
           className={`
             whitespace-nowrap
@@ -461,10 +548,12 @@ function TransactionRow({
           {positive
             ? "+"
             : ""}
+
           {formatKES(
             amount
           )}
         </span>
+
       </td>
 
       {/* =====================================================
@@ -472,7 +561,9 @@ function TransactionRow({
       ===================================================== */}
 
       <td className="px-4 py-4">
+
         <div className="inline-flex items-center gap-1.5 text-xs text-white/50">
+
           {getSourceIcon(
             transaction.source
           )}
@@ -482,7 +573,9 @@ function TransactionRow({
               transaction.source
             )}
           </span>
+
         </div>
+
       </td>
 
       {/* =====================================================
@@ -490,8 +583,11 @@ function TransactionRow({
       ===================================================== */}
 
       <td className="max-w-[180px] px-4 py-4">
+
         {transaction.reference ? (
+
           <div>
+
             <p className="truncate font-mono text-[10px] text-white/45">
               {transaction.reference}
             </p>
@@ -501,12 +597,17 @@ function TransactionRow({
                 {transaction.sourceReference}
               </p>
             )}
+
           </div>
+
         ) : (
+
           <span className="text-xs text-white/15">
             —
           </span>
+
         )}
+
       </td>
 
       {/* =====================================================
@@ -514,11 +615,13 @@ function TransactionRow({
       ===================================================== */}
 
       <td className="px-4 py-4">
+
         <StatusBadge
           status={
             transaction.status
           }
         />
+
       </td>
 
       {/* =====================================================
@@ -526,6 +629,7 @@ function TransactionRow({
       ===================================================== */}
 
       <td className="whitespace-nowrap px-4 py-4">
+
         <p className="text-xs text-white/50">
           {formatDate(
             transaction.transactionAt
@@ -538,6 +642,7 @@ function TransactionRow({
             {transaction.relatedTransactionId}
           </p>
         )}
+
       </td>
 
       {/* =====================================================
@@ -545,7 +650,13 @@ function TransactionRow({
       ===================================================== */}
 
       <td className="px-4 py-4">
+
         <div className="flex items-center justify-end gap-1">
+
+          {/* -------------------------------------------------
+              ADJUST
+          ------------------------------------------------- */}
+
           {adjustable && (
             <button
               type="button"
@@ -584,6 +695,10 @@ function TransactionRow({
               </span>
             </button>
           )}
+
+          {/* -------------------------------------------------
+              REVERSE
+          ------------------------------------------------- */}
 
           {reversible && (
             <button
@@ -624,14 +739,21 @@ function TransactionRow({
             </button>
           )}
 
+          {/* -------------------------------------------------
+              NO ACTIONS
+          ------------------------------------------------- */}
+
           {!adjustable &&
             !reversible && (
               <span className="px-2.5 text-xs text-white/10">
                 —
               </span>
             )}
+
         </div>
+
       </td>
+
     </tr>
   );
 }
@@ -646,6 +768,13 @@ export default function SavingsTable({
   onAdjust,
   onReverse,
 }: SavingsTableProps) {
+
+  /**
+   * Defensive check.
+   *
+   * The component should never crash if a parent accidentally
+   * passes undefined/null instead of an array.
+   */
   const safeTransactions =
     Array.isArray(
       transactions
@@ -663,13 +792,20 @@ export default function SavingsTable({
         bg-[#0b0b0b]
       "
     >
+
       {/* =====================================================
-          HEADER
+          SECTION HEADER
+          
+          This is completely independent from the table
+          scrolling area.
       ===================================================== */}
 
       <div className="border-b border-white/[0.06] px-4 py-4 sm:px-5">
+
         <div className="flex items-center justify-between gap-3">
+
           <div>
+
             <h2 className="text-sm font-semibold text-white">
               Transactions
             </h2>
@@ -677,91 +813,171 @@ export default function SavingsTable({
             <p className="mt-0.5 text-xs text-white/30">
               Immutable savings ledger
             </p>
+
           </div>
 
           {!loading && (
             <span className="text-xs text-white/25">
+
               {safeTransactions.length}{" "}
+
               {safeTransactions.length ===
               1
                 ? "transaction"
                 : "transactions"}
+
             </span>
           )}
+
         </div>
+
       </div>
 
       {/* =====================================================
-          TABLE
+          TABLE AREA
+
+          IMPORTANT:
+
+          The outer container handles HORIZONTAL scrolling.
+
+          The inner body container handles VERTICAL scrolling.
+
+          This means:
+          
+          1. The header never moves vertically.
+          2. Only transaction rows scroll.
+          3. Five rows are visible at a time.
+          4. The table can still scroll horizontally on
+             smaller screens.
       ===================================================== */}
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1050px] border-collapse text-left">
-          <thead>
-            <tr className="border-b border-white/[0.06]">
-              <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
-                Transaction
-              </th>
 
-              <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
-                Member
-              </th>
+        {/* ---------------------------------------------------
+            Keep the header and body the same minimum width.
 
-              <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
-                Amount
-              </th>
+            This preserves column alignment when the table is
+            wider than the screen.
+        --------------------------------------------------- */}
 
-              <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
-                Source
-              </th>
+        <div className="min-w-[1050px]">
 
-              <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
-                Reference
-              </th>
+          {/* =================================================
+              STATIC TABLE HEADER
+              
+              This table is NOT inside the vertical scroll
+              container.
+          ================================================= */}
 
-              <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
-                Status
-              </th>
+          <table className="w-full border-collapse text-left">
 
-              <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
-                Date
-              </th>
+            <thead>
 
-              <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
-                Actions
-              </th>
-            </tr>
-          </thead>
+              <tr className="border-b border-white/[0.06]">
 
-          <tbody>
-            {loading ? (
-              <LoadingRows />
-            ) : safeTransactions.length ===
-              0 ? (
-              <EmptyState />
-            ) : (
-              safeTransactions.map(
-                (transaction) => (
-                  <TransactionRow
-                    key={
-                      transaction.id
-                    }
-                    transaction={
-                      transaction
-                    }
-                    onAdjust={
-                      onAdjust
-                    }
-                    onReverse={
-                      onReverse
-                    }
-                  />
-                )
-              )
-            )}
-          </tbody>
-        </table>
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  Transaction
+                </th>
+
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  Member
+                </th>
+
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  Amount
+                </th>
+
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  Source
+                </th>
+
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  Reference
+                </th>
+
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  Status
+                </th>
+
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  Date
+                </th>
+
+                <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  Actions
+                </th>
+
+              </tr>
+
+            </thead>
+
+          </table>
+
+          {/* =================================================
+              SCROLLABLE TABLE BODY
+
+              max-h-[280px] gives us approximately five
+              transaction rows.
+
+              overflow-y-auto means:
+
+              - 1–5 records:
+                    No vertical scrollbar needed.
+
+              - 6+ records:
+                    The body becomes vertically scrollable.
+
+              The header above remains fixed.
+          ================================================= */}
+
+          <div className="max-h-[200px] overflow-y-auto">
+
+            <table className="w-full border-collapse text-left">
+
+              <tbody>
+
+                {loading ? (
+
+                  <LoadingRows />
+
+                ) : safeTransactions.length ===
+                  0 ? (
+
+                  <EmptyState />
+
+                ) : (
+
+                  safeTransactions.map(
+                    (transaction) => (
+                      <TransactionRow
+                        key={
+                          transaction.id
+                        }
+                        transaction={
+                          transaction
+                        }
+                        onAdjust={
+                          onAdjust
+                        }
+                        onReverse={
+                          onReverse
+                        }
+                      />
+                    )
+                  )
+
+                )}
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+        </div>
+
       </div>
+
     </section>
   );
 }

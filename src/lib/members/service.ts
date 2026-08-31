@@ -781,6 +781,8 @@ export async function createMember(
     ...normalized,
 
     membershipNumber,
+    
+    mpesaName: normalized.mpesaName,
 
     status: "active",
 
@@ -846,6 +848,7 @@ export async function createMember(
             memberId,
 
             accountNumber,
+
 
             accountType: "fixed",
 
