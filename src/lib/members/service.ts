@@ -782,8 +782,6 @@ export async function createMember(
 
     membershipNumber,
     
-    mpesaName: normalized.mpesaName,
-
     status: "active",
 
     createdBy: actor,

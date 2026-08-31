@@ -15,7 +15,6 @@ export type Member = {
   dateOfBirth?: string;
 
   phone: string;
-  mpesaName?: string;
   email?: string;
 
   nationalId?: string;

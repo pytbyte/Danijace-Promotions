@@ -1,6 +1,13 @@
+
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
 import {
   AlertCircle,
   ArrowRight,
@@ -13,6 +20,7 @@ import {
 } from "lucide-react";
 
 import TopBar from "@/components/dashboard/TopBar";
+import SmsReader from "@/lib/sms/SmsReader";
 
 /* =========================================================
    TYPES
@@ -54,6 +62,18 @@ type SavingsSummary = {
 type ApiResponse<T = unknown> = {
   success?: boolean;
   data?: T;
+  error?: string;
+};
+
+type SmsProcessResponse = {
+  success?: boolean;
+  processed?: boolean;
+  duplicate?: boolean;
+  ignored?: boolean;
+  created?: boolean;
+  updated?: boolean;
+  financialChange?: boolean;
+  data?: unknown;
   error?: string;
 };
 
@@ -182,24 +202,32 @@ function formatRelativeTime(value: string) {
     return `${days}d ago`;
   }
 
-  return new Date(timestamp).toLocaleDateString("en-KE", {
-    day: "numeric",
-    month: "short",
-  });
+  return new Date(timestamp).toLocaleDateString(
+    "en-KE",
+    {
+      day: "numeric",
+      month: "short",
+    }
+  );
 }
 
 function formatCurrency(value: number) {
-  return `KES ${safeNumber(value).toLocaleString("en-KE", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })}`;
+  return `KES ${safeNumber(value).toLocaleString(
+    "en-KE",
+    {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }
+  )}`;
 }
 
 /* =========================================================
    API RESPONSE EXTRACTION
 ========================================================= */
 
-function extractRecords<T>(result: ApiResponse): T[] {
+function extractRecords<T>(
+  result: ApiResponse
+): T[] {
   const data = result?.data;
 
   if (Array.isArray(data)) {
@@ -207,7 +235,8 @@ function extractRecords<T>(result: ApiResponse): T[] {
   }
 
   if (data && typeof data === "object") {
-    const recordData = data as Record<string, unknown>;
+    const recordData =
+      data as Record<string, unknown>;
 
     const candidates = [
       recordData.members,
@@ -252,8 +281,30 @@ export default function DashboardPage() {
   const [mounted, setMounted] =
     useState(false);
 
+  /*
+   * Prevent duplicate SMS synchronization during the
+   * same dashboard lifecycle.
+   */
+  const smsSyncStarted = useRef(false);
+
+  /*
+   * Prevent dashboard refresh after the component has
+   * been unmounted.
+   */
+  const dashboardMounted = useRef(true);
+
+  /* =======================================================
+     MOUNT / UNMOUNT
+  ======================================================= */
+
   useEffect(() => {
+    dashboardMounted.current = true;
+
     setMounted(true);
+
+    return () => {
+      dashboardMounted.current = false;
+    };
   }, []);
 
   /* =======================================================
@@ -325,9 +376,13 @@ export default function DashboardPage() {
 
         let savingsError = "";
 
-        if (savingsResponse.status === "fulfilled") {
+        if (
+          savingsResponse.status ===
+          "fulfilled"
+        ) {
           try {
-            const response = savingsResponse.value;
+            const response =
+              savingsResponse.value;
 
             const json =
               (await response.json()) as ApiResponse<SavingsSummary>;
@@ -359,9 +414,13 @@ export default function DashboardPage() {
 
         let membersError = "";
 
-        if (membersResponse.status === "fulfilled") {
+        if (
+          membersResponse.status ===
+          "fulfilled"
+        ) {
           try {
-            const response = membersResponse.value;
+            const response =
+              membersResponse.value;
 
             const json =
               (await response.json()) as ApiResponse;
@@ -375,7 +434,9 @@ export default function DashboardPage() {
                 `Members API returned ${response.status}.`;
             } else {
               members =
-                extractRecords<MemberRecord>(json);
+                extractRecords<MemberRecord>(
+                  json
+                );
             }
           } catch {
             membersError =
@@ -394,9 +455,13 @@ export default function DashboardPage() {
 
         let loansError = "";
 
-        if (loansResponse.status === "fulfilled") {
+        if (
+          loansResponse.status ===
+          "fulfilled"
+        ) {
           try {
-            const response = loansResponse.value;
+            const response =
+              loansResponse.value;
 
             const json =
               (await response.json()) as ApiResponse;
@@ -410,7 +475,9 @@ export default function DashboardPage() {
                 `Loans API returned ${response.status}.`;
             } else {
               loans =
-                extractRecords<LoanRecord>(json);
+                extractRecords<LoanRecord>(
+                  json
+                );
             }
           } catch {
             loansError =
@@ -425,7 +492,8 @@ export default function DashboardPage() {
            NOTIFICATIONS
         ================================================= */
 
-        let notifications: NotificationRecord[] = [];
+        let notifications: NotificationRecord[] =
+          [];
 
         let notificationsError = "";
 
@@ -467,7 +535,9 @@ export default function DashboardPage() {
         ================================================= */
 
         const memberCountFromSavings =
-          safeNumber(savings.memberCount);
+          safeNumber(
+            savings.memberCount
+          );
 
         const totalMembers =
           members.length ||
@@ -476,7 +546,9 @@ export default function DashboardPage() {
         const activeMembers =
           members.length > 0
             ? members.filter((member) => {
-                if (member.isActive === true) {
+                if (
+                  member.isActive === true
+                ) {
                   return true;
                 }
 
@@ -501,11 +573,12 @@ export default function DashboardPage() {
         let defaulters = 0;
 
         for (const loan of loans) {
-          const outstanding = safeNumber(
-            loan.outstandingBalance ??
-              loan.remainingBalance ??
-              loan.balance
-          );
+          const outstanding =
+            safeNumber(
+              loan.outstandingBalance ??
+                loan.remainingBalance ??
+                loan.balance
+            );
 
           outstandingLoans += Math.max(
             0,
@@ -537,20 +610,24 @@ export default function DashboardPage() {
         ================================================= */
 
         const notificationCount =
-          notifications.filter((notification) => {
-            if (notification.read === true) {
-              return false;
-            }
+          notifications.filter(
+            (notification) => {
+              if (
+                notification.read === true
+              ) {
+                return false;
+              }
 
-            if (
-              notification.status?.toLowerCase() ===
-              "read"
-            ) {
-              return false;
-            }
+              if (
+                notification.status?.toLowerCase() ===
+                "read"
+              ) {
+                return false;
+              }
 
-            return true;
-          }).length;
+              return true;
+            }
+          ).length;
 
         /* =================================================
            UPDATE STATS
@@ -587,7 +664,9 @@ export default function DashboardPage() {
             notificationCount,
         };
 
-        setStats(nextStats);
+        if (dashboardMounted.current) {
+          setStats(nextStats);
+        }
 
         /* =================================================
            RECENT ACTIVITY
@@ -598,79 +677,90 @@ export default function DashboardPage() {
 
         /*
          * MEMBER ACTIVITY
-         *
-         * The latest member records are converted into
-         * dashboard activity rows.
          */
 
         members
           .slice()
           .sort(
             (a, b) =>
-              new Date(getDate(b)).getTime() -
-              new Date(getDate(a)).getTime()
+              new Date(
+                getDate(b)
+              ).getTime() -
+              new Date(
+                getDate(a)
+              ).getTime()
           )
           .slice(0, 4)
-          .forEach((member, index) => {
-            const name =
-              member.name ||
-              member.fullName ||
-              "Member";
+          .forEach(
+            (member, index) => {
+              const name =
+                member.name ||
+                member.fullName ||
+                "Member";
 
-            nextActivities.push({
-              id: `member-${getId(
-                member,
-                String(index)
-              )}`,
+              nextActivities.push({
+                id: `member-${getId(
+                  member,
+                  String(index)
+                )}`,
 
-              title: "Member activity",
+                title:
+                  "Member activity",
 
-              description:
-                `${name} was recently recorded.`,
+                description:
+                  `${name} was recently recorded.`,
 
-              time: formatRelativeTime(
-                getDate(member)
-              ),
+                time:
+                  formatRelativeTime(
+                    getDate(member)
+                  ),
 
-              type: "member",
-            });
-          });
+                type: "member",
+              });
+            }
+          );
 
         /*
          * LOAN ACTIVITY
-         *
-         * The latest loan records are converted into
-         * dashboard activity rows.
          */
 
         loans
           .slice()
           .sort(
             (a, b) =>
-              new Date(getDate(b)).getTime() -
-              new Date(getDate(a)).getTime()
+              new Date(
+                getDate(b)
+              ).getTime() -
+              new Date(
+                getDate(a)
+              ).getTime()
           )
           .slice(0, 4)
-          .forEach((loan, index) => {
-            nextActivities.push({
-              id: `loan-${getId(
-                loan,
-                String(index)
-              )}`,
+          .forEach(
+            (loan, index) => {
+              nextActivities.push({
+                id: `loan-${getId(
+                  loan,
+                  String(index)
+                )}`,
 
-              title: "Loan activity",
+                title:
+                  "Loan activity",
 
-              description: loan.memberName
-                ? `${loan.memberName} has loan activity.`
-                : "A loan record was recently updated.",
+                description:
+                  loan.memberName
+                    ? `${loan.memberName} has loan activity.`
+                    : "A loan record was recently updated.",
 
-              time: formatRelativeTime(
-                getDate(loan)
-              ),
+                time:
+                  formatRelativeTime(
+                    getDate(loan)
+                  ),
 
-              type: "loan",
-            });
-          });
+                type: "loan",
+              });
+            }
+          );
 
         /*
          * NOTIFICATION ACTIVITY
@@ -680,12 +770,19 @@ export default function DashboardPage() {
           .slice()
           .sort(
             (a, b) =>
-              new Date(getDate(b)).getTime() -
-              new Date(getDate(a)).getTime()
+              new Date(
+                getDate(b)
+              ).getTime() -
+              new Date(
+                getDate(a)
+              ).getTime()
           )
           .slice(0, 4)
           .forEach(
-            (notification, index) => {
+            (
+              notification,
+              index
+            ) => {
               nextActivities.push({
                 id: `notification-${getId(
                   notification,
@@ -701,49 +798,32 @@ export default function DashboardPage() {
                   notification.description ||
                   "New notification.",
 
-                time: formatRelativeTime(
-                  getDate(notification)
-                ),
+                time:
+                  formatRelativeTime(
+                    getDate(
+                      notification
+                    )
+                  ),
 
-                type: "notification",
+                type:
+                  "notification",
               });
             }
           );
 
         /*
-         * IMPORTANT:
+         * The savings summary currently supplies
+         * aggregate figures only.
          *
-         * The current /api/savings/summary endpoint only
-         * supplies aggregate savings figures.
-         *
-         * Therefore we do NOT manufacture fake savings
-         * activity rows here.
-         *
-         * Once the savings transaction endpoint is wired
-         * into the dashboard, savings activity can be added
-         * here safely.
+         * We intentionally do not manufacture
+         * savings activity records.
          */
 
-        /*
-         * Limit the dashboard activity list.
-         *
-         * The Activity panel itself is scrollable, so the
-         * user can see more than the visible panel height.
-         */
-
-        setActivities(
-          nextActivities
-            .sort((a, b) => {
-              /*
-               * Activities currently contain formatted
-               * relative times. We therefore preserve the
-               * API/domain ordering rather than attempting
-               * to sort using strings such as "2h ago".
-               */
-              return 0;
-            })
-            .slice(0, 12)
-        );
+        if (dashboardMounted.current) {
+          setActivities(
+            nextActivities.slice(0, 12)
+          );
+        }
 
         /* =================================================
            PARTIAL API ERRORS
@@ -756,7 +836,10 @@ export default function DashboardPage() {
           notificationsError,
         ].filter(Boolean);
 
-        if (errors.length > 0) {
+        if (
+          dashboardMounted.current &&
+          errors.length > 0
+        ) {
           setError(errors.join(" "));
         }
       } catch (err) {
@@ -766,36 +849,359 @@ export default function DashboardPage() {
         );
 
         if (
-          err instanceof TypeError &&
-          err.message === "Failed to fetch"
+          dashboardMounted.current
         ) {
-          setError(
-            "Unable to connect to the server. Check your connection and try again."
-          );
-        } else if (err instanceof Error) {
-          setError(err.message);
-        } else {
-          setError(
-            "Something went wrong while loading the dashboard."
-          );
+          if (
+            err instanceof TypeError &&
+            err.message ===
+              "Failed to fetch"
+          ) {
+            setError(
+              "Unable to connect to the server. Check your connection and try again."
+            );
+          } else if (
+            err instanceof Error
+          ) {
+            setError(err.message);
+          } else {
+            setError(
+              "Something went wrong while loading the dashboard."
+            );
+          }
         }
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (dashboardMounted.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     []
   );
 
   /* =======================================================
+     SMS INBOX SYNCHRONIZATION
+     
+     Runs when the dashboard opens.
+
+     IMPORTANT:
+     - Dashboard loading is independent from SMS loading.
+     - One bad SMS cannot stop the remaining messages.
+     - Duplicate financial transactions are expected to be
+       rejected by /api/sms/process.
+     - Dashboard is refreshed once if financial data changed.
+  ======================================================= */
+
+  const syncSmsInbox = useCallback(
+    async () => {
+      if (smsSyncStarted.current) {
+        console.log(
+          "[SMS] Synchronization already started."
+        );
+
+        return;
+      }
+
+      smsSyncStarted.current = true;
+
+      const controller =
+        new AbortController();
+
+      try {
+        console.log(
+          "[SMS] Starting inbox synchronization..."
+        );
+
+        /*
+         * Read the current Android SMS inbox.
+         */
+        const result =
+          await SmsReader.readInbox();
+
+        const messages =
+          Array.isArray(result.messages)
+            ? result.messages
+            : [];
+
+        console.log(
+          `[SMS] Found ${messages.length} messages.`
+        );
+
+        if (messages.length === 0) {
+          console.log(
+            "[SMS] No SMS messages found."
+          );
+
+          return;
+        }
+
+        /*
+         * Track whether at least one SMS caused
+         * a financial change.
+         *
+         * We refresh the dashboard only once after
+         * the complete batch has been processed.
+         */
+        let financialChange = false;
+
+        /*
+         * Process sequentially.
+         *
+         * This is deliberately NOT Promise.all().
+         *
+         * Sequential processing reduces the possibility
+         * of racing financial transactions against each
+         * other and makes server logs easier to audit.
+         */
+        for (const sms of messages) {
+          if (controller.signal.aborted) {
+            console.log(
+              "[SMS] Synchronization aborted."
+            );
+
+            break;
+          }
+
+          /*
+           * Basic client-side validation.
+           *
+           * The server MUST perform its own validation.
+           */
+          if (
+            typeof sms.body !== "string" ||
+            sms.body.trim().length === 0
+          ) {
+            console.warn(
+              "[SMS] Skipping SMS with empty body."
+            );
+
+            continue;
+          }
+
+          if (
+            typeof sms.date !== "number" ||
+            !Number.isFinite(sms.date)
+          ) {
+            console.warn(
+              "[SMS] Skipping SMS with invalid date."
+            );
+
+            continue;
+          }
+
+          try {
+            const response =
+              await fetch(
+                "/api/sms/process",
+                {
+                  method: "POST",
+
+                  headers: {
+                    "Content-Type":
+                      "application/json",
+
+                    Accept:
+                      "application/json",
+                  },
+
+                  body: JSON.stringify({
+                    address:
+                      sms.address ?? null,
+
+                    body: sms.body,
+
+                    date: sms.date,
+                  }),
+
+                  signal:
+                    controller.signal,
+
+                  cache: "no-store",
+                }
+              );
+
+            let data:
+              | SmsProcessResponse
+              | null = null;
+
+            try {
+              data =
+                (await response.json()) as SmsProcessResponse;
+            } catch {
+              /*
+               * The endpoint returned a non-JSON
+               * response. Treat it as a failed SMS
+               * without stopping the batch.
+               */
+              data = null;
+            }
+
+            if (!response.ok) {
+              console.error(
+                "[SMS] Processing failed:",
+                {
+                  status:
+                    response.status,
+
+                  error:
+                    data?.error ||
+                    "Unknown SMS processing error.",
+                }
+              );
+
+              continue;
+            }
+
+            /*
+             * The API tells us whether this SMS
+             * actually changed financial records.
+             */
+            if (
+              data?.financialChange ===
+                true ||
+              data?.created === true ||
+              data?.updated === true
+            ) {
+              financialChange = true;
+            }
+
+            if (
+              data?.duplicate === true
+            ) {
+              console.log(
+                "[SMS] Duplicate ignored."
+              );
+
+              continue;
+            }
+
+            if (
+              data?.ignored === true
+            ) {
+              console.log(
+                "[SMS] SMS ignored by processor."
+              );
+
+              continue;
+            }
+
+            if (
+              data?.processed === true
+            ) {
+              console.log(
+                "[SMS] SMS processed successfully."
+              );
+
+              continue;
+            }
+
+            console.log(
+              "[SMS] SMS API response:",
+              data
+            );
+          } catch (error) {
+            /*
+             * AbortError is expected when the component
+             * is unmounted.
+             */
+            if (
+              error instanceof DOMException &&
+              error.name ===
+                "AbortError"
+            ) {
+              console.log(
+                "[SMS] SMS request aborted."
+              );
+
+              break;
+            }
+
+            /*
+             * One malformed/unprocessable SMS must
+             * never stop the entire inbox scan.
+             */
+            console.error(
+              "[SMS] Individual SMS processing error:",
+              error
+            );
+          }
+        }
+
+        /*
+         * If SMS processing created or updated financial
+         * records, reload dashboard data ONCE.
+         */
+        if (
+          financialChange &&
+          !controller.signal.aborted &&
+          dashboardMounted.current
+        ) {
+          console.log(
+            "[SMS] Financial records changed. Refreshing dashboard..."
+          );
+
+          await loadDashboard(true);
+        }
+
+        console.log(
+          "[SMS] Inbox synchronization complete."
+        );
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          error.name === "AbortError"
+        ) {
+          console.log(
+            "[SMS] Inbox synchronization aborted."
+          );
+
+          return;
+        }
+
+        /*
+         * SMS failure must NEVER break the dashboard.
+         */
+        console.error(
+          "[SMS] Failed to synchronize inbox:",
+          error
+        );
+      } finally {
+        controller.abort();
+      }
+    },
+    [loadDashboard]
+  );
+
+  /* =======================================================
      INITIAL LOAD
+
+     Dashboard and SMS synchronization start independently.
   ======================================================= */
 
   useEffect(() => {
     if (!mounted) return;
 
-    loadDashboard();
-  }, [mounted, loadDashboard]);
+    /*
+     * Load dashboard immediately.
+     */
+    void loadDashboard();
+
+    /*
+     * Start SMS synchronization independently.
+     *
+     * IMPORTANT:
+     * Do not await this.
+     *
+     * The dashboard should never wait for Android's
+     * SMS reader or for potentially hundreds of SMS
+     * processing requests.
+     */
+    void syncSmsInbox();
+  }, [
+    mounted,
+    loadDashboard,
+    syncSmsInbox,
+  ]);
 
   /* =======================================================
      REFRESH
@@ -806,7 +1212,7 @@ export default function DashboardPage() {
       return;
     }
 
-    loadDashboard(true);
+    void loadDashboard(true);
   }
 
   /* =======================================================
@@ -872,7 +1278,10 @@ export default function DashboardPage() {
               <button
                 type="button"
                 onClick={handleRefresh}
-                disabled={loading || refreshing}
+                disabled={
+                  loading ||
+                  refreshing
+                }
                 className="flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-4 text-sm font-medium text-white/55 transition hover:border-white/[0.14] hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 lg:w-auto"
               >
                 <RefreshCw
@@ -919,7 +1328,9 @@ export default function DashboardPage() {
 
                 <button
                   type="button"
-                  onClick={() => loadDashboard()}
+                  onClick={() =>
+                    void loadDashboard()
+                  }
                   className="h-10 shrink-0 rounded-xl border border-red-400/10 bg-red-400/[0.06] px-4 text-xs font-medium text-red-300 transition hover:bg-red-400/10"
                 >
                   Try again
@@ -939,7 +1350,9 @@ export default function DashboardPage() {
               <section className="grid w-full min-w-0 grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
                 <StatCard
                   title="Members"
-                  value={stats.members}
+                  value={
+                    stats.members
+                  }
                   subtitle={`${stats.activeMembers.toLocaleString()} active`}
                   icon={
                     <Users
@@ -967,7 +1380,9 @@ export default function DashboardPage() {
 
                 <StatCard
                   title="Loans"
-                  value={stats.loans}
+                  value={
+                    stats.loans
+                  }
                   subtitle={formatCurrency(
                     stats.outstandingLoans
                   )}
@@ -982,7 +1397,9 @@ export default function DashboardPage() {
 
                 <StatCard
                   title="Defaulters"
-                  value={stats.defaulters}
+                  value={
+                    stats.defaulters
+                  }
                   subtitle="Members requiring attention"
                   icon={
                     <AlertCircle
@@ -1036,18 +1453,10 @@ export default function DashboardPage() {
 
                 {/* =================================================
                     RECENT ACTIVITY
-                   
-                    The outer card has a fixed maximum height.
-                    The header remains fixed.
-                    Only the activity list scrolls.
-                   
-                    This prevents the dashboard from becoming
-                    excessively tall when many activities exist.
                 ================================================= */}
 
                 <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
 
-                  {/* FIXED ACTIVITY HEADER */}
                   <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-4 sm:px-5">
                     <div>
                       <h2 className="text-sm font-semibold text-white">
@@ -1064,15 +1473,8 @@ export default function DashboardPage() {
                     </span>
                   </div>
 
-                  {/* 
-                   * SCROLLABLE ACTIVITY BODY
-                   *
-                   * max-h-[280px] controls the height.
-                   * overflow-y-auto enables vertical scrolling.
-                   *
-                   * The scrollbar is intentionally subtle.
-                   */}
-                  {activities.length === 0 ? (
+                  {activities.length ===
+                  0 ? (
                     <div className="flex min-h-[160px] items-center justify-center p-6">
                       <div className="text-center">
                         <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-white/25">
@@ -1108,8 +1510,12 @@ export default function DashboardPage() {
                         {activities.map(
                           (activity) => (
                             <ActivityRow
-                              key={activity.id}
-                              activity={activity}
+                              key={
+                                activity.id
+                              }
+                              activity={
+                                activity
+                              }
                             />
                           )
                         )}
@@ -1120,15 +1526,10 @@ export default function DashboardPage() {
 
                 {/* =================================================
                     QUICK ACCESS
-                   
-                    Reduced height and independently scrollable.
-                    The header stays visible while the quick-access
-                    items scroll inside their own area.
                 ================================================= */}
 
                 <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
 
-                  {/* FIXED QUICK ACCESS HEADER */}
                   <div className="border-b border-white/[0.07] px-4 py-4 sm:px-5">
                     <h2 className="text-sm font-semibold text-white">
                       Quick Access
@@ -1139,13 +1540,6 @@ export default function DashboardPage() {
                     </p>
                   </div>
 
-                  {/* 
-                   * SCROLLABLE QUICK ACCESS BODY
-                   *
-                   * max-h-[280px] keeps the panel compact.
-                   * If more features are added later, the user
-                   * can scroll without expanding the dashboard.
-                   */}
                   <div
                     className="
                       max-h-[280px]
@@ -1249,7 +1643,8 @@ export default function DashboardPage() {
                       </span>
 
                       <span className="text-[10px] text-white/40">
-                        {stats.members > 0
+                        {stats.members >
+                        0
                           ? Math.round(
                               (stats.activeMembers /
                                 stats.members) *
@@ -1265,7 +1660,8 @@ export default function DashboardPage() {
                         className="h-full rounded-full bg-yellow-500 transition-all"
                         style={{
                           width: `${
-                            stats.members > 0
+                            stats.members >
+                            0
                               ? Math.min(
                                   100,
                                   (stats.activeMembers /
@@ -1288,7 +1684,9 @@ export default function DashboardPage() {
                     }
                     className="mt-5 flex items-center gap-2 text-xs font-medium text-yellow-400 transition hover:text-yellow-300"
                   >
-                    <span>Manage members</span>
+                    <span>
+                      Manage members
+                    </span>
 
                     <ArrowRight
                       size={14}
@@ -1357,7 +1755,9 @@ export default function DashboardPage() {
                     }
                     className="mt-5 flex items-center gap-2 text-xs font-medium text-yellow-400 transition hover:text-yellow-300"
                   >
-                    <span>Open savings</span>
+                    <span>
+                      Open savings
+                    </span>
 
                     <ArrowRight
                       size={14}
@@ -1600,25 +2000,25 @@ function DashboardLoading() {
   return (
     <div className="w-full min-w-0 animate-pulse space-y-6">
       <section className="grid w-full min-w-0 grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map(
-          (_, index) => (
-            <div
-              key={index}
-              className="h-[125px] min-w-0 rounded-2xl border border-white/[0.06] bg-white/[0.025]"
-            />
-          )
-        )}
+        {Array.from({
+          length: 4,
+        }).map((_, index) => (
+          <div
+            key={index}
+            className="h-[125px] min-w-0 rounded-2xl border border-white/[0.06] bg-white/[0.025]"
+          />
+        ))}
       </section>
 
       <section className="grid w-full min-w-0 grid-cols-2 gap-3 sm:grid-cols-4">
-        {Array.from({ length: 4 }).map(
-          (_, index) => (
-            <div
-              key={index}
-              className="h-[85px] rounded-2xl border border-white/[0.06] bg-white/[0.025]"
-            />
-          )
-        )}
+        {Array.from({
+          length: 4,
+        }).map((_, index) => (
+          <div
+            key={index}
+            className="h-[85px] rounded-2xl border border-white/[0.06] bg-white/[0.025]"
+          />
+        ))}
       </section>
 
       <section className="grid w-full min-w-0 gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(300px,0.75fr)]">
