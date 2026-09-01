@@ -10,23 +10,46 @@
  * messages.
  *
  * It does NOT:
+ *
  * - query members
  * - query savings accounts
  * - query loans
  * - create financial transactions
  * - modify balances
+ * - decide the final financial destination
  *
- * The account number in the SMS is ONLY used to determine
- * whether the payment is:
+ * Pipeline:
  *
- *   loan
- *   savings
+ *   Android SmsMessage
+ *        ↓
+ *   parser.ts
+ *        ↓
+ *   ParsedBankSms
+ *        ↓
+ *   classifier.ts
+ *        ↓
+ *   loan / savings / unknown
  *
- * The member is resolved later from the parsed sender name.
+ * The account number appearing in the bank SMS is a BANK
+ * collection account. It is NOT:
+ *
+ * - a GEO-SHUA member ID
+ * - a GEO-SHUA savings account ID
+ * - a GEO-SHUA loan ID
+ * - a GEO-SHUA loan number
+ *
+ * Example:
+ *
+ * UHTHY4Z1PL Confirmed. KES 1,400.00 received from
+ * FRANCIS MWANGI KAMAU for account 2650821 on
+ * 31/08/26 at 09:17 AM.
+ *
  * =========================================================
  */
 
-import type { SmsMessage } from "@/lib/sms/SmsReader";
+import type {
+  SmsMessage,
+} from "@/lib/sms/SmsReader";
 
 /* =========================================================
    TYPES
@@ -37,100 +60,82 @@ export type BankPaymentType =
   | "savings"
   | "unknown";
 
+/**
+ * Parsed and normalized bank SMS.
+ *
+ * At parser level transactionType is intentionally
+ * "unknown". The classifier is responsible for deciding
+ * whether the bank account represents a loan or savings
+ * collection account.
+ */
 export type ParsedBankSms = {
   /**
    * Bank transaction/reference code.
-   *
-   * Example:
-   * UHTHY4Z1PL
    */
   reference: string;
 
   /**
-   * Positive amount received.
+   * Positive transaction amount.
    */
   amount: number;
 
   /**
-   * Name exactly as supplied by the bank SMS,
-   * after basic whitespace normalization.
+   * Sender/member name exactly as supplied by the bank,
+   * with basic whitespace normalization.
    */
   senderName: string;
 
   /**
-   * Bank account number appearing in the SMS.
+   * Bank collection account number appearing in the SMS.
    *
-   * This is a ROUTING value only.
-   *
-   * It does not identify a member or savings account.
+   * This is a routing value only.
    */
   accountNumber: string;
 
   /**
-   * Determines which financial domain should handle
-   * the transaction.
+   * Financial destination.
+   *
+   * The parser does not make this decision.
    */
   transactionType: BankPaymentType;
 
   /**
    * Bank-reported transaction date/time.
+   *
+   * Constructed explicitly using Kenya time (+03:00).
    */
   transactionDate: Date;
 
   /**
-   * Original SMS sender/address.
+   * Original Android SMS sender/address.
    */
   address: string | null;
 
   /**
-   * Original SMS body.
-   *
-   * Preserved for audit/reconciliation.
+   * Original SMS body after safe whitespace
+   * normalization.
    */
   rawMessage: string;
 
   /**
    * Native Android SMS timestamp.
-   *
-   * This is kept separately from the date parsed from
-   * the bank message.
    */
   smsDate: number;
 
   /**
    * Bank SMS status.
    *
-   * Currently the supported format is "confirmed".
+   * Currently only confirmed transactions are supported.
    */
   status: "confirmed";
 };
-
-/* =========================================================
-   ROUTING
-========================================================= */
-
-/**
- * These numbers DO NOT identify members.
- *
- * They only identify the financial destination/type.
- *
- * Update these values to the actual GEO-SHUA bank
- * collection account numbers.
- */
-const LOAN_BANK_ACCOUNT =
-  "082083";
-
-const SAVINGS_BANK_ACCOUNT =
-  "2650821";
 
 /* =========================================================
    ERRORS
 ========================================================= */
 
 export class SmsParseError extends Error {
-  constructor(
-    message: string
-  ) {
+  constructor(message: string) {
     super(message);
 
     this.name =
@@ -142,6 +147,9 @@ export class SmsParseError extends Error {
    HELPERS
 ========================================================= */
 
+/**
+ * Require a usable SMS body.
+ */
 function requireSmsBody(
   body: unknown
 ): string {
@@ -157,6 +165,10 @@ function requireSmsBody(
   return body.trim();
 }
 
+/**
+ * Normalize whitespace without altering the actual
+ * words/content of the bank message.
+ */
 function normalizeWhitespace(
   value: string
 ): string {
@@ -165,14 +177,63 @@ function normalizeWhitespace(
     .trim();
 }
 
+/**
+ * Normalize bank reference.
+ */
+function normalizeReference(
+  value: string
+): string {
+  return normalizeWhitespace(
+    value
+  ).toUpperCase();
+}
+
+/**
+ * Normalize sender name.
+ *
+ * We deliberately do not alter the name beyond
+ * Unicode/whitespace normalization.
+ *
+ * Exact member matching is handled later.
+ */
+function normalizeName(
+  value: string
+): string {
+  return value
+    .normalize("NFKC")
+    .replace(
+      /[\u2018\u2019\u201A\u0060]/g,
+      "'"
+    )
+    .replace(
+      /\s+/g,
+      " "
+    )
+    .trim();
+}
+
+/**
+ * Normalize bank account number.
+ */
+function normalizeAccountNumber(
+  value: string
+): string {
+  return value.trim();
+}
+
+/**
+ * Parse positive monetary amount.
+ *
+ * Financial values are rounded to cents before being
+ * converted back to a number.
+ */
 function parseAmount(
   value: string
 ): number {
   const normalized =
-    value.replace(
-      /,/g,
-      ""
-    );
+    value
+      .replace(/,/g, "")
+      .trim();
 
   const amount =
     Number(normalized);
@@ -186,7 +247,22 @@ function parseAmount(
     );
   }
 
-  return amount;
+  const cents =
+    Math.round(
+      amount * 100
+    );
+
+  if (
+    !Number.isSafeInteger(
+      cents
+    )
+  ) {
+    throw new SmsParseError(
+      "Transaction amount is outside the supported financial range."
+    );
+  }
+
+  return cents / 100;
 }
 
 /* =========================================================
@@ -216,7 +292,18 @@ function parseReference(
     );
   }
 
-  return match[1].trim();
+  const reference =
+    normalizeReference(
+      match[1]
+    );
+
+  if (!reference) {
+    throw new SmsParseError(
+      "Bank transaction reference is empty."
+    );
+  }
+
+  return reference;
 }
 
 /* =========================================================
@@ -227,8 +314,6 @@ function parseReference(
  * Extract:
  *
  * KES 1,400.00
- *
- * from the SMS.
  */
 function parseAmountFromBody(
   body: string
@@ -277,7 +362,7 @@ function parseSenderName(
   }
 
   const name =
-    normalizeWhitespace(
+    normalizeName(
       match[1]
     );
 
@@ -291,7 +376,7 @@ function parseSenderName(
 }
 
 /* =========================================================
-   ACCOUNT NUMBER
+   BANK ACCOUNT NUMBER
 ========================================================= */
 
 /**
@@ -302,6 +387,12 @@ function parseSenderName(
  * from:
  *
  * for account 2650821 on...
+ *
+ * IMPORTANT:
+ *
+ * This is the BANK collection account.
+ *
+ * It is NOT the GEO-SHUA savings account.
  */
 function parseAccountNumber(
   body: string
@@ -317,7 +408,18 @@ function parseAccountNumber(
     );
   }
 
-  return match[1];
+  const accountNumber =
+    normalizeAccountNumber(
+      match[1]
+    );
+
+  if (!accountNumber) {
+    throw new SmsParseError(
+      "Bank account number is empty."
+    );
+  }
+
+  return accountNumber;
 }
 
 /* =========================================================
@@ -325,18 +427,21 @@ function parseAccountNumber(
 ========================================================= */
 
 /**
- * Supported format:
+ * Parse supported bank format:
  *
  * 31/08/26 at 09:17 AM
  *
  * 29/08/26 at 11:43 PM
+ *
+ * The resulting Date is explicitly constructed using
+ * Africa/Nairobi (+03:00) semantics.
  */
 function parseTransactionDate(
   body: string
 ): Date {
   const match =
     body.match(
-      /\bon\s+(\d{2})\/(\d{2})\/(\d{2})\s+at\s+(\d{1,2}):(\d{2})\s*(AM|PM)\b/i
+      /\bon\s+(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\s+at\s+(\d{1,2}):(\d{2})\s*(AM|PM)\b/i
     );
 
   if (!match) {
@@ -352,7 +457,7 @@ function parseTransactionDate(
     yearText,
     hourText,
     minuteText,
-    meridiem,
+    meridiemText,
   ] = match;
 
   const day =
@@ -361,7 +466,7 @@ function parseTransactionDate(
   const month =
     Number(monthText);
 
-  const shortYear =
+  let year =
     Number(yearText);
 
   let hour =
@@ -370,16 +475,25 @@ function parseTransactionDate(
   const minute =
     Number(minuteText);
 
+  const meridiem =
+    meridiemText.toUpperCase();
+
   if (
     !Number.isInteger(day) ||
     !Number.isInteger(month) ||
-    !Number.isInteger(shortYear) ||
+    !Number.isInteger(year) ||
     !Number.isInteger(hour) ||
     !Number.isInteger(minute)
   ) {
     throw new SmsParseError(
       "Invalid transaction date."
     );
+  }
+
+  if (
+    year < 100
+  ) {
+    year += 2000;
   }
 
   if (
@@ -397,50 +511,44 @@ function parseTransactionDate(
     );
   }
 
-  /*
-   * Bank messages use a two-digit year.
-   *
-   * 26 → 2026
-   */
-  const year =
-    2000 + shortYear;
-
-  /*
+  /**
    * Convert 12-hour time to 24-hour time.
    */
-  const normalizedMeridiem =
-    meridiem.toUpperCase();
-
   if (
-    normalizedMeridiem ===
-    "AM"
+    meridiem === "AM"
   ) {
     if (hour === 12) {
       hour = 0;
     }
-  } else {
+  } else if (
+    meridiem === "PM"
+  ) {
     if (hour !== 12) {
       hour += 12;
     }
+  } else {
+    throw new SmsParseError(
+      "Transaction time must specify AM or PM."
+    );
   }
 
-  /*
-   * JavaScript Date uses the local timezone when constructed
-   * this way.
+  /**
+   * Build an explicit Kenya-local ISO timestamp.
    *
-   * GEO-SHUA operates in Kenya, so this represents the
-   * bank's local transaction time.
+   * This avoids depending on the timezone configured on
+   * Vercel/Node.
+   *
+   * Africa/Nairobi = UTC+03:00.
    */
+  const iso =
+    `${String(year).padStart(4, "0")}-` +
+    `${String(month).padStart(2, "0")}-` +
+    `${String(day).padStart(2, "0")}T` +
+    `${String(hour).padStart(2, "0")}:` +
+    `${String(minute).padStart(2, "0")}:00+03:00`;
+
   const date =
-    new Date(
-      year,
-      month - 1,
-      day,
-      hour,
-      minute,
-      0,
-      0
-    );
+    new Date(iso);
 
   if (
     Number.isNaN(
@@ -452,16 +560,29 @@ function parseTransactionDate(
     );
   }
 
-  /*
-   * Protect against JavaScript normalizing impossible
-   * calendar dates such as 31/02/26.
+  /**
+   * Validate calendar values independently.
+   *
+   * We use UTC getters because the Date has already been
+   * converted from the explicit +03:00 representation.
    */
+  const kenyaEquivalent =
+    new Date(
+      date.getTime() +
+        3 * 60 * 60 * 1000
+    );
+
   if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day ||
-    date.getHours() !== hour ||
-    date.getMinutes() !== minute
+    kenyaEquivalent.getUTCFullYear() !==
+      year ||
+    kenyaEquivalent.getUTCMonth() !==
+      month - 1 ||
+    kenyaEquivalent.getUTCDate() !==
+      day ||
+    kenyaEquivalent.getUTCHours() !==
+      hour ||
+    kenyaEquivalent.getUTCMinutes() !==
+      minute
   ) {
     throw new SmsParseError(
       "Transaction date is not a valid calendar date."
@@ -484,41 +605,11 @@ function parseStatus(
     )
   ) {
     throw new SmsParseError(
-      "SMS is not a confirmed transaction."
+      "SMS is not a confirmed bank transaction."
     );
   }
 
   return "confirmed";
-}
-
-/* =========================================================
-   ROUTING
-========================================================= */
-
-function determineTransactionType(
-  accountNumber: string
-): BankPaymentType {
-  if (
-    accountNumber ===
-    LOAN_BANK_ACCOUNT
-  ) {
-    return "loan";
-  }
-
-  if (
-    accountNumber ===
-    SAVINGS_BANK_ACCOUNT
-  ) {
-    return "savings";
-  }
-
-  /*
-   * NEVER guess.
-   *
-   * An unknown bank account must not accidentally become
-   * a savings or loan transaction.
-   */
-  return "unknown";
 }
 
 /* =========================================================
@@ -531,10 +622,16 @@ function determineTransactionType(
  * Example input:
  *
  * {
- *   address: "...",
- *   body: "UHTHY4Z1PL Confirmed. KES 1,400.00 received ...",
+ *   address: "BANK",
+ *   body: "UHTHY4Z1PL Confirmed. KES 1,400.00 received from ...",
  *   date: 1788041580000
  * }
+ *
+ * The parser does not query MongoDB.
+ *
+ * The parser does not create transactions.
+ *
+ * The parser does not determine savings/loan routing.
  */
 export function parseBankSms(
   sms: SmsMessage
@@ -548,9 +645,12 @@ export function parseBankSms(
     );
   }
 
+  /**
+   * Native Android timestamp is authoritative for
+   * identifying the SMS itself.
+   */
   if (
-    typeof sms.date !==
-      "number" ||
+    typeof sms.date !== "number" ||
     !Number.isFinite(
       sms.date
     )
@@ -565,40 +665,60 @@ export function parseBankSms(
       sms.body
     );
 
+  /**
+   * Normalize once before extraction.
+   *
+   * This makes line-wrapped Android SMS content easier
+   * to parse without changing meaningful characters.
+   */
+  const normalizedBody =
+    normalizeWhitespace(
+      body
+    );
+
   const reference =
     parseReference(
-      body
+      normalizedBody
     );
 
   const amount =
     parseAmountFromBody(
-      body
+      normalizedBody
     );
 
   const senderName =
     parseSenderName(
-      body
+      normalizedBody
     );
 
   const accountNumber =
     parseAccountNumber(
-      body
+      normalizedBody
     );
 
   const transactionDate =
     parseTransactionDate(
-      body
+      normalizedBody
     );
 
   const status =
     parseStatus(
-      body
+      normalizedBody
     );
 
-  const transactionType =
-    determineTransactionType(
-      accountNumber
-    );
+  /**
+   * IMPORTANT:
+   *
+   * The parser intentionally does not determine:
+   *
+   * loan
+   * savings
+   *
+   * That is the classifier's responsibility.
+   */
+  const transactionType:
+    BankPaymentType =
+    "unknown";
 
   return {
     reference,
@@ -614,10 +734,14 @@ export function parseBankSms(
     transactionDate,
 
     address:
-      sms.address ?? null,
+      typeof sms.address ===
+        "string"
+        ? sms.address.trim() ||
+          null
+        : null,
 
     rawMessage:
-      body,
+      normalizedBody,
 
     smsDate:
       sms.date,
@@ -633,18 +757,24 @@ export function parseBankSms(
 export type ParseSmsResult =
   | {
       success: true;
+
       sms: SmsMessage;
+
       parsed: ParsedBankSms;
     }
   | {
       success: false;
+
       sms: SmsMessage;
+
       error: string;
     };
 
 /**
- * Parse multiple SMS messages without allowing one malformed
- * message to stop the entire inbox processing operation.
+ * Parse multiple SMS messages safely.
+ *
+ * One malformed or unrelated SMS never stops the
+ * remaining inbox messages from being evaluated.
  */
 export function parseBankSmsBatch(
   messages: SmsMessage[]
@@ -660,7 +790,9 @@ export function parseBankSmsBatch(
       try {
         return {
           success: true,
+
           sms,
+
           parsed:
             parseBankSms(
               sms
@@ -669,7 +801,9 @@ export function parseBankSmsBatch(
       } catch (error) {
         return {
           success: false,
+
           sms,
+
           error:
             error instanceof Error
               ? error.message

@@ -25,6 +25,18 @@ import TopBar from "@/components/dashboard/TopBar";
 import SmsReader from "@/lib/sms/SmsReader";
 
 /* =========================================================
+   CONSTANTS
+========================================================= */
+
+const SMS_PROCESS_URL =
+  "https://geoshua.vercel.app/api/sms/process";
+
+const SMS_SWEEP_INTERVAL_MS =
+  5 * 60 * 1000;
+
+const MAX_SMS_HISTORY = 50;
+
+/* =========================================================
    TYPES
 ========================================================= */
 
@@ -66,8 +78,43 @@ type SavingsSummary = {
 
 type ApiResponse<T = unknown> = {
   success?: boolean;
+
+  /*
+   * Normal dashboard APIs.
+   */
   data?: T;
+
+  /*
+   * SMS API fields.
+   */
+  status?: string;
+  stage?: string;
+  processed?: boolean;
+  duplicate?: boolean;
+  ignored?: boolean;
+  financialChange?: boolean;
+
+  type?:
+    | "loan"
+    | "savings"
+    | "unknown";
+
+  received?: unknown;
+  parser?: unknown;
+  classifier?: unknown;
+  processor?: unknown;
+
+  /*
+   * IMPORTANT:
+   *
+   * /api/sms/process returns the processing result
+   * at the TOP LEVEL under `result`.
+   */
+  result?: T;
+
   error?: string;
+
+  receivedAt?: string;
 };
 
 type MemberRecord = {
@@ -110,6 +157,10 @@ type LoanRecord = {
 
   loanNumber?: string;
 };
+
+/* =========================================================
+   NOTIFICATIONS
+========================================================= */
 
 type NotificationRecord = {
   id?: string;
@@ -158,39 +209,79 @@ type SmsActivity = {
     | "savings"
     | "unknown";
 
+  accountNumber?: string;
+
   address?: string | null;
 
   date?: number;
 
   body?: string;
 
-  response?: ApiResponse | null;
+  response?: unknown;
 
   error?: string;
 
   timestamp: number;
 };
 
-type SmsProcessResponse =
-  ApiResponse<{
-    status?:
-      | "processed"
-      | "duplicate";
+type SmsTransactionResult = {
+  status?:
+    | "processed"
+    | "duplicate";
 
-    type?:
+  type?:
+    | "savings"
+    | "loan"
+    | "unknown";
+
+  transaction?: {
+    reference?: string;
+
+    amount?: number;
+
+    senderName?: string;
+
+    transactionType?:
+      | "loan"
       | "savings"
-      | "loan";
+      | "unknown";
 
-    transaction?: unknown;
+    accountNumber?: string;
 
-    member?: unknown;
+    transactionDate?:
+      | string
+      | Date;
 
-    savingsTransaction?: unknown;
+    rawMessage?: string;
 
-    loan?: unknown;
+    address?: string | null;
 
-    repayment?: unknown;
-  }>;
+    smsDate?: number;
+  };
+
+  member?: {
+    id?: string;
+    name?: string;
+  };
+
+  savingsAccount?: {
+    id?: string;
+    accountNumber?: string;
+  };
+
+  savingsTransaction?: unknown;
+
+  loan?: unknown;
+
+  repayment?: unknown;
+};
+
+type SmsApiResponse =
+  ApiResponse<SmsTransactionResult>;
+
+/* =========================================================
+   DEFAULTS
+========================================================= */
 
 const DEFAULT_STATS: DashboardStats = {
   members: 0,
@@ -213,28 +304,26 @@ const DEFAULT_STATS: DashboardStats = {
 ========================================================= */
 
 function safeNumber(
-  value: unknown
+  value: unknown,
 ): number {
   if (
-    typeof value ===
-    "number"
+    typeof value === "number"
   ) {
     return Number.isFinite(
-      value
+      value,
     )
       ? value
       : 0;
   }
 
   if (
-    typeof value ===
-    "string"
+    typeof value === "string"
   ) {
     const parsed =
       Number(value);
 
     return Number.isFinite(
-      parsed
+      parsed,
     )
       ? parsed
       : 0;
@@ -248,7 +337,7 @@ function getId(
     id?: string;
     _id?: string;
   },
-  fallback: string
+  fallback: string,
 ): string {
   return (
     item.id ||
@@ -261,7 +350,7 @@ function getDate(
   item: {
     createdAt?: string;
     updatedAt?: string;
-  }
+  },
 ): string {
   return (
     item.createdAt ||
@@ -271,20 +360,18 @@ function getDate(
 }
 
 function formatRelativeTime(
-  value: string
+  value: string,
 ): string {
   if (!value) {
     return "";
   }
 
   const timestamp =
-    new Date(
-      value
-    ).getTime();
+    new Date(value).getTime();
 
   if (
     !Number.isFinite(
-      timestamp
+      timestamp,
     )
   ) {
     return "";
@@ -294,7 +381,7 @@ function formatRelativeTime(
     Math.max(
       0,
       Date.now() -
-        timestamp
+        timestamp,
     );
 
   const seconds =
@@ -308,7 +395,7 @@ function formatRelativeTime(
 
   const minutes =
     Math.floor(
-      seconds / 60
+      seconds / 60,
     );
 
   if (
@@ -319,7 +406,7 @@ function formatRelativeTime(
 
   const hours =
     Math.floor(
-      minutes / 60
+      minutes / 60,
     );
 
   if (
@@ -330,7 +417,7 @@ function formatRelativeTime(
 
   const days =
     Math.floor(
-      hours / 24
+      hours / 24,
     );
 
   if (
@@ -340,48 +427,48 @@ function formatRelativeTime(
   }
 
   return new Date(
-    timestamp
+    timestamp,
   ).toLocaleDateString(
     "en-KE",
     {
       day: "numeric",
       month: "short",
-    }
+    },
   );
 }
 
 function formatCurrency(
-  value: number
+  value: number,
 ): string {
   return `KES ${safeNumber(
-    value
+    value,
   ).toLocaleString(
     "en-KE",
     {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
-    }
+    },
   )}`;
 }
 
 function formatSmsDate(
-  date?: number
+  date?: number,
 ): string {
   if (
-    !date ||
+    typeof date !== "number" ||
     !Number.isFinite(date)
   ) {
     return "Unknown date";
   }
 
   return new Date(
-    date
+    date,
   ).toLocaleString(
     "en-KE",
     {
       dateStyle: "medium",
       timeStyle: "short",
-    }
+    },
   );
 }
 
@@ -390,7 +477,7 @@ function formatSmsDate(
 ========================================================= */
 
 function extractRecords<T>(
-  result: ApiResponse
+  result: ApiResponse,
 ): T[] {
   const data =
     result?.data;
@@ -428,7 +515,7 @@ function extractRecords<T>(
     ) {
       if (
         Array.isArray(
-          candidate
+          candidate,
         )
       ) {
         return candidate as T[];
@@ -440,11 +527,90 @@ function extractRecords<T>(
 }
 
 /* =========================================================
+   SMS HELPERS
+========================================================= */
+
+function getSmsKey(
+  sms: {
+    address: string | null;
+    body: string;
+    date: number;
+  },
+): string {
+  return [
+    sms.address || "",
+    sms.date,
+    sms.body,
+  ].join("|");
+}
+
+function looksLikeGeoShuaBankSms(
+  body: string,
+): boolean {
+  return (
+    /\bConfirmed\./i.test(
+      body,
+    ) &&
+    /\bKES\s*[\d,]+(?:\.\d{1,2})?\b/i.test(
+      body,
+    ) &&
+    /\breceived\s+from\b/i.test(
+      body,
+    ) &&
+    /\bfor\s+account\b/i.test(
+      body,
+    )
+  );
+}
+
+/**
+ * Runtime-safe transaction type guard.
+ *
+ * This avoids TypeScript narrowing errors when
+ * values come from JSON.
+ */
+function isSmsTransactionType(
+  value: unknown,
+): value is
+  | "loan"
+  | "savings"
+  | "unknown" {
+  return (
+    value === "loan" ||
+    value === "savings" ||
+    value === "unknown"
+  );
+}
+
+/**
+ * The SMS API currently returns the processor result
+ * at the top level:
+ *
+ * {
+ *   success: true,
+ *   result: {...}
+ * }
+ */
+function getSmsResult(
+  response: SmsApiResponse,
+): SmsTransactionResult | null {
+  if (
+    response?.result &&
+    typeof response.result ===
+      "object"
+  ) {
+    return response.result;
+  }
+
+  return null;
+}
+
+/* =========================================================
    SMS STATUS MESSAGE
 ========================================================= */
 
 function getSmsActivityMessage(
-  activity: SmsActivity
+  activity: SmsActivity,
 ): string {
   switch (
     activity.status
@@ -462,17 +628,27 @@ function getSmsActivityMessage(
 
     case "processing":
       return activity.senderName
-        ? `Processing ${activity.amount ? formatCurrency(activity.amount) : "payment"} from ${activity.senderName}…`
+        ? `Processing ${
+            activity.amount
+              ? formatCurrency(
+                  activity.amount,
+                )
+              : "payment"
+          } from ${activity.senderName}…`
         : "Processing bank payment…";
 
     case "savings":
       return activity.amount
-        ? `Savings deposit recorded · ${formatCurrency(activity.amount)}`
+        ? `Savings deposit recorded · ${formatCurrency(
+            activity.amount,
+          )}`
         : "Savings deposit recorded";
 
     case "loan":
       return activity.amount
-        ? `Loan repayment recorded · ${formatCurrency(activity.amount)}`
+        ? `Loan repayment recorded · ${formatCurrency(
+            activity.amount,
+          )}`
         : "Loan repayment recorded";
 
     case "duplicate":
@@ -484,8 +660,10 @@ function getSmsActivityMessage(
       return "Bank message ignored";
 
     case "error":
-      return activity.error ||
-        "Bank SMS could not be processed";
+      return (
+        activity.error ||
+        "Bank SMS could not be processed"
+      );
 
     case "complete":
       return "Bank transaction monitoring active";
@@ -502,13 +680,13 @@ function getSmsActivityMessage(
 export default function DashboardPage() {
   const [stats, setStats] =
     useState<DashboardStats>(
-      DEFAULT_STATS
+      DEFAULT_STATS,
     );
 
   const [activities, setActivities] =
-    useState<
-      DashboardActivity[]
-    >([]);
+    useState<DashboardActivity[]>(
+      [],
+    );
 
   const [loading, setLoading] =
     useState(true);
@@ -519,12 +697,8 @@ export default function DashboardPage() {
   const [mounted, setMounted] =
     useState(false);
 
-  /* =======================================================
-     DASHBOARD MOUNT
-  ======================================================= */
-
   const dashboardMounted =
-    useRef(true);
+    useRef(false);
 
   /* =======================================================
      SMS STATE
@@ -533,44 +707,54 @@ export default function DashboardPage() {
   const [smsActivity, setSmsActivity] =
     useState<SmsActivity>({
       status: "idle",
+
       message:
         "Watching for new bank SMS",
-      timestamp: Date.now(),
+
+      timestamp:
+        Date.now(),
     });
 
   const [smsDetailsOpen, setSmsDetailsOpen] =
     useState(false);
 
   const [smsHistory, setSmsHistory] =
-    useState<SmsActivity[]>([]);
+    useState<SmsActivity[]>(
+      [],
+    );
 
   const smsRunning =
     useRef(false);
 
   const smsAbortController =
     useRef<AbortController | null>(
-      null
+      null,
     );
 
+  /*
+   * Browser timers return numbers.
+   */
   const smsTimer =
-    useRef<
-      ReturnType<
-        typeof setInterval
-      > | null
-    >(null);
+    useRef<number | null>(
+      null,
+    );
+
+  const resetTimer =
+    useRef<number | null>(
+      null,
+    );
 
   /*
-   * Keep the most recent SMS identifiers
-   * locally so a periodic sweep does not
-   * repeatedly send the same inbox records.
+   * SMS keys successfully handled during the current
+   * dashboard lifecycle.
    */
   const processedSmsKeys =
     useRef(
-      new Set<string>()
+      new Set<string>(),
     );
 
   /* =======================================================
-     MOUNT
+     MOUNT / UNMOUNT
   ======================================================= */
 
   useEffect(() => {
@@ -586,19 +770,33 @@ export default function DashboardPage() {
       smsAbortController.current?.abort();
 
       if (
-        smsTimer.current
+        smsTimer.current !==
+        null
       ) {
-        clearInterval(
-          smsTimer.current
+        window.clearInterval(
+          smsTimer.current,
         );
 
-        smsTimer.current = null;
+        smsTimer.current =
+          null;
+      }
+
+      if (
+        resetTimer.current !==
+        null
+      ) {
+        window.clearTimeout(
+          resetTimer.current,
+        );
+
+        resetTimer.current =
+          null;
       }
     };
   }, []);
 
   /* =======================================================
-     SMS ACTIVITY
+     SMS ACTIVITY UPDATE
   ======================================================= */
 
   const updateSmsActivity =
@@ -607,28 +805,40 @@ export default function DashboardPage() {
         next: Omit<
           SmsActivity,
           "timestamp"
-        >
+        >,
       ) => {
-        const activity: SmsActivity = {
+        if (
+          !dashboardMounted.current
+        ) {
+          return;
+        }
+
+        const activity:
+          SmsActivity = {
           ...next,
+
           timestamp:
             Date.now(),
         };
 
         setSmsActivity(
-          activity
+          activity,
         );
 
         setSmsHistory(
           (
-            previous
-          ) => [
-            activity,
-            ...previous,
-          ].slice(0, 50)
+            previous,
+          ) =>
+            [
+              activity,
+              ...previous,
+            ].slice(
+              0,
+              MAX_SMS_HISTORY,
+            ),
         );
       },
-      []
+      [],
     );
 
   /* =======================================================
@@ -638,18 +848,24 @@ export default function DashboardPage() {
   const loadDashboard =
     useCallback(
       async (
-        isRefresh = false
+        isRefresh = false,
       ) => {
+        if (
+          !dashboardMounted.current
+        ) {
+          return;
+        }
+
         try {
           if (
             isRefresh
           ) {
             setRefreshing(
-              true
+              true,
             );
           } else {
             setLoading(
-              true
+              true,
             );
           }
 
@@ -666,13 +882,15 @@ export default function DashboardPage() {
                   {
                     method:
                       "GET",
+
                     cache:
                       "no-store",
+
                     headers: {
                       Accept:
                         "application/json",
                     },
-                  }
+                  },
                 ),
 
                 fetch(
@@ -680,13 +898,15 @@ export default function DashboardPage() {
                   {
                     method:
                       "GET",
+
                     cache:
                       "no-store",
+
                     headers: {
                       Accept:
                         "application/json",
                     },
-                  }
+                  },
                 ),
 
                 fetch(
@@ -694,13 +914,15 @@ export default function DashboardPage() {
                   {
                     method:
                       "GET",
+
                     cache:
                       "no-store",
+
                     headers: {
                       Accept:
                         "application/json",
                     },
-                  }
+                  },
                 ),
 
                 fetch(
@@ -708,15 +930,17 @@ export default function DashboardPage() {
                   {
                     method:
                       "GET",
+
                     cache:
                       "no-store",
+
                     headers: {
                       Accept:
                         "application/json",
                     },
-                  }
+                  },
                 ),
-              ]
+              ],
             );
 
           /* =================================================
@@ -748,7 +972,8 @@ export default function DashboardPage() {
                   {};
               }
             } catch {
-              savings = {};
+              savings =
+                {};
             }
           }
 
@@ -778,7 +1003,7 @@ export default function DashboardPage() {
               ) {
                 members =
                   extractRecords<MemberRecord>(
-                    json
+                    json,
                   );
               }
             } catch {
@@ -813,11 +1038,12 @@ export default function DashboardPage() {
               ) {
                 loans =
                   extractRecords<LoanRecord>(
-                    json
+                    json,
                   );
               }
             } catch {
-              loans = [];
+              loans =
+                [];
             }
           }
 
@@ -847,7 +1073,7 @@ export default function DashboardPage() {
               ) {
                 notifications =
                   extractRecords<NotificationRecord>(
-                    json
+                    json,
                   );
               }
             } catch {
@@ -856,13 +1082,19 @@ export default function DashboardPage() {
             }
           }
 
+          if (
+            !dashboardMounted.current
+          ) {
+            return;
+          }
+
           /* =================================================
              MEMBER STATS
           ================================================= */
 
           const memberCountFromSavings =
             safeNumber(
-              savings.memberCount
+              savings.memberCount,
             );
 
           const totalMembers =
@@ -874,7 +1106,7 @@ export default function DashboardPage() {
             0
               ? members.filter(
                   (
-                    member
+                    member,
                   ) => {
                     if (
                       member.isActive ===
@@ -887,11 +1119,11 @@ export default function DashboardPage() {
                       typeof member.status ===
                         "string" &&
                       member.status
-                        .toLowerCase()
-                        .trim() ===
+                        .trim()
+                        .toLowerCase() ===
                         "active"
                     );
-                  }
+                  },
                 ).length
               : memberCountFromSavings;
 
@@ -916,13 +1148,13 @@ export default function DashboardPage() {
               safeNumber(
                 loan.outstandingBalance ??
                   loan.remainingBalance ??
-                  loan.balance
+                  loan.balance,
               );
 
             outstandingLoans +=
               Math.max(
                 0,
-                outstanding
+                outstanding,
               );
 
             const status =
@@ -931,8 +1163,8 @@ export default function DashboardPage() {
                 loan.loanStatus ||
                 ""
               )
-                .toLowerCase()
-                .trim();
+                .trim()
+                .toLowerCase();
 
             if (
               [
@@ -941,7 +1173,7 @@ export default function DashboardPage() {
                 "overdue",
                 "defaulter",
               ].includes(
-                status
+                status,
               )
             ) {
               defaulters +=
@@ -956,7 +1188,7 @@ export default function DashboardPage() {
           const notificationCount =
             notifications.filter(
               (
-                notification
+                notification,
               ) => {
                 if (
                   notification.read ===
@@ -967,99 +1199,91 @@ export default function DashboardPage() {
 
                 if (
                   notification.status
-                    ?.toLowerCase() ===
+                    ?.trim()
+                    .toLowerCase() ===
                   "read"
                 ) {
                   return false;
                 }
 
                 return true;
-              }
+              },
             ).length;
 
           /* =================================================
              UPDATE STATS
           ================================================= */
 
-          const nextStats: DashboardStats =
-            {
-              members:
-                totalMembers,
+          setStats({
+            members:
+              totalMembers,
 
-              activeMembers,
+            activeMembers,
 
-              savings:
-                safeNumber(
-                  savings.totalBalance
-                ),
+            savings:
+              safeNumber(
+                savings.totalBalance,
+              ),
 
-              deposits:
-                safeNumber(
-                  savings.totalDeposits
-                ),
+            deposits:
+              safeNumber(
+                savings.totalDeposits,
+              ),
 
-              adjustments:
-                safeNumber(
-                  savings.totalAdjustments
-                ),
+            adjustments:
+              safeNumber(
+                savings.totalAdjustments,
+              ),
 
-              reversals:
-                safeNumber(
-                  savings.totalReversals
-                ),
+            reversals:
+              safeNumber(
+                savings.totalReversals,
+              ),
 
-              loans:
-                loanCount,
+            loans:
+              loanCount,
 
-              outstandingLoans,
+            outstandingLoans,
 
-              defaulters,
+            defaulters,
 
-              notifications:
-                notificationCount,
-            };
-
-          if (
-            dashboardMounted.current
-          ) {
-            setStats(
-              nextStats
-            );
-          }
+            notifications:
+              notificationCount,
+          });
 
           /* =================================================
-             ACTIVITY
+             BUILD RECENT ACTIVITY
           ================================================= */
 
-          const nextActivities: DashboardActivity[] =
-            [];
+          const nextActivities:
+            Array<
+              DashboardActivity & {
+                sortTimestamp: number;
+              }
+            > = [];
 
           members
             .slice()
             .sort(
               (
                 a,
-                b
+                b,
               ) =>
                 new Date(
-                  getDate(
-                    b
-                  )
+                  getDate(b),
                 ).getTime() -
                 new Date(
-                  getDate(
-                    a
-                  )
-                ).getTime()
+                  getDate(a),
+                ).getTime(),
             )
             .slice(
               0,
-              4
+              4,
             )
             .forEach(
               (
                 member,
-                index
+                index,
               ) => {
                 const name =
                   member.name ||
@@ -1070,20 +1294,25 @@ export default function DashboardPage() {
                     member.lastName,
                   ]
                     .filter(
-                      Boolean
+                      Boolean,
                     )
                     .join(
-                      " "
+                      " ",
                     ) ||
                   "Member";
+
+                const date =
+                  getDate(
+                    member,
+                  );
 
                 nextActivities.push(
                   {
                     id: `member-${getId(
                       member,
                       String(
-                        index
-                      )
+                        index,
+                      ),
                     )}`,
 
                     title:
@@ -1094,16 +1323,20 @@ export default function DashboardPage() {
 
                     time:
                       formatRelativeTime(
-                        getDate(
-                          member
-                        )
+                        date,
                       ),
 
                     type:
                       "member",
-                  }
+
+                    sortTimestamp:
+                      new Date(
+                        date,
+                      ).getTime() ||
+                      0,
+                  },
                 );
-              }
+              },
             );
 
           loans
@@ -1111,35 +1344,36 @@ export default function DashboardPage() {
             .sort(
               (
                 a,
-                b
+                b,
               ) =>
                 new Date(
-                  getDate(
-                    b
-                  )
+                  getDate(b),
                 ).getTime() -
                 new Date(
-                  getDate(
-                    a
-                  )
-                ).getTime()
+                  getDate(a),
+                ).getTime(),
             )
             .slice(
               0,
-              4
+              4,
             )
             .forEach(
               (
                 loan,
-                index
+                index,
               ) => {
+                const date =
+                  getDate(
+                    loan,
+                  );
+
                 nextActivities.push(
                   {
                     id: `loan-${getId(
                       loan,
                       String(
-                        index
-                      )
+                        index,
+                      ),
                     )}`,
 
                     title:
@@ -1152,16 +1386,20 @@ export default function DashboardPage() {
 
                     time:
                       formatRelativeTime(
-                        getDate(
-                          loan
-                        )
+                        date,
                       ),
 
                     type:
                       "loan",
-                  }
+
+                    sortTimestamp:
+                      new Date(
+                        date,
+                      ).getTime() ||
+                      0,
+                  },
                 );
-              }
+              },
             );
 
           notifications
@@ -1169,35 +1407,36 @@ export default function DashboardPage() {
             .sort(
               (
                 a,
-                b
+                b,
               ) =>
                 new Date(
-                  getDate(
-                    b
-                  )
+                  getDate(b),
                 ).getTime() -
                 new Date(
-                  getDate(
-                    a
-                  )
-                ).getTime()
+                  getDate(a),
+                ).getTime(),
             )
             .slice(
               0,
-              4
+              4,
             )
             .forEach(
               (
                 notification,
-                index
+                index,
               ) => {
+                const date =
+                  getDate(
+                    notification,
+                  );
+
                 nextActivities.push(
                   {
                     id: `notification-${getId(
                       notification,
                       String(
-                        index
-                      )
+                        index,
+                      ),
                     )}`,
 
                     title:
@@ -1211,96 +1450,69 @@ export default function DashboardPage() {
 
                     time:
                       formatRelativeTime(
-                        getDate(
-                          notification
-                        )
+                        date,
                       ),
 
                     type:
                       "notification",
-                  }
+
+                    sortTimestamp:
+                      new Date(
+                        date,
+                      ).getTime() ||
+                      0,
+                  },
                 );
-              }
+              },
             );
 
-          if (
-            dashboardMounted.current
-          ) {
-            setActivities(
-              nextActivities
-                .sort(
-                  (
-                    a,
-                    b
-                  ) =>
-                    relativeTimeScore(
-                      b.time
-                    ) -
-                    relativeTimeScore(
-                      a.time
-                    )
-                )
-                .slice(
-                  0,
-                  12
-                )
-            );
-          }
-        } catch (
-          error
-        ) {
+          setActivities(
+            nextActivities
+              .sort(
+                (
+                  a,
+                  b,
+                ) =>
+                  b.sortTimestamp -
+                  a.sortTimestamp,
+              )
+              .slice(
+                0,
+                12,
+              )
+              .map(
+                ({
+                  sortTimestamp:
+                    _sortTimestamp,
+                  ...activity
+                }) =>
+                  activity,
+              ),
+          );
+        } catch (error) {
           console.error(
             "Failed to load dashboard:",
-            error
+            error,
           );
         } finally {
           if (
             dashboardMounted.current
           ) {
             setLoading(
-              false
+              false,
             );
 
             setRefreshing(
-              false
+              false,
             );
           }
         }
       },
-      []
+      [],
     );
 
   /* =======================================================
-     SMS KEY
-  ======================================================= */
-
-  const getSmsKey =
-    useCallback(
-      (
-        sms: {
-          address:
-            | string
-            | null;
-
-          body:
-            string;
-
-          date:
-            number;
-        }
-      ): string => {
-        return [
-          sms.address ||
-            "",
-          sms.date,
-          sms.body,
-        ].join("|");
-      },
-      []
-    );
-
-  /* =======================================================
-     PROCESS SMS
+     PROCESS ONE SMS
   ======================================================= */
 
   const processSms =
@@ -1311,74 +1523,87 @@ export default function DashboardPage() {
             | string
             | null;
 
-          body: string;
+          body:
+            string;
 
-          date: number;
+          date:
+            number;
         },
-        signal: AbortSignal
+        signal: AbortSignal,
       ): Promise<boolean> => {
         const key =
           getSmsKey(
-            sms
+            sms,
           );
 
-        /*
-         * Already handled during this
-         * dashboard lifecycle.
-         */
+        /* -------------------------------------------------
+           ALREADY PROCESSED IN THIS SESSION
+        ------------------------------------------------- */
+
         if (
           processedSmsKeys.current.has(
-            key
+            key,
           )
         ) {
           return false;
         }
 
+        /* -------------------------------------------------
+           BASIC VALIDATION
+        ------------------------------------------------- */
+
         if (
-          !sms.body?.trim()
+          typeof sms.body !==
+            "string" ||
+          !sms.body.trim()
         ) {
           return false;
         }
 
         if (
+          typeof sms.date !==
+            "number" ||
           !Number.isFinite(
-            sms.date
+            sms.date,
           )
         ) {
           return false;
         }
 
-        /*
-         * Only send messages that look like
-         * GEO-SHUA bank transaction SMS.
-         *
-         * This prevents the app from sending
-         * hundreds of unrelated personal SMS
-         * messages to the server.
-         */
-        const looksLikeBankPayment =
-          /\bConfirmed\./i.test(
-            sms.body
-          ) &&
-          /\bKES\s*[\d,]+(?:\.\d{1,2})?\b/i.test(
-            sms.body
-          ) &&
-          /\breceived\s+from\b/i.test(
-            sms.body
-          ) &&
-          /\bfor\s+account\b/i.test(
-            sms.body
-          );
+        /* -------------------------------------------------
+           CLIENT-SIDE BANK SMS FILTER
+        ------------------------------------------------- */
 
         if (
-          !looksLikeBankPayment
+          !looksLikeGeoShuaBankSms(
+            sms.body,
+          )
         ) {
+          /*
+           * This SMS is unrelated to the GEO-SHUA
+           * financial transaction format.
+           *
+           * Remember it for this dashboard lifecycle
+           * so the five-minute sweep does not repeatedly
+           * reconsider it.
+           */
           processedSmsKeys.current.add(
-            key
+            key,
           );
 
           return false;
         }
+
+        if (
+          signal.aborted ||
+          !dashboardMounted.current
+        ) {
+          return false;
+        }
+
+        /* -------------------------------------------------
+           DETECTED
+        ------------------------------------------------- */
 
         updateSmsActivity({
           status:
@@ -1397,10 +1622,10 @@ export default function DashboardPage() {
             sms.body,
         });
 
-        /*
-         * Give the minimalist display a small
-         * processing state.
-         */
+        /* -------------------------------------------------
+           PROCESSING
+        ------------------------------------------------- */
+
         updateSmsActivity({
           status:
             "processing",
@@ -1419,9 +1644,17 @@ export default function DashboardPage() {
         });
 
         try {
+          /*
+           * IMPORTANT:
+           *
+           * This deliberately uses the deployed API.
+           *
+           * Capacitor's localhost WebView must not be
+           * expected to resolve /api/sms/process itself.
+           */
           const response =
             await fetch(
-              "/api/sms/process",
+              SMS_PROCESS_URL,
               {
                 method:
                   "POST",
@@ -1435,43 +1668,49 @@ export default function DashboardPage() {
                 },
 
                 body:
-                  JSON.stringify(
-                    {
-                      address:
-                        sms.address ??
-                        null,
+                  JSON.stringify({
+                    address:
+                      sms.address ??
+                      null,
 
-                      body:
-                        sms.body,
+                    body:
+                      sms.body,
 
-                      date:
-                        sms.date,
-                    }
-                  ),
-
-                signal,
+                    date:
+                      sms.date,
+                  }),
 
                 cache:
                   "no-store",
-              }
+
+                signal,
+              },
             );
 
           let data:
-            SmsProcessResponse |
-            null =
+            | SmsApiResponse
+            | null =
             null;
 
           try {
             data =
-              (await response.json()) as SmsProcessResponse;
+              (await response.json()) as SmsApiResponse;
           } catch {
             data =
               null;
           }
 
-          /*
-           * HTTP failure.
-           */
+          if (
+            signal.aborted ||
+            !dashboardMounted.current
+          ) {
+            return false;
+          }
+
+          /* -------------------------------------------------
+             HTTP FAILURE
+          ------------------------------------------------- */
+
           if (
             !response.ok
           ) {
@@ -1499,14 +1738,22 @@ export default function DashboardPage() {
                 `HTTP ${response.status}`,
             });
 
+            /*
+             * Do NOT add the key here.
+             *
+             * A real transport/server failure may need
+             * to be retried by the next sweep.
+             */
             return false;
           }
 
-          /*
-           * Application failure.
-           */
+          /* -------------------------------------------------
+             APPLICATION FAILURE
+          ------------------------------------------------- */
+
           if (
-            data?.success !==
+            !data ||
+            data.success !==
               true
           ) {
             updateSmsActivity({
@@ -1533,34 +1780,33 @@ export default function DashboardPage() {
                 "The server did not accept the transaction.",
             });
 
+            /*
+             * Leave unmarked so a transient server failure
+             * can be retried later.
+             */
             return false;
           }
 
-          const result =
-            data.data;
-
-          /*
-           * Current processIncomingTransaction()
-           * result:
-           *
-           * {
-           *   status,
-           *   type,
-           *   transaction,
-           *   member,
-           *   ...
-           * }
-           */
+          /* -------------------------------------------------
+             SERVER-SIDE IGNORE
+          ------------------------------------------------- */
 
           if (
-            !result
+            data.status ===
+              "ignored" ||
+            data.ignored ===
+              true
           ) {
+            processedSmsKeys.current.add(
+              key,
+            );
+
             updateSmsActivity({
               status:
-                "error",
+                "ignored",
 
               message:
-                "Bank payment returned no processing result",
+                "Bank message ignored",
 
               address:
                 sms.address,
@@ -1575,71 +1821,103 @@ export default function DashboardPage() {
                 data,
 
               error:
-                "Missing transaction processing result.",
+                data.error,
             });
 
             return false;
           }
 
+          /* -------------------------------------------------
+             GET PROCESSING RESULT
+          ------------------------------------------------- */
+
+          const result =
+            getSmsResult(
+              data,
+            );
+
           /*
-           * Extract the information that our
-           * orchestrator already resolved.
+           * This should never happen for a successful
+           * financial processing response.
            */
+          if (
+            !result
+          ) {
+            updateSmsActivity({
+              status:
+                "error",
+
+              message:
+                "Server returned no transaction result",
+
+              address:
+                sms.address,
+
+              date:
+                sms.date,
+
+              body:
+                sms.body,
+
+              response:
+                data,
+
+              error:
+                "The SMS API returned success but did not include a processing result.",
+            });
+
+            return false;
+          }
+
+          /* -------------------------------------------------
+             TRANSACTION
+          ------------------------------------------------- */
+
           const transaction =
-            result.transaction as
-              | {
-                  reference?: string;
-                  amount?: number;
-                  senderName?: string;
-                  transactionType?:
-                    | "loan"
-                    | "savings"
-                    | "unknown";
-                }
-              | undefined;
-
-          const resultType =
-            result.type;
-
-          const resultStatus =
-            result.status;
+            result.transaction;
 
           const reference =
             transaction?.reference;
 
           const amount =
-            safeNumber(
-              transaction?.amount
-            );
+            transaction?.amount !==
+              undefined
+              ? safeNumber(
+                  transaction.amount,
+                )
+              : undefined;
 
           const senderName =
             transaction?.senderName;
 
           /*
-           * Mark only successfully handled
-           * bank transactions as locally processed.
-           *
-           * Errors remain eligible for the
-           * next periodic sweep.
+           * Proper runtime narrowing.
            */
+          const transactionType =
+            isSmsTransactionType(
+              result.type,
+            )
+              ? result.type
+              : isSmsTransactionType(
+                    transaction?.transactionType,
+                  )
+                ? transaction.transactionType
+                : undefined;
+
+          /* -------------------------------------------------
+             DUPLICATE
+          ------------------------------------------------- */
+
           if (
-            resultStatus ===
-              "processed" ||
-            resultStatus ===
+            data.duplicate ===
+              true ||
+            result.status ===
               "duplicate"
           ) {
             processedSmsKeys.current.add(
-              key
+              key,
             );
-          }
 
-          /*
-           * DUPLICATE
-           */
-          if (
-            resultStatus ===
-            "duplicate"
-          ) {
             updateSmsActivity({
               status:
                 "duplicate",
@@ -1653,8 +1931,10 @@ export default function DashboardPage() {
 
               senderName,
 
-              transactionType:
-                resultType,
+              transactionType,
+
+              accountNumber:
+                transaction?.accountNumber,
 
               address:
                 sms.address,
@@ -1672,13 +1952,18 @@ export default function DashboardPage() {
             return false;
           }
 
-          /*
-           * SAVINGS
-           */
+          /* -------------------------------------------------
+             SAVINGS
+          ------------------------------------------------- */
+
           if (
-            resultType ===
+            transactionType ===
             "savings"
           ) {
+            processedSmsKeys.current.add(
+              key,
+            );
+
             updateSmsActivity({
               status:
                 "savings",
@@ -1695,6 +1980,9 @@ export default function DashboardPage() {
               transactionType:
                 "savings",
 
+              accountNumber:
+                transaction?.accountNumber,
+
               address:
                 sms.address,
 
@@ -1708,20 +1996,32 @@ export default function DashboardPage() {
                 data,
             });
 
+            /*
+             * Refresh authoritative dashboard data
+             * after the savings service completes.
+             */
             await loadDashboard(
-              true
+              true,
             );
 
-            return true;
+            return (
+              data.financialChange !==
+              false
+            );
           }
 
-          /*
-           * LOAN
-           */
+          /* -------------------------------------------------
+             LOAN
+          ------------------------------------------------- */
+
           if (
-            resultType ===
+            transactionType ===
             "loan"
           ) {
+            processedSmsKeys.current.add(
+              key,
+            );
+
             updateSmsActivity({
               status:
                 "loan",
@@ -1738,6 +2038,9 @@ export default function DashboardPage() {
               transactionType:
                 "loan",
 
+              accountNumber:
+                transaction?.accountNumber,
+
               address:
                 sms.address,
 
@@ -1751,22 +2054,30 @@ export default function DashboardPage() {
                 data,
             });
 
+            /*
+             * Refresh authoritative dashboard data
+             * after the loan service completes.
+             */
             await loadDashboard(
-              true
+              true,
             );
 
-            return true;
+            return (
+              data.financialChange !==
+              false
+            );
           }
 
-          /*
-           * Unknown processor response.
-           */
+          /* -------------------------------------------------
+             UNKNOWN / UNEXPECTED RESULT
+          ------------------------------------------------- */
+
           updateSmsActivity({
             status:
-              "ignored",
+              "error",
 
             message:
-              "Bank transaction was not routed",
+              "Bank transaction needs attention",
 
             reference,
 
@@ -1774,8 +2085,10 @@ export default function DashboardPage() {
 
             senderName,
 
-            transactionType:
-              transaction?.transactionType,
+            transactionType,
+
+            accountNumber:
+              transaction?.accountNumber,
 
             address:
               sms.address,
@@ -1788,17 +2101,32 @@ export default function DashboardPage() {
 
             response:
               data,
+
+            error:
+              data.error ||
+              "The server returned an unrecognized transaction type.",
           });
 
+          /*
+           * Leave unmarked because this is not a successful
+           * financial completion.
+           */
           return false;
-        } catch (
-          error
-        ) {
+        } catch (error) {
+          /*
+           * Normal AbortController cancellation.
+           */
           if (
             error instanceof
               DOMException &&
             error.name ===
               "AbortError"
+          ) {
+            return false;
+          }
+
+          if (
+            !dashboardMounted.current
           ) {
             return false;
           }
@@ -1830,19 +2158,22 @@ export default function DashboardPage() {
         }
       },
       [
-        getSmsKey,
         loadDashboard,
         updateSmsActivity,
-      ]
+      ],
     );
 
   /* =======================================================
-     SMS SWEEP
+     SMS INBOX SWEEP
   ======================================================= */
 
   const sweepSmsInbox =
     useCallback(
       async () => {
+        /*
+         * Never allow two inbox sweeps to run
+         * simultaneously.
+         */
         if (
           smsRunning.current
         ) {
@@ -1850,10 +2181,28 @@ export default function DashboardPage() {
         }
 
         if (
+          !dashboardMounted.current
+        ) {
+          return;
+        }
+
+        /*
+         * Reading SMS is local, but posting financial
+         * transactions requires network connectivity.
+         */
+        if (
           typeof navigator !==
             "undefined" &&
           !navigator.onLine
         ) {
+          updateSmsActivity({
+            status:
+              "idle",
+
+            message:
+              "SMS sync waiting for internet connection",
+          });
+
           return;
         }
 
@@ -1867,18 +2216,27 @@ export default function DashboardPage() {
           controller;
 
         try {
-          /*
-           * Silent sweep.
-           *
-           * We don't expose noisy scanning
-           * messages unless there is actual work.
-           */
+          updateSmsActivity({
+            status:
+              "scanning",
+
+            message:
+              "Checking for new bank transactions…",
+          });
+
           const result =
             await SmsReader.readInbox();
 
+          if (
+            controller.signal.aborted ||
+            !dashboardMounted.current
+          ) {
+            return;
+          }
+
           const messages =
             Array.isArray(
-              result?.messages
+              result?.messages,
             )
               ? result.messages
               : [];
@@ -1899,22 +2257,34 @@ export default function DashboardPage() {
           }
 
           /*
-           * Android returns newest first.
+           * Process oldest first.
            *
-           * Process oldest -> newest among
-           * messages that are new to this
-           * dashboard lifecycle.
+           * This is important when several financial SMS
+           * messages are present at the same time.
            */
           const candidates =
             messages
+              .filter(
+                (
+                  sms,
+                ) =>
+                  sms &&
+                  typeof sms.body ===
+                    "string" &&
+                  typeof sms.date ===
+                    "number" &&
+                  Number.isFinite(
+                    sms.date,
+                  ),
+              )
               .slice()
               .sort(
                 (
                   a,
-                  b
+                  b,
                 ) =>
                   a.date -
-                  b.date
+                  b.date,
               );
 
           let financialChange =
@@ -1925,16 +2295,26 @@ export default function DashboardPage() {
               candidates
           ) {
             if (
-              controller.signal
-                .aborted
+              controller.signal.aborted ||
+              !dashboardMounted.current
             ) {
               break;
             }
 
             const changed =
               await processSms(
-                sms,
-                controller.signal
+                {
+                  address:
+                    sms.address ??
+                    null,
+
+                  body:
+                    sms.body,
+
+                  date:
+                    sms.date,
+                },
+                controller.signal,
               );
 
             if (
@@ -1946,37 +2326,55 @@ export default function DashboardPage() {
           }
 
           if (
-            !financialChange &&
-            dashboardMounted.current
+            controller.signal.aborted ||
+            !dashboardMounted.current
           ) {
-            /*
-             * Return to the quiet monitoring
-             * state after the sweep.
-             *
-             * Do not erase the details of a
-             * recently processed transaction.
-             * The compact monitor can still be
-             * expanded to inspect it.
-             */
-            setTimeout(
-              () => {
-                if (
-                  dashboardMounted.current &&
-                  !smsRunning.current
-                ) {
+            return;
+          }
+
+          /*
+           * After the sweep, return to an idle state only
+           * if no meaningful final result is already being
+           * displayed.
+           */
+          if (
+            !financialChange
+          ) {
+            if (
+              resetTimer.current !==
+              null
+            ) {
+              window.clearTimeout(
+                resetTimer.current,
+              );
+            }
+
+            resetTimer.current =
+              window.setTimeout(
+                () => {
+                  if (
+                    !dashboardMounted.current
+                  ) {
+                    return;
+                  }
+
                   setSmsActivity(
                     (
-                      current
+                      current,
                     ) => {
+                      /*
+                       * Preserve useful diagnostics.
+                       */
                       if (
-                        current.status ===
-                          "error" ||
-                        current.status ===
-                          "duplicate" ||
-                        current.status ===
-                          "savings" ||
-                        current.status ===
-                          "loan"
+                        [
+                          "savings",
+                          "loan",
+                          "duplicate",
+                          "error",
+                          "ignored",
+                        ].includes(
+                          current.status,
+                        )
                       ) {
                         return current;
                       }
@@ -1984,21 +2382,20 @@ export default function DashboardPage() {
                       return {
                         status:
                           "idle",
+
                         message:
                           "Watching for new bank SMS",
+
                         timestamp:
                           Date.now(),
                       };
-                    }
+                    },
                   );
-                }
-              },
-              1200
-            );
+                },
+                1200,
+              );
           }
-        } catch (
-          error
-        ) {
+        } catch (error) {
           if (
             error instanceof
               DOMException &&
@@ -2008,17 +2405,17 @@ export default function DashboardPage() {
             return;
           }
 
+          if (
+            !dashboardMounted.current
+          ) {
+            return;
+          }
+
           console.error(
             "SMS sweep failed:",
-            error
+            error,
           );
 
-          /*
-           * Don't flash a large error banner
-           * for background monitoring failures.
-           *
-           * Keep the status compact.
-           */
           updateSmsActivity({
             status:
               "error",
@@ -2043,11 +2440,11 @@ export default function DashboardPage() {
       [
         processSms,
         updateSmsActivity,
-      ]
+      ],
     );
 
   /* =======================================================
-     INITIAL DASHBOARD + SMS
+     INITIAL DASHBOARD + SMS MONITOR
   ======================================================= */
 
   useEffect(() => {
@@ -2057,30 +2454,30 @@ export default function DashboardPage() {
       return;
     }
 
+    /*
+     * Dashboard loads immediately.
+     */
     void loadDashboard();
 
     /*
-     * Initial silent sweep.
+     * SMS inbox is scanned independently.
      */
     void sweepSmsInbox();
 
     /*
-     * Low-frequency background sweep.
-     *
-     * Five minutes is deliberately conservative.
-     *
-     * The actual financial services are idempotent,
-     * so even if a message is seen again it cannot
-     * create a second financial record.
+     * Reconciliation sweep while dashboard remains open.
      */
     smsTimer.current =
-      setInterval(
+      window.setInterval(
         () => {
           void sweepSmsInbox();
         },
-        5 * 60 * 1000
+        SMS_SWEEP_INTERVAL_MS,
       );
 
+    /*
+     * Retry a waiting sync when connectivity returns.
+     */
     const handleOnline =
       () => {
         void sweepSmsInbox();
@@ -2088,15 +2485,16 @@ export default function DashboardPage() {
 
     window.addEventListener(
       "online",
-      handleOnline
+      handleOnline,
     );
 
     return () => {
       if (
-        smsTimer.current
+        smsTimer.current !==
+        null
       ) {
-        clearInterval(
-          smsTimer.current
+        window.clearInterval(
+          smsTimer.current,
         );
 
         smsTimer.current =
@@ -2105,7 +2503,7 @@ export default function DashboardPage() {
 
       window.removeEventListener(
         "online",
-        handleOnline
+        handleOnline,
       );
     };
   }, [
@@ -2127,7 +2525,7 @@ export default function DashboardPage() {
     }
 
     void loadDashboard(
-      true
+      true,
     );
   }
 
@@ -2172,12 +2570,8 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-2">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-yellow-500/10 text-yellow-400">
                     <FileText
-                      size={
-                        17
-                      }
-                      strokeWidth={
-                        1.8
-                      }
+                      size={17}
+                      strokeWidth={1.8}
                     />
                   </div>
 
@@ -2208,12 +2602,8 @@ export default function DashboardPage() {
                 className="flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-4 text-sm font-medium text-white/55 transition hover:border-white/[0.14] hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 lg:w-auto"
               >
                 <RefreshCw
-                  size={
-                    16
-                  }
-                  strokeWidth={
-                    1.8
-                  }
+                  size={16}
+                  strokeWidth={1.8}
                   className={
                     refreshing
                       ? "animate-spin"
@@ -2229,7 +2619,7 @@ export default function DashboardPage() {
           </section>
 
           {/* =================================================
-              MINIMAL SMS MONITOR
+              SMS STATUS
           ================================================= */}
 
           <SmsStatusBar
@@ -2245,9 +2635,9 @@ export default function DashboardPage() {
             onToggleDetails={() =>
               setSmsDetailsOpen(
                 (
-                  value
+                  value,
                 ) =>
-                  !value
+                  !value,
               )
             }
           />
@@ -2269,12 +2659,8 @@ export default function DashboardPage() {
                   subtitle={`${stats.activeMembers.toLocaleString()} active`}
                   icon={
                     <Users
-                      size={
-                        19
-                      }
-                      strokeWidth={
-                        1.8
-                      }
+                      size={19}
+                      strokeWidth={1.8}
                     />
                   }
                   href="/dashboard/members"
@@ -2283,17 +2669,13 @@ export default function DashboardPage() {
                 <StatCard
                   title="Savings"
                   value={formatCurrency(
-                    stats.savings
+                    stats.savings,
                   )}
                   subtitle="Current ledger balance"
                   icon={
                     <Wallet
-                      size={
-                        19
-                      }
-                      strokeWidth={
-                        1.8
-                      }
+                      size={19}
+                      strokeWidth={1.8}
                     />
                   }
                   href="/dashboard/savings"
@@ -2305,16 +2687,12 @@ export default function DashboardPage() {
                     stats.loans
                   }
                   subtitle={formatCurrency(
-                    stats.outstandingLoans
+                    stats.outstandingLoans,
                   )}
                   icon={
                     <HandCoins
-                      size={
-                        19
-                      }
-                      strokeWidth={
-                        1.8
-                      }
+                      size={19}
+                      strokeWidth={1.8}
                     />
                   }
                   href="/dashboard/loans"
@@ -2328,12 +2706,8 @@ export default function DashboardPage() {
                   subtitle="Members requiring attention"
                   icon={
                     <Bell
-                      size={
-                        19
-                      }
-                      strokeWidth={
-                        1.8
-                      }
+                      size={19}
+                      strokeWidth={1.8}
                     />
                   }
                   href="/dashboard/loans"
@@ -2348,28 +2722,28 @@ export default function DashboardPage() {
                 <MetricCard
                   label="Deposits"
                   value={formatCurrency(
-                    stats.deposits
+                    stats.deposits,
                   )}
                 />
 
                 <MetricCard
                   label="Adjustments"
                   value={formatCurrency(
-                    stats.adjustments
+                    stats.adjustments,
                   )}
                 />
 
                 <MetricCard
                   label="Reversals"
                   value={formatCurrency(
-                    stats.reversals
+                    stats.reversals,
                   )}
                 />
 
                 <MetricCard
                   label="Net Savings"
                   value={formatCurrency(
-                    stats.savings
+                    stats.savings,
                   )}
                 />
               </section>
@@ -2405,12 +2779,8 @@ export default function DashboardPage() {
                       <div className="text-center">
                         <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-white/25">
                           <Bell
-                            size={
-                              19
-                            }
-                            strokeWidth={
-                              1.5
-                            }
+                            size={19}
+                            strokeWidth={1.5}
                           />
                         </div>
 
@@ -2428,7 +2798,7 @@ export default function DashboardPage() {
                       <div className="divide-y divide-white/[0.05]">
                         {activities.map(
                           (
-                            activity
+                            activity,
                           ) => (
                             <ActivityRow
                               key={
@@ -2438,7 +2808,7 @@ export default function DashboardPage() {
                                 activity
                               }
                             />
-                          )
+                          ),
                         )}
                       </div>
                     </div>
@@ -2465,12 +2835,8 @@ export default function DashboardPage() {
                         description="Manage member records"
                         icon={
                           <Users
-                            size={
-                              18
-                            }
-                            strokeWidth={
-                              1.8
-                            }
+                            size={18}
+                            strokeWidth={1.8}
                           />
                         }
                         href="/dashboard/members"
@@ -2481,12 +2847,8 @@ export default function DashboardPage() {
                         description="View savings records"
                         icon={
                           <Wallet
-                            size={
-                              18
-                            }
-                            strokeWidth={
-                              1.8
-                            }
+                            size={18}
+                            strokeWidth={1.8}
                           />
                         }
                         href="/dashboard/savings"
@@ -2497,12 +2859,8 @@ export default function DashboardPage() {
                         description="Manage loans"
                         icon={
                           <HandCoins
-                            size={
-                              18
-                            }
-                            strokeWidth={
-                              1.8
-                            }
+                            size={18}
+                            strokeWidth={1.8}
                           />
                         }
                         href="/dashboard/loans"
@@ -2513,12 +2871,8 @@ export default function DashboardPage() {
                         description={`${stats.notifications.toLocaleString()} unread notifications`}
                         icon={
                           <Bell
-                            size={
-                              18
-                            }
-                            strokeWidth={
-                              1.8
-                            }
+                            size={18}
+                            strokeWidth={1.8}
                           />
                         }
                         href="/dashboard/notifications"
@@ -2539,12 +2893,8 @@ export default function DashboardPage() {
                   description="Registered members"
                   icon={
                     <Users
-                      size={
-                        19
-                      }
-                      strokeWidth={
-                        1.8
-                      }
+                      size={19}
+                      strokeWidth={1.8}
                     />
                   }
                   footerLabel="Manage members"
@@ -2556,28 +2906,33 @@ export default function DashboardPage() {
                           100,
                           (stats.activeMembers /
                             stats.members) *
-                            100
+                            100,
                         )
                       : 0
                   }
                   progressLabel="Active members"
-                  progressValue={`${stats.members > 0 ? Math.round((stats.activeMembers / stats.members) * 100) : 0}%`}
+                  progressValue={`${
+                    stats.members >
+                    0
+                      ? Math.round(
+                          (stats.activeMembers /
+                            stats.members) *
+                            100,
+                        )
+                      : 0
+                  }%`}
                 />
 
                 <OverviewCard
                   eyebrow="Savings Overview"
                   value={formatCurrency(
-                    stats.savings
+                    stats.savings,
                   )}
                   description="Authoritative ledger balance"
                   icon={
                     <Wallet
-                      size={
-                        19
-                      }
-                      strokeWidth={
-                        1.8
-                      }
+                      size={19}
+                      strokeWidth={1.8}
                     />
                   }
                   footerLabel="Open savings"
@@ -2588,7 +2943,7 @@ export default function DashboardPage() {
                         "Deposits",
                       value:
                         formatCurrency(
-                          stats.deposits
+                          stats.deposits,
                         ),
                     },
                     {
@@ -2596,7 +2951,7 @@ export default function DashboardPage() {
                         "Adjustments",
                       value:
                         formatCurrency(
-                          stats.adjustments
+                          stats.adjustments,
                         ),
                     },
                     {
@@ -2604,7 +2959,7 @@ export default function DashboardPage() {
                         "Reversals",
                       value:
                         formatCurrency(
-                          stats.reversals
+                          stats.reversals,
                         ),
                     },
                   ]}
@@ -2628,6 +2983,10 @@ export default function DashboardPage() {
                   }
                 />
               </section>
+
+              {/* =================================================
+                  FOOTER
+              ================================================= */}
 
               <div className="mt-6 flex w-full min-w-0 flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-[10px] text-white/20">
@@ -2667,7 +3026,7 @@ function SmsStatusBar({
       "detected",
       "processing",
     ].includes(
-      activity.status
+      activity.status,
     );
 
   const isSuccessful =
@@ -2676,14 +3035,14 @@ function SmsStatusBar({
       "loan",
       "duplicate",
     ].includes(
-      activity.status
+      activity.status,
     );
 
   const hasDetails =
     Boolean(
       activity.body ||
         activity.response ||
-        activity.error
+        activity.error,
     );
 
   return (
@@ -2695,31 +3054,25 @@ function SmsStatusBar({
             "error"
               ? "bg-red-500/10 text-red-400"
               : activity.status ===
-                  "savings" ||
-                activity.status ===
-                  "loan"
-              ? "bg-green-500/10 text-green-400"
-              : "bg-blue-500/10 text-blue-400"
+                    "savings" ||
+                  activity.status ===
+                    "loan"
+                ? "bg-green-500/10 text-green-400"
+                : "bg-blue-500/10 text-blue-400"
           }`}
         >
           {isWorking ? (
             <Loader2
-              size={
-                15
-              }
+              size={15}
               className="animate-spin"
             />
           ) : isSuccessful ? (
             <CheckCircle2
-              size={
-                15
-              }
+              size={15}
             />
           ) : (
             <Smartphone
-              size={
-                15
-              }
+              size={15}
             />
           )}
         </div>
@@ -2734,7 +3087,7 @@ function SmsStatusBar({
             }`}
           >
             {getSmsActivityMessage(
-              activity
+              activity,
             )}
           </p>
 
@@ -2751,7 +3104,9 @@ function SmsStatusBar({
                 </span>
 
                 <span className="truncate text-[9px] text-white/20">
-                  {activity.senderName}
+                  {
+                    activity.senderName
+                  }
                 </span>
               </>
             )}
@@ -2762,10 +3117,16 @@ function SmsStatusBar({
           undefined && (
           <span className="hidden shrink-0 text-xs font-semibold text-white/50 sm:block">
             {formatCurrency(
-              activity.amount
+              activity.amount,
             )}
           </span>
         )}
+
+        <span className="hidden shrink-0 text-[9px] text-white/15 sm:block">
+          {formatSmsDate(
+            activity.date,
+          )}
+        </span>
 
         {hasDetails && (
           <button
@@ -2786,14 +3147,86 @@ function SmsStatusBar({
         <div className="border-t border-white/[0.06] px-4 py-4 sm:px-5">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.6fr)]">
 
+            {/* =================================================
+                LEFT SIDE
+            ================================================= */}
+
             <div className="min-w-0">
+              <div className="grid grid-cols-2 gap-2">
+                {activity.reference && (
+                  <DetailItem
+                    label="Reference"
+                    value={
+                      activity.reference
+                    }
+                  />
+                )}
+
+                {activity.senderName && (
+                  <DetailItem
+                    label="Sender"
+                    value={
+                      activity.senderName
+                    }
+                  />
+                )}
+
+                {activity.amount !==
+                  undefined && (
+                  <DetailItem
+                    label="Amount"
+                    value={formatCurrency(
+                      activity.amount,
+                    )}
+                  />
+                )}
+
+                {activity.transactionType && (
+                  <DetailItem
+                    label="Destination"
+                    value={
+                      activity.transactionType ===
+                      "loan"
+                        ? "Loan repayment"
+                        : activity.transactionType ===
+                            "savings"
+                          ? "Savings deposit"
+                          : "Unknown"
+                    }
+                  />
+                )}
+
+                {activity.accountNumber && (
+                  <DetailItem
+                    label="Bank account"
+                    value={
+                      activity.accountNumber
+                    }
+                  />
+                )}
+
+                {activity.address && (
+                  <DetailItem
+                    label="SMS sender"
+                    value={
+                      activity.address
+                    }
+                  />
+                )}
+
+                <DetailItem
+                  label="SMS time"
+                  value={formatSmsDate(
+                    activity.date,
+                  )}
+                />
+              </div>
+
               {activity.body && (
-                <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-black/20">
+                <div className="mt-3 overflow-hidden rounded-xl border border-white/[0.06] bg-black/20">
                   <div className="flex items-center gap-2 border-b border-white/[0.05] px-3 py-2">
                     <Inbox
-                      size={
-                        12
-                      }
+                      size={12}
                       className="text-white/25"
                     />
 
@@ -2802,7 +3235,7 @@ function SmsStatusBar({
                     </span>
                   </div>
 
-                  <pre className="max-h-[150px] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-[10px] leading-5 text-white/40">
+                  <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-[10px] leading-5 text-white/40">
                     {
                       activity.body
                     }
@@ -2821,25 +3254,33 @@ function SmsStatusBar({
               )}
             </div>
 
-            {activity.response && (
+            {/* =================================================
+                RIGHT SIDE
+            ================================================= */}
+
+            {activity.response !==
+              undefined && (
               <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-black/20">
                 <div className="border-b border-white/[0.05] px-3 py-2">
                   <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-white/25">
-                    Processor
-                    result
+                    Full processing response
                   </span>
                 </div>
 
-                <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-[10px] leading-5 text-white/35">
+                <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-[10px] leading-5 text-white/35">
                   {JSON.stringify(
                     activity.response,
                     null,
-                    2
+                    2,
                   )}
                 </pre>
               </div>
             )}
           </div>
+
+          {/* =================================================
+              SMS HISTORY
+          ================================================= */}
 
           {history.length >
             1 && (
@@ -2847,11 +3288,11 @@ function SmsStatusBar({
               {history
                 .slice(
                   0,
-                  8
+                  8,
                 )
                 .map(
                   (
-                    item
+                    item,
                   ) => (
                     <span
                       key={`${item.timestamp}-${item.reference || item.message}`}
@@ -2863,13 +3304,37 @@ function SmsStatusBar({
                         item.status
                       }
                     </span>
-                  )
+                  ),
                 )}
             </div>
           )}
         </div>
       )}
     </section>
+  );
+}
+
+/* =========================================================
+   DETAIL ITEM
+========================================================= */
+
+function DetailItem({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-xl border border-white/[0.05] bg-white/[0.02] p-3">
+      <p className="truncate text-[8px] uppercase tracking-[0.14em] text-white/20">
+        {label}
+      </p>
+
+      <p className="mt-1 truncate text-xs font-medium text-white/55">
+        {value}
+      </p>
+    </div>
   );
 }
 
@@ -2946,8 +3411,8 @@ function OverviewCard({
                   0,
                   Math.min(
                     100,
-                    progress
-                  )
+                    progress,
+                  ),
                 )}%`,
               }}
             />
@@ -2961,7 +3426,7 @@ function OverviewCard({
           <div className="mt-5 grid grid-cols-3 gap-3">
             {metrics.map(
               (
-                metric
+                metric,
               ) => (
                 <MiniMetric
                   key={
@@ -2974,7 +3439,7 @@ function OverviewCard({
                     metric.value
                   }
                 />
-              )
+              ),
             )}
           </div>
         )}
@@ -2983,7 +3448,7 @@ function OverviewCard({
         type="button"
         onClick={() =>
           window.location.assign(
-            footerHref
+            footerHref,
           )
         }
         className="mt-5 flex items-center gap-2 text-xs font-medium text-yellow-400 transition hover:text-yellow-300"
@@ -2993,12 +3458,8 @@ function OverviewCard({
         </span>
 
         <ArrowRight
-          size={
-            14
-          }
-          strokeWidth={
-            1.8
-          }
+          size={14}
+          strokeWidth={1.8}
         />
       </button>
     </div>
@@ -3024,12 +3485,8 @@ function LoanOverviewCard({
         <div className="flex min-w-0 items-start gap-4">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
             <HandCoins
-              size={
-                20
-              }
-              strokeWidth={
-                1.8
-              }
+              size={20}
+              strokeWidth={1.8}
             />
           </div>
 
@@ -3040,7 +3497,7 @@ function LoanOverviewCard({
 
             <p className="mt-2 text-2xl font-semibold text-white">
               {formatCurrency(
-                outstanding
+                outstanding,
               )}
             </p>
 
@@ -3059,7 +3516,7 @@ function LoanOverviewCard({
           <MiniMetric
             label="Outstanding"
             value={formatCurrency(
-              outstanding
+              outstanding,
             )}
           />
 
@@ -3073,7 +3530,7 @@ function LoanOverviewCard({
           type="button"
           onClick={() =>
             window.location.assign(
-              "/dashboard/loans"
+              "/dashboard/loans",
             )
           }
           className="flex shrink-0 items-center gap-2 text-xs font-medium text-yellow-400 transition hover:text-yellow-300"
@@ -3083,12 +3540,8 @@ function LoanOverviewCard({
           </span>
 
           <ArrowRight
-            size={
-              14
-            }
-            strokeWidth={
-              1.8
-            }
+            size={14}
+            strokeWidth={1.8}
           />
         </button>
       </div>
@@ -3164,7 +3617,7 @@ function QuickAccess({
       type="button"
       onClick={() =>
         window.location.assign(
-          href
+          href,
         )
       }
       className="group flex min-w-0 items-center gap-3 rounded-xl border border-transparent px-3 py-3 text-left transition hover:border-white/[0.06] hover:bg-white/[0.04]"
@@ -3184,12 +3637,8 @@ function QuickAccess({
       </div>
 
       <ArrowRight
-        size={
-          14
-        }
-        strokeWidth={
-          1.8
-        }
+        size={14}
+        strokeWidth={1.8}
         className="shrink-0 text-white/15 transition group-hover:translate-x-0.5 group-hover:text-white/40"
       />
     </button>
@@ -3218,7 +3667,7 @@ function StatCard({
       type="button"
       onClick={() =>
         window.location.assign(
-          href
+          href,
         )
       }
       className="group min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition hover:border-white/[0.12] hover:bg-white/[0.04] sm:p-5"
@@ -3258,45 +3707,29 @@ function ActivityRow({
   const icons = {
     member: (
       <Users
-        size={
-          15
-        }
-        strokeWidth={
-          1.8
-        }
+        size={15}
+        strokeWidth={1.8}
       />
     ),
 
     saving: (
       <Wallet
-        size={
-          15
-        }
-        strokeWidth={
-          1.8
-        }
+        size={15}
+        strokeWidth={1.8}
       />
     ),
 
     loan: (
       <HandCoins
-        size={
-          15
-        }
-        strokeWidth={
-          1.8
-        }
+        size={15}
+        strokeWidth={1.8}
       />
     ),
 
     notification: (
       <Bell
-        size={
-          15
-        }
-        strokeWidth={
-          1.8
-        }
+        size={15}
+        strokeWidth={1.8}
       />
     ),
   };
@@ -3347,7 +3780,7 @@ function DashboardLoading() {
         }).map(
           (
             _,
-            index
+            index,
           ) => (
             <div
               key={
@@ -3355,7 +3788,7 @@ function DashboardLoading() {
               }
               className="h-[125px] min-w-0 rounded-2xl border border-white/[0.06] bg-white/[0.025]"
             />
-          )
+          ),
         )}
       </section>
 
@@ -3365,7 +3798,7 @@ function DashboardLoading() {
         }).map(
           (
             _,
-            index
+            index,
           ) => (
             <div
               key={
@@ -3373,7 +3806,7 @@ function DashboardLoading() {
               }
               className="h-[85px] rounded-2xl border border-white/[0.06] bg-white/[0.025]"
             />
-          )
+          ),
         )}
       </section>
 
@@ -3394,54 +3827,4 @@ function DashboardLoading() {
       </section>
     </div>
   );
-}
-
-/* =========================================================
-   RELATIVE ACTIVITY SORT HELPER
-========================================================= */
-
-function relativeTimeScore(
-  value: string
-): number {
-  if (
-    value ===
-    "Just now"
-  ) {
-    return 0;
-  }
-
-  const match =
-    value.match(
-      /^(\d+)([mhd]) ago$/
-    );
-
-  if (
-    !match
-  ) {
-    return Number.MAX_SAFE_INTEGER;
-  }
-
-  const amount =
-    Number(
-      match[1]
-    );
-
-  const unit =
-    match[2];
-
-  if (
-    unit ===
-    "m"
-  ) {
-    return amount;
-  }
-
-  if (
-    unit ===
-    "h"
-  ) {
-    return amount * 60;
-  }
-
-  return amount * 24 * 60;
 }
