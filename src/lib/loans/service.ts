@@ -27,7 +27,7 @@
  * 11. transactionReference is the immutable idempotency key.
  *
  * 12. A bank SMS/payment adapter should resolve the member and loan
- *     BEFORE calling createLoanRepayment().
+ *     BEFORE calling createLoanRepayment().    
  *
  * 13. The sender's M-Pesa name is NOT used to identify a member.
  *

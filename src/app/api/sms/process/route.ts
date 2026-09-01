@@ -1,268 +1,143 @@
+/**
+ * Android
+ *   ↓
+ * parser
+ *   ↓
+ * processIncomingTransaction()
+ *   ↓
+ * savings service OR loan service
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 
-import type { SmsMessage } from "@/lib/sms/SmsReader";
+import { parseBankSms } from "@/lib/sms/parser";
+import { processIncomingTransaction } from "@/lib/sms/processor";
 
-import {
-  parseBankSms,
-  parseBankSmsBatch,
-} from "@/lib/sms/parser";
-
-/* =========================================================
-   TYPES
-========================================================= */
-
-type SmsRequestBody =
-  | SmsMessage
-  | {
-      message?: SmsMessage;
-      messages?: SmsMessage[];
-    };
-
-/* =========================================================
-   RESPONSE HELPERS
-========================================================= */
-
-function errorResponse(
-  message: string,
-  status = 400
-) {
-  return NextResponse.json(
-    {
-      success: false,
-      error: message,
-    },
-    { status }
-  );
-}
-
-/* =========================================================
-   POST /api/sms/process
-========================================================= */
-
-/**
- * Receive SMS from the Android SmsReader and pass it
- * directly to the bank SMS parser.
- *
- * Supported request formats:
- *
- * 1. Single SMS directly:
- *
- * {
- *   "address": "BANK",
- *   "body": "UHTHY4Z1PL Confirmed. KES 1,400.00 ...",
- *   "date": 1788041580000
- * }
- *
- * 2. Single SMS wrapped in "message":
- *
- * {
- *   "message": {
- *     "address": "BANK",
- *     "body": "...",
- *     "date": 1788041580000
- *   }
- * }
- *
- * 3. Multiple SMS:
- *
- * {
- *   "messages": [
- *     {
- *       "address": "BANK",
- *       "body": "...",
- *       "date": 1788041580000
- *     }
- *   ]
- * }
- *
- * IMPORTANT:
- *
- * This endpoint ONLY:
- *
- * Android SMS
- *      ↓
- * this route
- *      ↓
- * parser
- *
- * It does NOT:
- *
- * - identify members
- * - query savings accounts
- * - query loans
- * - create repayments
- * - create savings transactions
- * - modify balances
- */
 export async function POST(
-  request: NextRequest
+  request: NextRequest,
 ) {
   try {
-    /* =====================================================
-       READ JSON
-    ===================================================== */
-
-    let body: SmsRequestBody;
-
-    try {
-      body = (await request.json()) as SmsRequestBody;
-    } catch {
-      return errorResponse(
-        "Request body must contain valid JSON."
-      );
-    }
+    const body =
+      await request.json();
 
     if (
       !body ||
-      typeof body !== "object"
+      typeof body !== "object" ||
+      Array.isArray(body)
     ) {
-      return errorResponse(
-        "Request body must contain an SMS object."
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Request body must be a valid SMS object.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    const sms =
+      body as {
+        address?: string | null;
+        body?: unknown;
+        date?: unknown;
+      };
+
+    if (
+      typeof sms.body !== "string" ||
+      !sms.body.trim()
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "SMS body is required.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    if (
+      typeof sms.date !== "number" ||
+      !Number.isFinite(sms.date)
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "SMS date is invalid.",
+        },
+        {
+          status: 400,
+        },
       );
     }
 
     /* =====================================================
-       FORMAT 1
-       SMS object sent directly
+       STEP 1: PARSE
     ===================================================== */
 
-    if (
-      "body" in body &&
-      "date" in body
-    ) {
-      try {
-        const parsed = parseBankSms(
-          body as SmsMessage
-        );
+    const parsed =
+      parseBankSms({
+        address:
+          sms.address ?? null,
 
-        return NextResponse.json({
-          success: true,
-          type: "single",
-          parsed,
-        });
-      } catch (error) {
-        return NextResponse.json(
-          {
-            success: false,
-            type: "single",
-            error:
-              error instanceof Error
-                ? error.message
-                : "Unable to parse SMS.",
-          },
-          { status: 422 }
-        );
-      }
-    }
+        body:
+          sms.body,
+
+        date:
+          sms.date,
+      });
 
     /* =====================================================
-       FORMAT 2
-       { message: SmsMessage }
+       STEP 2: PROCESS
     ===================================================== */
 
-    if (
-      "message" in body &&
-      body.message
-    ) {
-      try {
-        const parsed = parseBankSms(
-          body.message
-        );
-
-        return NextResponse.json({
-          success: true,
-          type: "single",
-          parsed,
-        });
-      } catch (error) {
-        return NextResponse.json(
-          {
-            success: false,
-            type: "single",
-            error:
-              error instanceof Error
-                ? error.message
-                : "Unable to parse SMS.",
-          },
-          { status: 422 }
-        );
-      }
-    }
+    const result =
+      await processIncomingTransaction(
+        parsed,
+      );
 
     /* =====================================================
-       FORMAT 3
-       { messages: SmsMessage[] }
+       STEP 3: RESPONSE TO ANDROID
     ===================================================== */
 
-    if (
-      "messages" in body &&
-      Array.isArray(body.messages)
-    ) {
-      if (body.messages.length === 0) {
-        return errorResponse(
-          "SMS messages array is empty."
-        );
-      }
+    return NextResponse.json({
+      success: true,
 
-      try {
-        const results =
-          parseBankSmsBatch(
-            body.messages
-          );
+      processed: true,
 
-        const successful =
-          results.filter(
-            (result) =>
-              result.success
-          ).length;
+      financialChange: true,
 
-        const failed =
-          results.length -
-          successful;
+      type:
+        result.type,
 
-        return NextResponse.json({
-          success: true,
-          type: "batch",
-          total: results.length,
-          successful,
-          failed,
-          results,
-        });
-      } catch (error) {
-        return NextResponse.json(
-          {
-            success: false,
-            type: "batch",
-            error:
-              error instanceof Error
-                ? error.message
-                : "Unable to parse SMS messages.",
-          },
-          { status: 422 }
-        );
-      }
-    }
+      parsed,
 
-    /* =====================================================
-       INVALID FORMAT
-    ===================================================== */
-
-    return errorResponse(
-      "Request must contain either a valid SMS message or messages array."
-    );
+      result,
+    });
   } catch (error) {
     console.error(
       "POST /api/sms/process failed:",
-      error
+      error,
     );
 
     return NextResponse.json(
       {
         success: false,
+        processed: false,
+        financialChange: false,
         error:
-          "Failed to process SMS request.",
+          error instanceof Error
+            ? error.message
+            : "Unable to process incoming SMS.",
       },
-      { status: 500 }
+      {
+        status: 422,
+      },
     );
   }
 }
