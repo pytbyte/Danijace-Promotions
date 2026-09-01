@@ -10,6 +10,8 @@
  *    ↓
  * processIncomingTransaction()
  *    ↓
+ * bank account classification
+ *    ↓
  * savings service OR loan service
  *
  * =========================================================
@@ -36,6 +38,29 @@
  * - modify balances
  *
  * Financial persistence remains inside the domain services.
+ *
+ * =========================================================
+ *
+ * IMPORTANT ARCHITECTURE
+ * ---------------------------------------------------------
+ *
+ * parser.ts:
+ *   extracts and normalizes the SMS
+ *
+ * processor.ts:
+ *   classifies the BANK collection account
+ *   resolves the member
+ *   routes to savings or loan
+ *
+ * Therefore:
+ *
+ *   parsed.transactionType === "unknown"
+ *
+ * is EXPECTED at parser level.
+ *
+ * The final transaction type comes from:
+ *
+ *   result.type
  *
  * =========================================================
  */
@@ -88,7 +113,8 @@ function normalizeAddress(
   value: unknown,
 ): string | null {
   if (
-    typeof value !== "string"
+    typeof value !==
+    "string"
   ) {
     return null;
   }
@@ -96,7 +122,10 @@ function normalizeAddress(
   const clean =
     value.trim();
 
-  return clean || null;
+  return clean.length >
+    0
+    ? clean
+    : null;
 }
 
 /* =========================================================
@@ -111,7 +140,7 @@ export async function POST(
 
   /* =======================================================
      STEP 0
-     RECEIVE AND VALIDATE HTTP REQUEST
+     RECEIVE REQUEST
   ======================================================= */
 
   let body: unknown;
@@ -145,8 +174,13 @@ export async function POST(
     );
   }
 
+  /* =======================================================
+     VALIDATE OBJECT
+  ======================================================= */
+
   if (
-    typeof body !== "object" ||
+    typeof body !==
+      "object" ||
     body === null ||
     Array.isArray(body)
   ) {
@@ -183,8 +217,10 @@ export async function POST(
   ======================================================= */
 
   if (
-    typeof sms.body !== "string" ||
-    !sms.body.trim()
+    typeof sms.body !==
+      "string" ||
+    sms.body.trim().length ===
+      0
   ) {
     return jsonResponse(
       {
@@ -216,7 +252,8 @@ export async function POST(
   ======================================================= */
 
   if (
-    typeof sms.date !== "number" ||
+    typeof sms.date !==
+      "number" ||
     !Number.isFinite(
       sms.date,
     )
@@ -253,7 +290,7 @@ export async function POST(
 
   /* =======================================================
      STEP 1
-     PARSE SMS
+     PARSE
   ======================================================= */
 
   let parsed;
@@ -270,23 +307,13 @@ export async function POST(
           sms.date,
       });
   } catch (error) {
-    /*
-     * An Android inbox contains many messages that have
-     * nothing to do with GEO-SHUA.
-     *
-     * A parser rejection therefore means:
-     *
-     * "Message received, but not a supported GEO-SHUA
-     * bank transaction."
-     *
-     * We intentionally return HTTP 200.
-     *
-     * This prevents the Android synchronizer from treating
-     * ordinary SMS messages as transport failures and
-     * retrying them unnecessarily.
-     */
+    /* =====================================================
+       NORMAL PARSER REJECTION
+    ===================================================== */
+
     if (
-      error instanceof SmsParseError
+      error instanceof
+      SmsParseError
     ) {
       return jsonResponse({
         success: true,
@@ -338,18 +365,17 @@ export async function POST(
           skipped: true,
 
           reason:
-            "Processing was not started because the SMS could not be parsed as a supported bank transaction.",
+            "Processing did not start because parsing failed.",
         },
 
         receivedAt,
       });
     }
 
-    /*
-     * Unexpected parser failure.
-     *
-     * This is a genuine application/server problem.
-     */
+    /* =====================================================
+       UNEXPECTED PARSER FAILURE
+    ===================================================== */
+
     console.error(
       "POST /api/sms/process parser failure:",
       error,
@@ -387,7 +413,8 @@ export async function POST(
           success: false,
 
           error:
-            error instanceof Error
+            error instanceof
+              Error
               ? error.message
               : "Unexpected SMS parser failure.",
         },
@@ -400,7 +427,7 @@ export async function POST(
 
   /* =======================================================
      STEP 2
-     PROCESS TRANSACTION
+     PROCESS
   ======================================================= */
 
   try {
@@ -410,71 +437,97 @@ export async function POST(
       );
 
     /* =====================================================
-       UNKNOWN DESTINATION
+       FINAL TYPE
+       ----------------------------------------------------
+       parser.transactionType is intentionally "unknown".
+       processor result.type is the authoritative routing
+       decision.
+    ===================================================== */
+
+    const transactionType =
+      result.type;
+
+    /* =====================================================
+       SAFETY CHECK
     ===================================================== */
 
     if (
-      parsed.transactionType ===
-      "unknown"
+      transactionType !==
+        "savings" &&
+      transactionType !==
+        "loan"
     ) {
-      return jsonResponse({
-        success: true,
+      /*
+       * This should never happen with the current processor
+       * contract, but keeping the boundary defensive avoids
+       * returning a false financial success.
+       */
+      console.error(
+        "POST /api/sms/process invalid processor type:",
+        result,
+      );
 
-        status: "ignored",
-
-        stage: "classifier",
-
-        processed: false,
-
-        duplicate: false,
-
-        ignored: true,
-
-        financialChange: false,
-
-        type: "unknown",
-
-        received: {
-          address,
-
-          date:
-            sms.date,
-
-          body:
-            sms.body,
-        },
-
-        parser: {
-          success: true,
-
-          data:
-            parsed,
-        },
-
-        classifier: {
-          success: true,
-
-          transactionType:
-            "unknown",
-
-          accountNumber:
-            parsed.accountNumber,
-
-          reason:
-            `Bank account "${parsed.accountNumber}" is not configured as a GEO-SHUA savings or loan collection account.`,
-        },
-
-        processor: {
+      return jsonResponse(
+        {
           success: false,
 
-          skipped: true,
+          status: "error",
 
-          reason:
-            "Financial processing was not started for an unknown bank collection account.",
+          stage: "processor",
+
+          processed: false,
+
+          duplicate: false,
+
+          ignored: false,
+
+          financialChange:
+            false,
+
+          type:
+            "unknown",
+
+          received: {
+            address,
+
+            date:
+              sms.date,
+
+            body:
+              sms.body,
+          },
+
+          parser: {
+            success: true,
+
+            data:
+              parsed,
+          },
+
+          classifier: {
+            success: false,
+
+            transactionType:
+              "unknown",
+
+            accountNumber:
+              parsed.accountNumber,
+
+            reason:
+              "The processor did not return a valid financial destination.",
+          },
+
+          processor: {
+            success: false,
+
+            error:
+              "Invalid processor transaction type.",
+          },
+
+          receivedAt,
         },
-
-        receivedAt,
-      });
+        500,
+      );
     }
 
     /* =====================================================
@@ -490,20 +543,30 @@ export async function POST(
       stage:
         "processor",
 
+      processed:
+        true,
+
+      duplicate:
+        false,
+
+      ignored:
+        false,
+
+      financialChange:
+        true,
+
       /*
-       * The current processor contract returns "processed"
-       * for successful financial processing.
+       * IMPORTANT:
+       *
+       * This is the final classification produced by
+       * processor.ts.
        */
-      processed: true,
-
-      duplicate: false,
-
-      ignored: false,
-
-      financialChange: true,
-
       type:
-        result.type,
+        transactionType,
+
+      /* ===================================================
+         RECEIVED SMS
+      =================================================== */
 
       received: {
         address,
@@ -516,97 +579,98 @@ export async function POST(
       },
 
       /* ===================================================
-         PARSER RESULT
+         PARSER
       =================================================== */
 
       parser: {
         success: true,
 
+        /*
+         * Parser deliberately reports unknown because
+         * parser.ts does not perform routing.
+         */
         data:
           parsed,
       },
 
       /* ===================================================
-         CLASSIFIER RESULT
+         CLASSIFIER
       =================================================== */
 
       classifier: {
         success: true,
 
         transactionType:
-          parsed.transactionType,
+          transactionType,
 
         accountNumber:
           parsed.accountNumber,
 
         reason:
-          parsed.transactionType ===
+          transactionType ===
           "loan"
-            ? "Bank collection account routed to the GEO-SHUA loan domain."
-            : "Bank collection account routed to the GEO-SHUA savings domain.",
+            ? "Bank collection account was classified as a GEO-SHUA loan payment."
+            : "Bank collection account was classified as a GEO-SHUA savings payment.",
       },
 
       /* ===================================================
-         PROCESSOR RESULT
+         PROCESSOR
       =================================================== */
 
-      processor: {
-        success: true,
+      processor:
+        transactionType ===
+        "savings"
+          ? {
+              success: true,
 
-        member:
-          result.member,
+              member:
+                result.member,
 
-        savingsAccount:
-          "savingsAccount" in
-          result
-            ? result.savingsAccount
-            : undefined,
+              savingsAccount:
+                result.savingsAccount,
 
-        savingsTransaction:
-          "savingsTransaction" in
-          result
-            ? result.savingsTransaction
-            : undefined,
+              savingsTransaction:
+                result.savingsTransaction,
+            }
+          : {
+              success: true,
 
-        loan:
-          "loan" in result
-            ? result.loan
-            : undefined,
+              member:
+                result.member,
 
-        repayment:
-          "repayment" in
-          result
-            ? result.repayment
-            : undefined,
-      },
+              loan:
+                result.loan,
 
-      /*
-       * Keep the complete processor result for the
-       * dashboard diagnostic panel.
-       */
+              repayment:
+                result.repayment,
+            },
+
+      /* ===================================================
+         COMPLETE RESULT
+      =================================================== */
+
       result,
 
       receivedAt,
     });
   } catch (error) {
-    /*
-     * The SMS was received and parsed, but the financial
-     * processing operation failed.
-     *
-     * Examples:
-     *
-     * - member could not be resolved
-     * - member inactive
-     * - multiple active loans
-     * - missing savings account
-     * - domain service rejected transaction
-     * - database failure
-     */
+    /* =====================================================
+       PROCESSOR FAILURE
+    ===================================================== */
+
     console.error(
       "POST /api/sms/process processor failure:",
       error,
     );
 
+    /*
+     * The parser succeeded, but the financial processor
+     * could not complete the operation.
+     *
+     * This response remains HTTP 500 so the Android client
+     * can distinguish a processing failure from an ordinary
+     * unrelated SMS.
+     */
     return jsonResponse(
       {
         success: false,
@@ -621,8 +685,13 @@ export async function POST(
 
         ignored: false,
 
-        financialChange: false,
+        financialChange:
+          false,
 
+        /*
+         * At this point the parser still contains "unknown"
+         * because classification happens inside the processor.
+         */
         type:
           parsed.transactionType,
 
@@ -652,7 +721,9 @@ export async function POST(
         ================================================= */
 
         classifier: {
-          success: true,
+          success:
+            parsed.transactionType !==
+            "unknown",
 
           transactionType:
             parsed.transactionType,
@@ -662,12 +733,12 @@ export async function POST(
 
           reason:
             parsed.transactionType ===
-            "loan"
-              ? "Bank collection account routed to the GEO-SHUA loan domain."
+            "unknown"
+              ? "Classification and financial routing are performed inside processor.ts."
               : parsed.transactionType ===
-                "savings"
-                ? "Bank collection account routed to the GEO-SHUA savings domain."
-                : "Bank account was not classified as a supported GEO-SHUA destination.",
+                  "loan"
+                ? "Loan payment destination."
+                : "Savings payment destination.",
         },
 
         /* =================================================
@@ -678,13 +749,15 @@ export async function POST(
           success: false,
 
           error:
-            error instanceof Error
+            error instanceof
+              Error
               ? error.message
               : "Bank transaction processing failed.",
         },
 
         error:
-          error instanceof Error
+          error instanceof
+            Error
             ? error.message
             : "Unable to process incoming SMS.",
 

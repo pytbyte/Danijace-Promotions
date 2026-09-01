@@ -13,11 +13,17 @@
  *       ↓
  *   parser.ts
  *       ↓
- *   transactionType
+ *   bank account classification
  *       ↓
- *   this processor
+ *   member resolution
  *       ↓
  *   savings service OR loan service
+ *
+ * This project does NOT currently have a separate
+ * classifier.ts.
+ *
+ * Therefore bank-account classification is intentionally
+ * kept here.
  *
  * It does NOT implement financial persistence itself.
  *
@@ -26,20 +32,13 @@
  *   createSavingsDeposit()
  *   createLoanRepayment()
  *
- * The processor:
- *
- * - resolves the GEO-SHUA member
- * - validates member status
- * - routes savings payments
- * - routes loan payments
- * - preserves the bank transaction reference
- * - preserves the bank collection account
- *
  * IMPORTANT
  * ---------------------------------------------------------
  *
- * The bank account number in the SMS is a BANK collection
- * account. It is NOT:
+ * The account number appearing in the bank SMS is a BANK
+ * collection account.
+ *
+ * It is NOT:
  *
  * - a GEO-SHUA member ID
  * - a GEO-SHUA savings account ID
@@ -48,7 +47,8 @@
  *
  * The sender name identifies the GEO-SHUA member.
  *
- * The transaction reference identifies the bank payment.
+ * The bank transaction reference identifies the external
+ * payment.
  *
  * =========================================================
  */
@@ -80,6 +80,25 @@ import type {
 } from "@/lib/sms/parser";
 
 /* =========================================================
+   CONSTANTS
+========================================================= */
+
+/**
+ * GEO-SHUA bank collection accounts.
+ *
+ * IMPORTANT:
+ *
+ * These are BANK account numbers from the SMS.
+ *
+ * They do NOT identify GEO-SHUA financial accounts.
+ */
+const LOAN_BANK_ACCOUNT =
+  "082083";
+
+const SAVINGS_BANK_ACCOUNT =
+  "2650821";
+
+/* =========================================================
    TYPES
 ========================================================= */
 
@@ -91,6 +110,17 @@ export type IncomingTransactionActor = {
 export type ProcessIncomingTransactionOptions = {
   recordedBy?: IncomingTransactionActor;
 };
+
+type BankPaymentType =
+  | "loan"
+  | "savings"
+  | "unknown";
+
+type ClassifiedBankTransaction =
+  ParsedBankSms & {
+    transactionType:
+      BankPaymentType;
+  };
 
 type ResolvedMember = {
   id: string;
@@ -104,7 +134,9 @@ type ResolvedLoan =
 
 type LoanRepayment =
   Awaited<
-    ReturnType<typeof createLoanRepayment>
+    ReturnType<
+      typeof createLoanRepayment
+    >
   >;
 
 export type ProcessIncomingTransactionResult =
@@ -140,6 +172,79 @@ export type ProcessIncomingTransactionResult =
     };
 
 /* =========================================================
+   BANK ACCOUNT CLASSIFICATION
+========================================================= */
+
+/**
+ * Determine the financial destination from the BANK
+ * collection account contained in the SMS.
+ *
+ * This is deliberately NOT done by parser.ts.
+ *
+ * parser.ts only extracts:
+ *
+ *   accountNumber = "2650821"
+ *
+ * This function determines:
+ *
+ *   2650821 → savings
+ *   082083  → loan
+ *
+ * Unknown accounts are NEVER guessed.
+ */
+function classifyBankAccount(
+  accountNumber: string,
+): BankPaymentType {
+  const clean =
+    accountNumber.trim();
+
+  if (
+    clean ===
+    LOAN_BANK_ACCOUNT
+  ) {
+    return "loan";
+  }
+
+  if (
+    clean ===
+    SAVINGS_BANK_ACCOUNT
+  ) {
+    return "savings";
+  }
+
+  return "unknown";
+}
+
+/* =========================================================
+   CLASSIFY PARSED TRANSACTION
+========================================================= */
+
+/**
+ * Add the financial destination to the parsed transaction.
+ *
+ * The parser intentionally returns:
+ *
+ *   transactionType = "unknown"
+ *
+ * The processor then classifies it using the BANK account
+ * number.
+ */
+function classifyTransaction(
+  parsed: ParsedBankSms,
+): ClassifiedBankTransaction {
+  const transactionType =
+    classifyBankAccount(
+      parsed.accountNumber,
+    );
+
+  return {
+    ...parsed,
+
+    transactionType,
+  };
+}
+
+/* =========================================================
    NAME NORMALIZATION
 ========================================================= */
 
@@ -152,20 +257,22 @@ export type ProcessIncomingTransactionResult =
  *   FRANCIS MWANGI KAMAU
  *   Francis  Mwangi   Kamau
  *
- * become the same canonical value.
+ * all become:
+ *
+ *   FRANCIS MWANGI KAMAU
  */
 function normalizeName(
-  value: string
+  value: string,
 ): string {
   return value
     .normalize("NFKC")
     .replace(
       /[\u2018\u2019\u201A\u0060]/g,
-      "'"
+      "'",
     )
     .replace(
       /\s+/g,
-      " "
+      " ",
     )
     .trim()
     .toUpperCase();
@@ -177,7 +284,7 @@ function normalizeName(
 
 function namesEqual(
   left: string,
-  right: string
+  right: string,
 ): boolean {
   return (
     normalizeName(left) ===
@@ -210,25 +317,30 @@ function getMemberName(
     lastName?: string;
     name?: string;
     fullName?: string;
-  }
+  },
 ): string {
-  const composed = [
-    member.firstName,
-    member.middleName,
-    member.lastName,
-  ]
-    .filter(
-      (
-        value
-      ): value is string =>
-        typeof value ===
-          "string" &&
-        value.trim().length > 0
-    )
-    .join(" ")
-    .trim();
+  const composed =
+    [
+      member.firstName,
+      member.middleName,
+      member.lastName,
+    ]
+      .filter(
+        (
+          value,
+        ): value is string =>
+          typeof value ===
+            "string" &&
+          value.trim().length >
+            0,
+      )
+      .join(" ")
+      .trim();
 
-  if (composed) {
+  if (
+    composed.length >
+    0
+  ) {
     return composed;
   }
 
@@ -256,35 +368,37 @@ function getMemberName(
 ========================================================= */
 
 /**
- * Resolve a GEO-SHUA member from the name supplied by
+ * Resolve a GEO-SHUA member using the name supplied by
  * the bank.
  *
  * IMPORTANT:
  *
- * This is exact matching.
+ * The final financial identity decision is EXACT.
  *
  * We do NOT:
  *
  * - fuzzy match
  * - choose the closest person
  * - choose the first result
- * - match partial names for the final decision
+ * - match only part of the name
  *
- * The member service searches individual fields, so we
- * collect candidates using name tokens and then perform
- * an exact normalized full-name comparison ourselves.
+ * We first collect candidates through getMembers(),
+ * then perform exact normalized full-name matching.
  */
 async function resolveMemberBySmsName(
-  senderName: string
+  senderName: string,
 ): Promise<ResolvedMember> {
   const cleanName =
     normalizeName(
-      senderName
+      senderName,
     );
 
-  if (!cleanName) {
+  if (
+    cleanName.length ===
+    0
+  ) {
     throw new Error(
-      "Bank SMS sender name is required."
+      "Bank SMS sender name is required.",
     );
   }
 
@@ -295,15 +409,18 @@ async function resolveMemberBySmsName(
           .split(" ")
           .map(
             (token) =>
-              token.trim()
+              token.trim(),
           )
-          .filter(Boolean)
-      )
+          .filter(Boolean),
+      ),
     );
 
-  if (tokens.length === 0) {
+  if (
+    tokens.length ===
+    0
+  ) {
     throw new Error(
-      "Bank SMS sender name is required."
+      "Bank SMS sender name is required.",
     );
   }
 
@@ -318,20 +435,16 @@ async function resolveMemberBySmsName(
       Candidate
     >();
 
-  /*
-   * Search using the complete sender name and each
-   * individual token.
-   *
-   * The member service remains the search boundary.
-   *
-   * Final matching remains exact here.
+  /**
+   * Search by complete name first, then individual
+   * name tokens.
    */
   const searchTerms =
     Array.from(
       new Set([
         senderName,
         ...tokens,
-      ])
+      ]),
     );
 
   for (
@@ -341,7 +454,9 @@ async function resolveMemberBySmsName(
     const result =
       await getMembers({
         page: 1,
+
         limit: 100,
+
         search:
           searchTerm,
       });
@@ -356,33 +471,44 @@ async function resolveMemberBySmsName(
           ? candidate._id.trim()
           : "";
 
-      if (!memberId) {
+      if (
+        memberId.length ===
+        0
+      ) {
         continue;
       }
 
       candidates.set(
         memberId,
-        candidate
+        candidate,
       );
     }
   }
 
+  /* -------------------------------------------------------
+     NO CANDIDATES
+  ------------------------------------------------------- */
+
   if (
-    candidates.size === 0
+    candidates.size ===
+    0
   ) {
     throw new Error(
-      `No GEO-SHUA member could be found for bank sender "${senderName}".`
+      `No GEO-SHUA member could be found for bank sender "${senderName}".`,
     );
   }
 
-  /*
-   * Exact normalized full-name match.
-   */
+  /* -------------------------------------------------------
+     EXACT MATCH
+  ------------------------------------------------------- */
+
   const exactMatches =
     Array.from(
-      candidates.values()
+      candidates.values(),
     ).filter(
-      (candidate) => {
+      (
+        candidate,
+      ) => {
         const candidateName =
           getMemberName(
             candidate as {
@@ -391,37 +517,42 @@ async function resolveMemberBySmsName(
               lastName?: string;
               name?: string;
               fullName?: string;
-            }
+            },
           );
 
-        if (!candidateName) {
+        if (
+          candidateName.length ===
+          0
+        ) {
           return false;
         }
 
         return namesEqual(
           candidateName,
-          senderName
+          senderName,
         );
-      }
+      },
     );
 
   if (
-    exactMatches.length === 0
+    exactMatches.length ===
+    0
   ) {
     throw new Error(
-      `Bank sender "${senderName}" did not exactly match a registered GEO-SHUA member.`
+      `Bank sender "${senderName}" did not exactly match a registered GEO-SHUA member.`,
     );
   }
 
-  /*
-   * Never automatically choose between multiple exact
-   * matches.
-   */
+  /* -------------------------------------------------------
+     MULTIPLE EXACT MATCHES
+  ------------------------------------------------------- */
+
   if (
-    exactMatches.length > 1
+    exactMatches.length >
+    1
   ) {
     throw new Error(
-      `Multiple GEO-SHUA members exactly match bank sender "${senderName}". Automatic processing is blocked.`
+      `Multiple GEO-SHUA members exactly match bank sender "${senderName}". Automatic processing is blocked.`,
     );
   }
 
@@ -430,7 +561,7 @@ async function resolveMemberBySmsName(
 
   if (!member) {
     throw new Error(
-      `Unable to resolve GEO-SHUA member "${senderName}".`
+      `Unable to resolve GEO-SHUA member "${senderName}".`,
     );
   }
 
@@ -440,17 +571,19 @@ async function resolveMemberBySmsName(
       ? member._id.trim()
       : "";
 
-  if (!memberId) {
+  if (
+    memberId.length ===
+    0
+  ) {
     throw new Error(
-      `Resolved member "${senderName}" has no valid member ID.`
+      `Resolved member "${senderName}" has no valid member ID.`,
     );
   }
 
-  /*
-   * Only active members may be automatically processed.
-   *
-   * Historical records remain untouched.
-   */
+  /* -------------------------------------------------------
+     MEMBER STATUS
+  ------------------------------------------------------- */
+
   const memberStatus =
     typeof member.status ===
       "string"
@@ -464,7 +597,7 @@ async function resolveMemberBySmsName(
     "active"
   ) {
     throw new Error(
-      `Member "${senderName}" is not active and cannot receive automatic financial processing.`
+      `Member "${senderName}" is not active and cannot receive automatic financial processing.`,
     );
   }
 
@@ -476,12 +609,15 @@ async function resolveMemberBySmsName(
         lastName?: string;
         name?: string;
         fullName?: string;
-      }
+      },
     );
 
-  if (!canonicalName) {
+  if (
+    canonicalName.length ===
+    0
+  ) {
     throw new Error(
-      `Resolved member "${senderName}" has no valid registered name.`
+      `Resolved member "${senderName}" has no valid registered name.`,
     );
   }
 
@@ -499,17 +635,19 @@ async function resolveMemberBySmsName(
 ========================================================= */
 
 /**
- * Every new GEO-SHUA member is created with exactly one
- * fixed savings account.
+ * Every member should have exactly one fixed savings
+ * account.
  *
- * For legacy data where a member does not yet have one,
- * getOrCreateSavingsAccount() safely recovers the invariant.
+ * createMember() creates it automatically.
  *
- * It can never create a second account because the savings
- * service enforces the unique memberId constraint.
+ * getOrCreateSavingsAccount() is used here so legacy
+ * members created before the invariant was enforced can
+ * still be repaired safely.
+ *
+ * The savings service owns the unique-member constraint.
  */
 async function resolveSavingsAccount(
-  member: ResolvedMember
+  member: ResolvedMember,
 ): Promise<{
   id: string;
   accountNumber: string;
@@ -525,7 +663,7 @@ async function resolveSavingsAccount(
 
   if (!account) {
     throw new Error(
-      `Savings account could not be resolved for member "${member.name}".`
+      `Savings account could not be resolved for member "${member.name}".`,
     );
   }
 
@@ -534,7 +672,7 @@ async function resolveSavingsAccount(
     "active"
   ) {
     throw new Error(
-      `Savings account "${account.accountNumber}" is inactive.`
+      `Savings account "${account.accountNumber}" is inactive.`,
     );
   }
 
@@ -543,7 +681,18 @@ async function resolveSavingsAccount(
     "fixed"
   ) {
     throw new Error(
-      `Savings account "${account.accountNumber}" is not the required fixed savings account.`
+      `Savings account "${account.accountNumber}" is not the required fixed savings account.`,
+    );
+  }
+
+  if (
+    typeof account.id !==
+      "string" ||
+    account.id.trim().length ===
+      0
+  ) {
+    throw new Error(
+      `Savings account "${account.accountNumber}" has no valid account ID.`,
     );
   }
 
@@ -561,13 +710,18 @@ async function resolveSavingsAccount(
 ========================================================= */
 
 /**
- * Resolve exactly one active loan for a member.
+ * Resolve exactly one active loan.
  *
- * If there are zero or multiple active loans, automatic
- * SMS allocation is blocked.
+ * Zero loans:
+ *   block automatic processing.
+ *
+ * Multiple loans:
+ *   block automatic processing.
+ *
+ * We never guess where a payment belongs.
  */
 async function resolveActiveLoan(
-  member: ResolvedMember
+  member: ResolvedMember,
 ): Promise<ResolvedLoan> {
   const result =
     await getLoans({
@@ -586,33 +740,42 @@ async function resolveActiveLoan(
     result.loans || [];
 
   if (
-    loans.length === 0
+    loans.length ===
+    0
   ) {
     throw new Error(
-      `No active GEO-SHUA loan could be found for member "${member.name}".`
+      `No active GEO-SHUA loan could be found for member "${member.name}".`,
     );
   }
 
   if (
-    loans.length > 1
+    loans.length >
+    1
   ) {
     const loanNumbers =
       loans
         .map(
           (loan) =>
-            loan.loanNumber
+            loan.loanNumber,
         )
         .filter(
-          Boolean
+          (
+            value,
+          ): value is string =>
+            typeof value ===
+              "string" &&
+            value.trim().length >
+              0,
         )
         .join(", ");
 
     throw new Error(
       `Member "${member.name}" has multiple active loans${
-        loanNumbers
+        loanNumbers.length >
+        0
           ? ` (${loanNumbers})`
           : ""
-      }. Automatic SMS repayment allocation is blocked.`
+      }. Automatic SMS repayment allocation is blocked.`,
     );
   }
 
@@ -621,7 +784,7 @@ async function resolveActiveLoan(
 
   if (!loan) {
     throw new Error(
-      `Unable to resolve the active loan for member "${member.name}".`
+      `Unable to resolve the active loan for member "${member.name}".`,
     );
   }
 
@@ -629,17 +792,46 @@ async function resolveActiveLoan(
 }
 
 /* =========================================================
-   PROCESS SAVINGS PAYMENT
+   SMS IDENTITY
 ========================================================= */
 
 /**
- * Route a classified savings transaction into the
- * authoritative savings service.
+ * Build a deterministic identity for this exact SMS.
+ *
+ * IMPORTANT:
+ *
+ * This is an ingestion identity.
+ *
+ * The bank transaction reference remains the primary
+ * financial identifier.
+ */
+function createSmsId(
+  transaction: ParsedBankSms,
+): string {
+  return [
+    transaction.reference,
+    transaction.smsDate,
+    transaction.accountNumber,
+    transaction.address ||
+      "",
+  ].join(":");
+}
+
+/* =========================================================
+   PROCESS SAVINGS
+========================================================= */
+
+/**
+ * Route a savings payment into the authoritative
+ * savings ledger service.
  */
 async function processSavingsTransaction(
   transaction: ParsedBankSms,
+  classified:
+    ClassifiedBankTransaction,
   member: ResolvedMember,
-  options: ProcessIncomingTransactionOptions
+  options:
+    ProcessIncomingTransactionOptions,
 ): Promise<{
   savingsAccount: {
     id: string;
@@ -651,17 +843,9 @@ async function processSavingsTransaction(
 }> {
   const savingsAccount =
     await resolveSavingsAccount(
-      member
+      member,
     );
 
-  /*
-   * The actual financial source is represented as "sms"
-   * because this transaction entered GEO-SHUA through
-   * the SMS ingestion pipeline.
-   *
-   * The external bank collection account is preserved
-   * separately as sourceReference.
-   */
   const savingsTransaction =
     await createSavingsDeposit({
       savingsAccountId:
@@ -674,8 +858,12 @@ async function processSavingsTransaction(
         member.name,
 
       amount:
-        transaction.amount,
+        classified.amount,
 
+      /*
+       * This transaction entered GEO-SHUA through the
+       * Android SMS ingestion pipeline.
+       */
       source:
         "sms",
 
@@ -683,30 +871,30 @@ async function processSavingsTransaction(
        * Immutable bank transaction reference.
        */
       reference:
-        transaction.reference,
+        classified.reference,
 
       /*
-       * Deterministic SMS identity.
-       *
-       * The savings service also protects itself using
-       * unique indexes/reference validation.
+       * Deterministic Android SMS identity.
        */
       smsId:
         createSmsId(
-          transaction
+          transaction,
         ),
 
       /*
-       * This tells us which external bank collection
-       * account received the money.
+       * The BANK collection account.
        *
-       * It is NOT the GEO-SHUA savings account ID.
+       * This is NOT the GEO-SHUA savings account ID.
        */
       sourceReference:
-        transaction.accountNumber,
+        classified.accountNumber,
 
+      /*
+       * Bank-reported transaction time.
+       */
       transactionAt:
-        transaction.transactionDate.toISOString(),
+        classified.transactionDate
+          .toISOString(),
 
       ...(options.recordedBy
         ? {
@@ -729,17 +917,20 @@ async function processSavingsTransaction(
 }
 
 /* =========================================================
-   PROCESS LOAN PAYMENT
+   PROCESS LOAN
 ========================================================= */
 
 /**
- * Route a classified loan transaction into the
- * authoritative loan service.
+ * Route a loan payment into the authoritative loan
+ * repayment service.
  */
 async function processLoanTransaction(
   transaction: ParsedBankSms,
+  classified:
+    ClassifiedBankTransaction,
   member: ResolvedMember,
-  options: ProcessIncomingTransactionOptions
+  options:
+    ProcessIncomingTransactionOptions,
 ): Promise<{
   loan: ResolvedLoan;
 
@@ -747,7 +938,7 @@ async function processLoanTransaction(
 }> {
   const loan =
     await resolveActiveLoan(
-      member
+      member,
     );
 
   const repayment =
@@ -759,13 +950,13 @@ async function processLoanTransaction(
         member.id,
 
       amount:
-        transaction.amount,
+        classified.amount,
 
       transactionReference:
-        transaction.reference,
+        classified.reference,
 
       transactionDate:
-        transaction.transactionDate,
+        classified.transactionDate,
 
       source:
         "sms" as TransactionSource,
@@ -794,49 +985,31 @@ async function processLoanTransaction(
 }
 
 /* =========================================================
-   SMS IDENTITY
-========================================================= */
-
-/**
- * Build a deterministic identity for this exact SMS.
- *
- * This is NOT the financial reference.
- *
- * The bank transaction reference remains the primary
- * financial identity.
- */
-function createSmsId(
-  transaction: ParsedBankSms
-): string {
-  return [
-    transaction.reference,
-    transaction.smsDate,
-    transaction.accountNumber,
-    transaction.address || "",
-  ].join(":");
-}
-
-/* =========================================================
    MAIN PROCESSOR
 ========================================================= */
 
 /**
  * Process one parsed bank transaction.
  *
- * The parser already determined transactionType:
+ * Actual flow:
  *
- *   savings
- *   loan
- *   unknown
- *
- * This function performs the actual routing.
+ *   ParsedBankSms
+ *       ↓
+ *   classify bank account
+ *       ↓
+ *   resolve member
+ *       ↓
+ *   savings OR loan
  */
 export async function processIncomingTransaction(
   parsedTransaction: ParsedBankSms,
-  options: ProcessIncomingTransactionOptions = {}
-): Promise<ProcessIncomingTransactionResult> {
+  options:
+    ProcessIncomingTransactionOptions = {},
+): Promise<
+  ProcessIncomingTransactionResult
+> {
   /* =======================================================
-     VALIDATION
+     BASIC VALIDATION
   ======================================================= */
 
   if (
@@ -845,104 +1018,115 @@ export async function processIncomingTransaction(
       "object"
   ) {
     throw new Error(
-      "Parsed bank transaction is required."
+      "Parsed bank transaction is required.",
     );
   }
 
   if (
     typeof parsedTransaction.reference !==
       "string" ||
-    !parsedTransaction.reference.trim()
+    parsedTransaction.reference.trim()
+      .length === 0
   ) {
     throw new Error(
-      "Parsed bank transaction reference is required."
+      "Parsed bank transaction reference is required.",
     );
   }
 
   if (
     !Number.isFinite(
-      parsedTransaction.amount
+      parsedTransaction.amount,
     ) ||
-    parsedTransaction.amount <= 0
+    parsedTransaction.amount <=
+      0
   ) {
     throw new Error(
-      "Parsed bank transaction amount must be greater than zero."
+      "Parsed bank transaction amount must be greater than zero.",
     );
   }
 
   if (
     typeof parsedTransaction.senderName !==
       "string" ||
-    !parsedTransaction.senderName.trim()
+    parsedTransaction.senderName.trim()
+      .length === 0
   ) {
     throw new Error(
-      "Parsed bank transaction sender name is required."
+      "Parsed bank transaction sender name is required.",
     );
   }
 
   if (
     typeof parsedTransaction.accountNumber !==
       "string" ||
-    !parsedTransaction.accountNumber.trim()
+    parsedTransaction.accountNumber.trim()
+      .length === 0
   ) {
     throw new Error(
-      "Parsed bank transaction bank account number is required."
+      "Parsed bank transaction bank account number is required.",
     );
   }
 
   if (
-    ![
-      "loan",
-      "savings",
-      "unknown",
-    ].includes(
-      parsedTransaction.transactionType
-    )
+    parsedTransaction.status !==
+    "confirmed"
   ) {
     throw new Error(
-      "Parsed bank transaction type is invalid."
+      "Only confirmed bank transactions may enter financial processing.",
     );
   }
 
   if (
-    !(parsedTransaction.transactionDate instanceof Date) ||
+    !(
+      parsedTransaction.transactionDate instanceof
+      Date
+    ) ||
     Number.isNaN(
-      parsedTransaction.transactionDate.getTime()
+      parsedTransaction.transactionDate.getTime(),
     )
   ) {
     throw new Error(
-      "Parsed bank transaction date is invalid."
+      "Parsed bank transaction date is invalid.",
     );
   }
 
   /* =======================================================
-     UNKNOWN DESTINATION
+     CLASSIFY BANK ACCOUNT
+  ======================================================= */
+
+  const classified =
+    classifyTransaction(
+      parsedTransaction,
+    );
+
+  /* =======================================================
+     UNKNOWN BANK ACCOUNT
   ======================================================= */
 
   if (
-    parsedTransaction.transactionType ===
+    classified.transactionType ===
     "unknown"
   ) {
     throw new Error(
-      `Bank account "${parsedTransaction.accountNumber}" is not configured for GEO-SHUA savings or loan payments.`
+      `Bank account "${classified.accountNumber}" is not configured for GEO-SHUA savings or loan payments.`,
     );
   }
 
   /* =======================================================
-     MEMBER
+     RESOLVE MEMBER
   ======================================================= */
 
   const member =
     await resolveMemberBySmsName(
-      parsedTransaction.senderName
+      classified.senderName,
     );
 
   /* =======================================================
-     ROUTING
+     ROUTE SAVINGS
   ======================================================= */
 
   if (
-    parsedTransaction.transactionType ===
+    classified.transactionType ===
     "savings"
   ) {
     const {
@@ -951,8 +1135,9 @@ export async function processIncomingTransaction(
     } =
       await processSavingsTransaction(
         parsedTransaction,
+        classified,
         member,
-        options
+        options,
       );
 
     return {
@@ -973,8 +1158,12 @@ export async function processIncomingTransaction(
     };
   }
 
+  /* =======================================================
+     ROUTE LOAN
+  ======================================================= */
+
   if (
-    parsedTransaction.transactionType ===
+    classified.transactionType ===
     "loan"
   ) {
     const {
@@ -983,8 +1172,9 @@ export async function processIncomingTransaction(
     } =
       await processLoanTransaction(
         parsedTransaction,
+        classified,
         member,
-        options
+        options,
       );
 
     return {
@@ -1005,35 +1195,54 @@ export async function processIncomingTransaction(
     };
   }
 
-  /*
-   * Defensive fallback.
-   */
+  /* =======================================================
+     DEFENSIVE FALLBACK
+  ======================================================= */
+
   throw new Error(
-    `Bank account "${parsedTransaction.accountNumber}" could not be routed.`
+    `Bank account "${classified.accountNumber}" could not be routed.`,
   );
 }
 
 /* =========================================================
-   LEGACY RAW-SMS COMPATIBILITY
+   LEGACY RAW SMS COMPATIBILITY
 ========================================================= */
 
 /**
- * Compatibility helper for older callers that still
- * provide a raw SMS body.
+ * Compatibility helper for older callers that supply only
+ * a raw SMS body.
  *
- * New production code should use:
+ * New code should preferably use:
  *
  *   parseBankSms()
- *      ↓
+ *       ↓
  *   processIncomingTransaction()
  *
- * because Android metadata such as address/date is
- * otherwise lost.
+ * because Android metadata such as:
+ *
+ * - address
+ * - native SMS timestamp
+ *
+ * is otherwise unavailable.
  */
 export async function processBankSms(
   rawMessage: string,
-  options: ProcessIncomingTransactionOptions = {}
-): Promise<ProcessIncomingTransactionResult> {
+  options:
+    ProcessIncomingTransactionOptions = {},
+): Promise<
+  ProcessIncomingTransactionResult
+> {
+  if (
+    typeof rawMessage !==
+      "string" ||
+    rawMessage.trim().length ===
+      0
+  ) {
+    throw new Error(
+      "Raw bank SMS message is required.",
+    );
+  }
+
   const {
     parseBankSms,
   } = await import(
@@ -1054,6 +1263,6 @@ export async function processBankSms(
 
   return processIncomingTransaction(
     parsed,
-    options
+    options,
   );
 }

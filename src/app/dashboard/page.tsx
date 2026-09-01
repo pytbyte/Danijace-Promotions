@@ -28,11 +28,29 @@ import SmsReader from "@/lib/sms/SmsReader";
    CONSTANTS
 ========================================================= */
 
-const SMS_PROCESS_URL =
-  "https://geoshua.vercel.app/api/sms/process";
-
-const SMS_SWEEP_INTERVAL_MS =
-  5 * 60 * 1000;
+/**
+ * IMPORTANT
+ *
+ * Browser:
+ *   Uses the current application origin.
+ *
+ * Android/Capacitor:
+ *   Uses NEXT_PUBLIC_API_BASE_URL when provided.
+ *
+ * This prevents localhost WebView requests from incorrectly
+ * going to:
+ *
+ *   capacitor://localhost/api/...
+ *
+ * while still allowing normal browser/local testing.
+ *
+ * Set in .env.local for Android/native builds:
+ *
+ * NEXT_PUBLIC_API_BASE_URL=https://YOUR-DEPLOYMENT.vercel.app
+ *
+ * Do not include a trailing slash.
+ */
+const SMS_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 const MAX_SMS_HISTORY = 50;
 
@@ -85,7 +103,7 @@ type ApiResponse<T = unknown> = {
   data?: T;
 
   /*
-   * SMS API fields.
+   * SMS API.
    */
   status?: string;
   stage?: string;
@@ -105,10 +123,8 @@ type ApiResponse<T = unknown> = {
   processor?: unknown;
 
   /*
-   * IMPORTANT:
-   *
-   * /api/sms/process returns the processing result
-   * at the TOP LEVEL under `result`.
+   * /api/sms/process returns the processor result
+   * at the TOP LEVEL.
    */
   result?: T;
 
@@ -157,10 +173,6 @@ type LoanRecord = {
 
   loanNumber?: string;
 };
-
-/* =========================================================
-   NOTIFICATIONS
-========================================================= */
 
 type NotificationRecord = {
   id?: string;
@@ -300,6 +312,68 @@ const DEFAULT_STATS: DashboardStats = {
 };
 
 /* =========================================================
+   API URL
+========================================================= */
+
+/**
+ * Resolve the SMS API URL at runtime.
+ *
+ * Browser:
+ *   /api/sms/process
+ *
+ * Android/native:
+ *   NEXT_PUBLIC_API_BASE_URL + /api/sms/process
+ *
+ * This means:
+ *
+ * LOCAL BROWSER
+ *   http://localhost:3000/api/sms/process
+ *
+ * PRODUCTION BROWSER
+ *   https://your-domain/api/sms/process
+ *
+ * ANDROID
+ *   https://your-deployment/api/sms/process
+ */
+function getSmsProcessUrl(): string {
+  const base =
+    typeof process !==
+      "undefined"
+      ? process.env
+          .NEXT_PUBLIC_API_BASE_URL
+      : undefined;
+
+  const cleanBase =
+    typeof base === "string"
+      ? base.trim().replace(
+          /\/+$/,
+          "",
+        )
+      : "";
+
+  /*
+   * Explicit environment configuration wins.
+   */
+  if (cleanBase) {
+    return `${cleanBase}/api/sms/process`;
+  }
+
+  /*
+   * Normal browser/PWA.
+   *
+   * Relative requests remain same-origin.
+   */
+  if (
+    typeof window !==
+    "undefined"
+  ) {
+    return `${window.location.origin}/api/sms/process`;
+  }
+
+  return "/api/sms/process";
+}
+
+/* =========================================================
    SAFE HELPERS
 ========================================================= */
 
@@ -367,7 +441,9 @@ function formatRelativeTime(
   }
 
   const timestamp =
-    new Date(value).getTime();
+    new Date(
+      value,
+    ).getTime();
 
   if (
     !Number.isFinite(
@@ -461,9 +537,18 @@ function formatSmsDate(
     return "Unknown date";
   }
 
-  return new Date(
-    date,
-  ).toLocaleString(
+  const parsed =
+    new Date(date);
+
+  if (
+    Number.isNaN(
+      parsed.getTime(),
+    )
+  ) {
+    return "Unknown date";
+  }
+
+  return parsed.toLocaleString(
     "en-KE",
     {
       dateStyle: "medium",
@@ -547,6 +632,13 @@ function getSmsKey(
 function looksLikeGeoShuaBankSms(
   body: string,
 ): boolean {
+  if (
+    typeof body !==
+    "string"
+  ) {
+    return false;
+  }
+
   return (
     /\bConfirmed\./i.test(
       body,
@@ -563,12 +655,6 @@ function looksLikeGeoShuaBankSms(
   );
 }
 
-/**
- * Runtime-safe transaction type guard.
- *
- * This avoids TypeScript narrowing errors when
- * values come from JSON.
- */
 function isSmsTransactionType(
   value: unknown,
 ): value is
@@ -583,12 +669,15 @@ function isSmsTransactionType(
 }
 
 /**
- * The SMS API currently returns the processor result
- * at the top level:
+ * The API returns:
  *
  * {
  *   success: true,
- *   result: {...}
+ *   result: {
+ *     status: "processed",
+ *     type: "savings" | "loan",
+ *     ...
+ *   }
  * }
  */
 function getSmsResult(
@@ -684,9 +773,9 @@ export default function DashboardPage() {
     );
 
   const [activities, setActivities] =
-    useState<DashboardActivity[]>(
-      [],
-    );
+    useState<
+      DashboardActivity[]
+    >([]);
 
   const [loading, setLoading] =
     useState(true);
@@ -731,9 +820,6 @@ export default function DashboardPage() {
       null,
     );
 
-  /*
-   * Browser timers return numbers.
-   */
   const smsTimer =
     useRef<number | null>(
       null,
@@ -745,8 +831,8 @@ export default function DashboardPage() {
     );
 
   /*
-   * SMS keys successfully handled during the current
-   * dashboard lifecycle.
+   * Prevent duplicate local submissions during the
+   * current dashboard lifecycle.
    */
   const processedSmsKeys =
     useRef(
@@ -828,14 +914,13 @@ export default function DashboardPage() {
         setSmsHistory(
           (
             previous,
-          ) =>
-            [
-              activity,
-              ...previous,
-            ].slice(
-              0,
-              MAX_SMS_HISTORY,
-            ),
+          ) => [
+            activity,
+            ...previous,
+          ].slice(
+            0,
+            MAX_SMS_HISTORY,
+          ),
         );
       },
       [],
@@ -882,10 +967,8 @@ export default function DashboardPage() {
                   {
                     method:
                       "GET",
-
                     cache:
                       "no-store",
-
                     headers: {
                       Accept:
                         "application/json",
@@ -898,10 +981,8 @@ export default function DashboardPage() {
                   {
                     method:
                       "GET",
-
                     cache:
                       "no-store",
-
                     headers: {
                       Accept:
                         "application/json",
@@ -914,10 +995,8 @@ export default function DashboardPage() {
                   {
                     method:
                       "GET",
-
                     cache:
                       "no-store",
-
                     headers: {
                       Accept:
                         "application/json",
@@ -930,10 +1009,8 @@ export default function DashboardPage() {
                   {
                     method:
                       "GET",
-
                     cache:
                       "no-store",
-
                     headers: {
                       Accept:
                         "application/json",
@@ -1537,7 +1614,7 @@ export default function DashboardPage() {
           );
 
         /* -------------------------------------------------
-           ALREADY PROCESSED IN THIS SESSION
+           ALREADY PROCESSED
         ------------------------------------------------- */
 
         if (
@@ -1549,7 +1626,7 @@ export default function DashboardPage() {
         }
 
         /* -------------------------------------------------
-           BASIC VALIDATION
+           VALIDATION
         ------------------------------------------------- */
 
         if (
@@ -1571,7 +1648,7 @@ export default function DashboardPage() {
         }
 
         /* -------------------------------------------------
-           CLIENT-SIDE BANK SMS FILTER
+           CLIENT PRE-FILTER
         ------------------------------------------------- */
 
         if (
@@ -1580,12 +1657,7 @@ export default function DashboardPage() {
           )
         ) {
           /*
-           * This SMS is unrelated to the GEO-SHUA
-           * financial transaction format.
-           *
-           * Remember it for this dashboard lifecycle
-           * so the five-minute sweep does not repeatedly
-           * reconsider it.
+           * Unrelated messages are not financial failures.
            */
           processedSmsKeys.current.add(
             key,
@@ -1644,17 +1716,12 @@ export default function DashboardPage() {
         });
 
         try {
-          /*
-           * IMPORTANT:
-           *
-           * This deliberately uses the deployed API.
-           *
-           * Capacitor's localhost WebView must not be
-           * expected to resolve /api/sms/process itself.
-           */
+          const smsUrl =
+            getSmsProcessUrl();
+
           const response =
             await fetch(
-              SMS_PROCESS_URL,
+              smsUrl,
               {
                 method:
                   "POST",
@@ -1735,14 +1802,12 @@ export default function DashboardPage() {
 
               error:
                 data?.error ||
-                `HTTP ${response.status}`,
+                `HTTP ${response.status} from ${smsUrl}`,
             });
 
             /*
-             * Do NOT add the key here.
-             *
-             * A real transport/server failure may need
-             * to be retried by the next sweep.
+             * Leave unmarked so a transient failure can
+             * be retried on the next sweep.
              */
             return false;
           }
@@ -1780,10 +1845,6 @@ export default function DashboardPage() {
                 "The server did not accept the transaction.",
             });
 
-            /*
-             * Leave unmarked so a transient server failure
-             * can be retried later.
-             */
             return false;
           }
 
@@ -1806,7 +1867,27 @@ export default function DashboardPage() {
                 "ignored",
 
               message:
+                data.error ||
                 "Bank message ignored",
+
+              reference:
+                undefined,
+
+              amount:
+                undefined,
+
+              senderName:
+                undefined,
+
+              transactionType:
+                isSmsTransactionType(
+                  data.type,
+                )
+                  ? data.type
+                  : undefined,
+
+              accountNumber:
+                undefined,
 
               address:
                 sms.address,
@@ -1828,7 +1909,7 @@ export default function DashboardPage() {
           }
 
           /* -------------------------------------------------
-             GET PROCESSING RESULT
+             PROCESSING RESULT
           ------------------------------------------------- */
 
           const result =
@@ -1836,10 +1917,6 @@ export default function DashboardPage() {
               data,
             );
 
-          /*
-           * This should never happen for a successful
-           * financial processing response.
-           */
           if (
             !result
           ) {
@@ -1863,9 +1940,15 @@ export default function DashboardPage() {
                 data,
 
               error:
-                "The SMS API returned success but did not include a processing result.",
+                "The SMS API reported success but did not return the processor result.",
             });
 
+            /*
+             * Do not mark it processed.
+             *
+             * A malformed API response is not a successful
+             * financial completion.
+             */
             return false;
           }
 
@@ -1891,7 +1974,12 @@ export default function DashboardPage() {
             transaction?.senderName;
 
           /*
-           * Proper runtime narrowing.
+           * IMPORTANT:
+           *
+           * The FINAL transaction type is determined by
+           * processor.ts.
+           *
+           * parser.ts intentionally returns "unknown".
            */
           const transactionType =
             isSmsTransactionType(
@@ -1996,10 +2084,6 @@ export default function DashboardPage() {
                 data,
             });
 
-            /*
-             * Refresh authoritative dashboard data
-             * after the savings service completes.
-             */
             await loadDashboard(
               true,
             );
@@ -2054,10 +2138,6 @@ export default function DashboardPage() {
                 data,
             });
 
-            /*
-             * Refresh authoritative dashboard data
-             * after the loan service completes.
-             */
             await loadDashboard(
               true,
             );
@@ -2069,7 +2149,7 @@ export default function DashboardPage() {
           }
 
           /* -------------------------------------------------
-             UNKNOWN / UNEXPECTED RESULT
+             UNKNOWN / INVALID PROCESSOR RESULT
           ------------------------------------------------- */
 
           updateSmsActivity({
@@ -2104,18 +2184,15 @@ export default function DashboardPage() {
 
             error:
               data.error ||
-              "The server returned an unrecognized transaction type.",
+              "The processor returned an unrecognized transaction type.",
           });
 
-          /*
-           * Leave unmarked because this is not a successful
-           * financial completion.
-           */
           return false;
         } catch (error) {
-          /*
-           * Normal AbortController cancellation.
-           */
+          /* -------------------------------------------------
+             ABORT
+          ------------------------------------------------- */
+
           if (
             error instanceof
               DOMException &&
@@ -2130,6 +2207,21 @@ export default function DashboardPage() {
           ) {
             return false;
           }
+
+          /* -------------------------------------------------
+             NETWORK / FETCH ERROR
+          ------------------------------------------------- */
+
+          const message =
+            error instanceof
+              Error
+              ? error.message
+              : "Unable to communicate with the SMS processing server.";
+
+          console.error(
+            "SMS processing failed:",
+            error,
+          );
 
           updateSmsActivity({
             status:
@@ -2148,10 +2240,7 @@ export default function DashboardPage() {
               sms.body,
 
             error:
-              error instanceof
-                Error
-                ? error.message
-                : "Unable to communicate with the server.",
+              `${message} · ${getSmsProcessUrl()}`,
           });
 
           return false;
@@ -2170,10 +2259,6 @@ export default function DashboardPage() {
   const sweepSmsInbox =
     useCallback(
       async () => {
-        /*
-         * Never allow two inbox sweeps to run
-         * simultaneously.
-         */
         if (
           smsRunning.current
         ) {
@@ -2187,8 +2272,9 @@ export default function DashboardPage() {
         }
 
         /*
-         * Reading SMS is local, but posting financial
-         * transactions requires network connectivity.
+         * Reading SMS is local.
+         *
+         * Financial processing requires internet access.
          */
         if (
           typeof navigator !==
@@ -2257,10 +2343,7 @@ export default function DashboardPage() {
           }
 
           /*
-           * Process oldest first.
-           *
-           * This is important when several financial SMS
-           * messages are present at the same time.
+           * Oldest first.
            */
           const candidates =
             messages
@@ -2271,6 +2354,9 @@ export default function DashboardPage() {
                   sms &&
                   typeof sms.body ===
                     "string" &&
+                  sms.body.trim()
+                    .length >
+                    0 &&
                   typeof sms.date ===
                     "number" &&
                   Number.isFinite(
@@ -2333,9 +2419,10 @@ export default function DashboardPage() {
           }
 
           /*
-           * After the sweep, return to an idle state only
-           * if no meaningful final result is already being
-           * displayed.
+           * Keep useful final state visible.
+           *
+           * Only return to idle when the sweep ended
+           * without a meaningful terminal state.
            */
           if (
             !financialChange
@@ -2362,9 +2449,6 @@ export default function DashboardPage() {
                     (
                       current,
                     ) => {
-                      /*
-                       * Preserve useful diagnostics.
-                       */
                       if (
                         [
                           "savings",
@@ -2444,7 +2528,7 @@ export default function DashboardPage() {
     );
 
   /* =======================================================
-     INITIAL DASHBOARD + SMS MONITOR
+     INITIAL LOAD + SMS MONITOR
   ======================================================= */
 
   useEffect(() => {
@@ -2454,18 +2538,15 @@ export default function DashboardPage() {
       return;
     }
 
-    /*
-     * Dashboard loads immediately.
-     */
     void loadDashboard();
 
     /*
-     * SMS inbox is scanned independently.
+     * Scan immediately.
      */
     void sweepSmsInbox();
 
     /*
-     * Reconciliation sweep while dashboard remains open.
+     * Periodic reconciliation.
      */
     smsTimer.current =
       window.setInterval(
@@ -2475,9 +2556,6 @@ export default function DashboardPage() {
         SMS_SWEEP_INTERVAL_MS,
       );
 
-    /*
-     * Retry a waiting sync when connectivity returns.
-     */
     const handleOnline =
       () => {
         void sweepSmsInbox();
@@ -2505,6 +2583,11 @@ export default function DashboardPage() {
         "online",
         handleOnline,
       );
+
+      smsAbortController.current?.abort();
+
+      smsAbortController.current =
+        null;
     };
   }, [
     mounted,
@@ -3042,7 +3125,8 @@ function SmsStatusBar({
     Boolean(
       activity.body ||
         activity.response ||
-        activity.error,
+        activity.error ||
+        activity.reference,
     );
 
   return (
@@ -3148,7 +3232,7 @@ function SmsStatusBar({
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.6fr)]">
 
             {/* =================================================
-                LEFT SIDE
+                LEFT
             ================================================= */}
 
             <div className="min-w-0">
@@ -3255,7 +3339,7 @@ function SmsStatusBar({
             </div>
 
             {/* =================================================
-                RIGHT SIDE
+                RIGHT
             ================================================= */}
 
             {activity.response !==
@@ -3279,7 +3363,7 @@ function SmsStatusBar({
           </div>
 
           {/* =================================================
-              SMS HISTORY
+              HISTORY
           ================================================= */}
 
           {history.length >
