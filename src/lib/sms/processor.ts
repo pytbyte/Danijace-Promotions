@@ -72,8 +72,8 @@
  *
  * The sender name identifies the GEO-SHUA member.
  *
- * The bank transaction reference is passed unchanged as
- * the external financial transaction reference.
+ * The bank transaction reference is passed as the external
+ * financial transaction reference.
  *
  * Financial persistence, idempotency, balances and MongoDB
  * transactions remain inside the existing domain services.
@@ -118,30 +118,34 @@ export type ProcessIncomingTransactionOptions = {
   recordedBy?: IncomingTransactionActor;
 };
 
+type ResolvedMember = {
+  id: string;
+  name: string;
+};
+
+type ResolvedLoan =
+  Awaited<
+    ReturnType<typeof getLoans>
+  >["loans"][number];
+
 export type ProcessIncomingTransactionResult =
   | {
       status: "processed";
       type: "savings";
       transaction: ParsedBankSms;
-      member: {
-        id: string;
-        name: string;
-      };
+      member: ResolvedMember;
       savingsTransaction: SavingsTransaction;
     }
   | {
       status: "processed";
       type: "loan";
       transaction: ParsedBankSms;
-      member: {
-        id: string;
-        name: string;
-      };
-      loan: Awaited<
-        ReturnType<typeof getLoans>
-      >["loans"][number];
+      member: ResolvedMember;
+      loan: ResolvedLoan;
       repayment: Awaited<
-        ReturnType<typeof createLoanRepayment>
+        ReturnType<
+          typeof createLoanRepayment
+        >
       >;
     };
 
@@ -150,9 +154,17 @@ export type ProcessIncomingTransactionResult =
 ========================================================= */
 
 /**
- * Normalize names for EXACT member matching.
+ * Normalize names before comparison.
  *
- * We do not perform fuzzy matching.
+ * Examples:
+ *
+ *   Francis Mwangi Kamau
+ *   FRANCIS MWANGI KAMAU
+ *   Francis  Mwangi   Kamau
+ *
+ * all become:
+ *
+ *   FRANCIS MWANGI KAMAU
  */
 function normalizeName(
   value: string,
@@ -176,15 +188,19 @@ function normalizeName(
 ========================================================= */
 
 /**
- * Build the application's canonical member name.
+ * Build the canonical member name from the existing
+ * member structure.
  *
- * GEO-SHUA members are normally composed from:
+ * Your current member service stores names primarily as:
  *
  *   firstName
  *   middleName
  *   lastName
  *
- * Older records may also expose name/fullName.
+ * Older records may also expose:
+ *
+ *   name
+ *   fullName
  */
 function getMemberName(
   member: {
@@ -195,20 +211,21 @@ function getMemberName(
     fullName?: string;
   },
 ): string {
-  const composed = [
-    member.firstName,
-    member.middleName,
-    member.lastName,
-  ]
-    .filter(
-      (
-        value,
-      ): value is string =>
-        typeof value === "string" &&
-        value.trim().length > 0,
-    )
-    .join(" ")
-    .trim();
+  const composed =
+    [
+      member.firstName,
+      member.middleName,
+      member.lastName,
+    ]
+      .filter(
+        (
+          value,
+        ): value is string =>
+          typeof value === "string" &&
+          value.trim().length > 0,
+      )
+      .join(" ")
+      .trim();
 
   if (composed) {
     return composed;
@@ -236,22 +253,49 @@ function getMemberName(
 ========================================================= */
 
 /**
- * Resolve the GEO-SHUA member from the bank SMS sender name.
+ * Resolve a GEO-SHUA member from the sender name contained
+ * in the bank SMS.
  *
- * IMPORTANT:
+ * IMPORTANT
+ * ---------------------------------------------------------
  *
- * - No fuzzy matching
- * - No partial matching
- * - No guessing
- * - Multiple exact matches are blocked
+ * getMembers() searches individual fields:
+ *
+ *   firstName
+ *   middleName
+ *   lastName
+ *   phone
+ *   email
+ *   etc.
+ *
+ * Therefore asking it to search for:
+ *
+ *   "FRANCIS MWANGI KAMAU"
+ *
+ * can return zero records even when the member exists as:
+ *
+ *   firstName  = FRANCIS
+ *   middleName = MWANGI
+ *   lastName   = KAMAU
+ *
+ * We therefore:
+ *
+ * 1. split the bank name into tokens;
+ * 2. search the existing member service using each token;
+ * 3. collect candidates;
+ * 4. perform an exact normalized FULL NAME comparison.
+ *
+ * There is still:
+ *
+ * - no fuzzy matching
+ * - no partial financial matching
+ * - no guessing
  */
 async function resolveMemberBySmsName(
   senderName: string,
-) {
+): Promise<ResolvedMember> {
   const cleanName =
-    normalizeName(
-      senderName,
-    );
+    normalizeName(senderName);
 
   if (!cleanName) {
     throw new Error(
@@ -259,37 +303,117 @@ async function resolveMemberBySmsName(
     );
   }
 
+  /* -------------------------------------------------------
+     NAME TOKENS
+  ------------------------------------------------------- */
+
+  const tokens =
+    Array.from(
+      new Set(
+        cleanName
+          .split(" ")
+          .map(
+            (token) =>
+              token.trim(),
+          )
+          .filter(Boolean),
+      ),
+    );
+
+  if (tokens.length === 0) {
+    throw new Error(
+      "Bank SMS sender name is required.",
+    );
+  }
+
+  /* -------------------------------------------------------
+     COLLECT MEMBER CANDIDATES
+  ------------------------------------------------------- */
+
+  type Candidate =
+    Awaited<
+      ReturnType<typeof getMembers>
+    >["members"][number];
+
+  const candidates =
+    new Map<
+      string,
+      Candidate
+    >();
+
   /*
-   * Ask the existing member service for likely matches.
+   * Search using:
+   *
+   *   1. complete sender name
+   *   2. each individual name token
+   *
+   * The complete search helps older/legacy records while
+   * token searches handle the normal first/middle/last-name
+   * structure.
    */
-  const result =
-    await getMembers({
-      page: 1,
-      limit: 100,
-      search: senderName,
-    });
+  const searchTerms =
+    Array.from(
+      new Set([
+        senderName,
+        ...tokens,
+      ]),
+    );
+
+  for (
+    const searchTerm of searchTerms
+  ) {
+    const result =
+      await getMembers({
+        page: 1,
+        limit: 100,
+        search: searchTerm,
+      });
+
+    for (
+      const candidate of
+        result.members || []
+    ) {
+      const memberId =
+        typeof candidate._id ===
+        "string"
+          ? candidate._id.trim()
+          : "";
+
+      if (!memberId) {
+        continue;
+      }
+
+      candidates.set(
+        memberId,
+        candidate,
+      );
+    }
+  }
+
+  /* -------------------------------------------------------
+     NO CANDIDATES
+  ------------------------------------------------------- */
 
   if (
-    !result.members ||
-    result.members.length === 0
+    candidates.size === 0
   ) {
     throw new Error(
       `No GEO-SHUA member could be found for bank sender "${senderName}".`,
     );
   }
 
-  /*
-   * getMembers() search is intentionally broader.
-   *
-   * We therefore perform our own exact normalized
-   * comparison before any financial operation.
-   */
+  /* -------------------------------------------------------
+     EXACT FULL-NAME MATCH
+  ------------------------------------------------------- */
+
   const exactMatches =
-    result.members.filter(
-      (member) => {
-        const memberName =
+    Array.from(
+      candidates.values(),
+    ).filter(
+      (candidate) => {
+        const candidateName =
           getMemberName(
-            member as {
+            candidate as {
               firstName?: string;
               middleName?: string;
               lastName?: string;
@@ -298,25 +422,42 @@ async function resolveMemberBySmsName(
             },
           );
 
+        if (!candidateName) {
+          return false;
+        }
+
         return (
           normalizeName(
-            memberName,
+            candidateName,
           ) === cleanName
         );
       },
     );
 
+  /* -------------------------------------------------------
+     NO EXACT MATCH
+  ------------------------------------------------------- */
+
   if (
     exactMatches.length === 0
   ) {
+    /*
+     * This is deliberately different from the
+     * "no candidates" error.
+     *
+     * It means the member service found people matching
+     * some part of the name, but none matched the complete
+     * registered name exactly.
+     */
     throw new Error(
       `Bank sender "${senderName}" did not exactly match a registered GEO-SHUA member.`,
     );
   }
 
-  /*
-   * Never guess between two people with the same name.
-   */
+  /* -------------------------------------------------------
+     MULTIPLE EXACT MATCHES
+  ------------------------------------------------------- */
+
   if (
     exactMatches.length > 1
   ) {
@@ -324,6 +465,10 @@ async function resolveMemberBySmsName(
       `Multiple GEO-SHUA members match bank sender "${senderName}". Automatic processing is blocked.`,
     );
   }
+
+  /* -------------------------------------------------------
+     RESOLVED MEMBER
+  ------------------------------------------------------- */
 
   const member =
     exactMatches[0];
@@ -335,7 +480,8 @@ async function resolveMemberBySmsName(
   }
 
   const memberId =
-    typeof member._id === "string"
+    typeof member._id ===
+    "string"
       ? member._id.trim()
       : "";
 
@@ -345,19 +491,26 @@ async function resolveMemberBySmsName(
     );
   }
 
-  /*
-   * Financial SMS processing should only operate on
-   * active members.
-   */
+  /* -------------------------------------------------------
+     MEMBER STATUS
+  ------------------------------------------------------- */
+
   if (
-    typeof member.status === "string" &&
-    member.status.toLowerCase() !==
+    typeof member.status ===
+      "string" &&
+    member.status
+      .trim()
+      .toLowerCase() !==
       "active"
   ) {
     throw new Error(
       `Member "${senderName}" is not active and cannot receive automatic financial processing.`,
     );
   }
+
+  /* -------------------------------------------------------
+     CANONICAL NAME
+  ------------------------------------------------------- */
 
   const canonicalName =
     getMemberName(
@@ -372,7 +525,7 @@ async function resolveMemberBySmsName(
 
   if (!canonicalName) {
     throw new Error(
-      `Resolved member "${senderName}" has no valid member name.`,
+      `Resolved member "${senderName}" has no valid registered name.`,
     );
   }
 
@@ -387,7 +540,13 @@ async function resolveMemberBySmsName(
 ========================================================= */
 
 /**
- * Every GEO-SHUA member has exactly one fixed savings account.
+ * Every GEO-SHUA member should already have exactly one
+ * fixed savings account because createMember() creates it
+ * automatically.
+ *
+ * We retrieve that existing account here.
+ *
+ * We DO NOT create a second account.
  */
 async function resolveSavingsAccount(
   memberId: string,
@@ -429,14 +588,14 @@ async function resolveSavingsAccount(
 ========================================================= */
 
 /**
- * Find exactly one active loan belonging to the member.
+ * Find exactly one active loan for the resolved member.
  *
- * We deliberately do not guess when multiple loans exist.
+ * We never choose between multiple loans.
  */
 async function resolveActiveLoan(
   memberId: string,
   memberName: string,
-) {
+): Promise<ResolvedLoan> {
   const result =
     await getLoans({
       page: 1,
@@ -490,44 +649,45 @@ async function resolveActiveLoan(
 }
 
 /* =========================================================
-   SAVE INCOMING SAVINGS TRANSACTION
+   PROCESS SAVINGS
 ========================================================= */
 
 /**
- * Pass the parsed transaction to the EXISTING savings
- * financial service.
+ * Pass the parsed transaction to the existing savings
+ * domain service.
  *
- * No MongoDB writes happen here directly.
+ * This function performs NO MongoDB writes itself.
  */
 async function processSavingsTransaction(
   transaction: ParsedBankSms,
-  member: {
-    id: string;
-    name: string;
-  },
+  member: ResolvedMember,
   options: ProcessIncomingTransactionOptions,
-) {
+): Promise<{
+  savingsTransaction: SavingsTransaction;
+}> {
   const account =
     await resolveSavingsAccount(
       member.id,
     );
 
   /*
-   * The existing savings service already supports:
-   *
-   * source
-   * reference
-   * smsId
-   * sourceReference
-   * transactionAt
-   * recordedBy
-   *
-   * We simply map the parsed bank transaction into
-   * that existing input.
+   * SMS is already a supported savings transaction source.
    */
   const source =
     "sms" as SavingsTransaction["source"];
 
+  /*
+   * IMPORTANT:
+   *
+   * createSavingsDeposit() owns:
+   *
+   * - duplicate detection
+   * - ledger insertion
+   * - account validation
+   * - balance calculation
+   * - cached balance update
+   * - MongoDB transaction handling
+   */
   const savingsTransaction =
     await createSavingsDeposit({
       savingsAccountId:
@@ -545,39 +705,35 @@ async function processSavingsTransaction(
       source,
 
       /*
-       * Bank reference is the primary external
-       * transaction identity.
+       * Immutable bank transaction reference.
        */
       reference:
         transaction.reference,
 
       /*
-       * Additional deterministic SMS identity.
+       * Deterministic SMS identifier.
        *
-       * The bank reference remains the authoritative
-       * external financial reference.
+       * The bank reference remains the primary financial
+       * identity.
        */
       smsId:
         `${transaction.reference}:${transaction.smsDate}`,
 
       /*
-       * Preserve the bank transaction reference as
-       * the source reference too.
+       * Preserve the external bank reference.
        */
       sourceReference:
         transaction.reference,
 
+      /*
+       * Bank transaction date.
+       */
       transactionAt:
         transaction.transactionDate.toISOString(),
 
       /*
-       * IMPORTANT:
-       *
-       * SavingsTransactionRecordedBy does NOT contain
-       * an "id" property.
-       *
-       * Therefore only pass the fields supported by
-       * the existing savings domain type.
+       * Your current SavingsTransactionRecordedBy type
+       * contains name/email, not id.
        */
       ...(options.recordedBy
         ? {
@@ -598,29 +754,43 @@ async function processSavingsTransaction(
 }
 
 /* =========================================================
-   PROCESS INCOMING LOAN PAYMENT
+   PROCESS LOAN
 ========================================================= */
 
 /**
- * Pass the parsed transaction to the EXISTING loan
+ * Pass the parsed transaction to the existing loan
  * financial service.
  *
- * No MongoDB writes happen here directly.
+ * This function performs NO MongoDB writes itself.
  */
 async function processLoanTransaction(
   transaction: ParsedBankSms,
-  member: {
-    id: string;
-    name: string;
-  },
+  member: ResolvedMember,
   options: ProcessIncomingTransactionOptions,
-) {
+): Promise<{
+  loan: ResolvedLoan;
+  repayment: Awaited<
+    ReturnType<
+      typeof createLoanRepayment
+    >
+  >;
+}> {
   const loan =
     await resolveActiveLoan(
       member.id,
       member.name,
     );
 
+  /*
+   * createLoanRepayment() owns:
+   *
+   * - idempotency
+   * - repayment insertion
+   * - outstanding balance calculation
+   * - loan projection update
+   * - audit
+   * - MongoDB transaction handling
+   */
   const repayment =
     await createLoanRepayment({
       loanId:
@@ -670,26 +840,27 @@ async function processLoanTransaction(
 /**
  * Process one parsed/classified bank transaction.
  *
- * This function intentionally remains small.
+ * This is intentionally an orchestration function.
  *
- * It does NOT implement:
+ * It does NOT implement financial persistence.
  *
- * - MongoDB writes
- * - savings ledger logic
- * - loan ledger logic
- * - balance calculations
- * - duplicate indexes
- * - repayment calculations
+ * It simply:
  *
- * Existing financial services remain responsible for all of
- * those operations.
+ *   1. validates the parser result
+ *   2. rejects unknown destinations
+ *   3. resolves the GEO-SHUA member
+ *   4. routes savings → createSavingsDeposit()
+ *   5. routes loan → createLoanRepayment()
+ *
+ * Existing services remain the only financial persistence
+ * boundaries.
  */
 export async function processIncomingTransaction(
   parsedTransaction: ParsedBankSms,
   options: ProcessIncomingTransactionOptions = {},
 ): Promise<ProcessIncomingTransactionResult> {
   /* =======================================================
-     VALIDATE INPUT
+     BASIC VALIDATION
   ======================================================= */
 
   if (
@@ -734,6 +905,16 @@ export async function processIncomingTransaction(
   }
 
   if (
+    typeof parsedTransaction.accountNumber !==
+      "string" ||
+    !parsedTransaction.accountNumber.trim()
+  ) {
+    throw new Error(
+      "Parsed bank transaction account number is required.",
+    );
+  }
+
+  if (
     parsedTransaction.transactionType !==
       "savings" &&
     parsedTransaction.transactionType !==
@@ -758,7 +939,7 @@ export async function processIncomingTransaction(
   }
 
   /* =======================================================
-     ROUTE UNKNOWN ACCOUNT BEFORE MEMBER LOOKUP
+     UNKNOWN DESTINATION
   ======================================================= */
 
   if (
@@ -786,6 +967,10 @@ export async function processIncomingTransaction(
   switch (
     parsedTransaction.transactionType
   ) {
+    /* =====================================================
+       SAVINGS
+    ===================================================== */
+
     case "savings": {
       const {
         savingsTransaction,
@@ -811,6 +996,10 @@ export async function processIncomingTransaction(
         savingsTransaction,
       };
     }
+
+    /* =====================================================
+       LOAN
+    ===================================================== */
 
     case "loan": {
       const {
@@ -840,6 +1029,10 @@ export async function processIncomingTransaction(
         repayment,
       };
     }
+
+    /* =====================================================
+       SAFETY FALLBACK
+    ===================================================== */
 
     default:
       throw new Error(
