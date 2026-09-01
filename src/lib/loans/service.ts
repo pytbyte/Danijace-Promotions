@@ -27,7 +27,7 @@
  * 11. transactionReference is the immutable idempotency key.
  *
  * 12. A bank SMS/payment adapter should resolve the member and loan
- *     BEFORE calling createLoanRepayment().    
+ *     BEFORE calling createLoanRepayment().
  *
  * 13. The sender's M-Pesa name is NOT used to identify a member.
  *
@@ -49,22 +49,6 @@
  *
  * This service expects member/loan resolution to happen before the
  * repayment reaches this layer.
- *
- * For example, the bank-SMS ingestion layer should:
- *
- *   bank SMS
- *      ↓
- *   parse transaction
- *      ↓
- *   identify GEO-SHUA account number
- *      ↓
- *   resolve registered member
- *      ↓
- *   resolve savings OR loan account
- *      ↓
- *   createLoanRepayment()
- *
- * This service is the financial persistence boundary.
  */
 
 import {
@@ -101,7 +85,8 @@ import {
 ========================================================= */
 
 const DB_NAME =
-  process.env.MONGODB_DB || "geo-shua";
+  process.env.MONGODB_DB ||
+  "geo-shua";
 
 const LOANS_COLLECTION =
   "loans";
@@ -173,7 +158,9 @@ type LoanAuditDocument = Omit<
 
 type CounterDocument = {
   _id: string;
+
   sequence: number;
+
   updatedAt: Date;
 };
 
@@ -183,32 +170,49 @@ type CounterDocument = {
 
 export type LoanListOptions = {
   page?: number;
+
   limit?: number;
+
   search?: string;
+
   status?: Loan["status"];
+
   type?: Loan["type"];
+
   memberId?: string;
 };
 
 export type PaginatedLoans = {
   loans: Loan[];
+
   total: number;
+
   page: number;
+
   limit: number;
+
   totalPages: number;
 };
 
 export type LoanSummary = {
   totalLoans: number;
+
   activeLoans: number;
+
   completedLoans: number;
+
   pendingLoans: number;
+
   cancelledLoans: number;
 
   totalPrincipal: number;
+
   totalInterest: number;
+
   totalFines: number;
+
   totalPaid: number;
+
   totalOutstanding: number;
 };
 
@@ -217,14 +221,22 @@ export type LoanSummary = {
 ========================================================= */
 
 type LoanCollections = {
-  client: Awaited<typeof clientPromise>;
+  client: Awaited<
+    typeof clientPromise
+  >;
+
   db: Db;
 
   loans: Collection<LoanDocument>;
+
   settings: Collection<LoanSettingsDocument>;
+
   repayments: Collection<LoanRepaymentDocument>;
+
   fines: Collection<LoanFineDocument>;
+
   audit: Collection<LoanAuditDocument>;
+
   counters: Collection<CounterDocument>;
 };
 
@@ -237,6 +249,7 @@ async function getCollections(): Promise<LoanCollections> {
 
   return {
     client,
+
     db,
 
     loans:
@@ -282,7 +295,9 @@ function createObjectId(
     typeof id !== "string" ||
     !ObjectId.isValid(id)
   ) {
-    throw new Error("Invalid ID.");
+    throw new Error(
+      "Invalid ID.",
+    );
   }
 
   return new ObjectId(id);
@@ -292,7 +307,8 @@ function isDuplicateKeyError(
   error: unknown,
 ): boolean {
   return (
-    typeof error === "object" &&
+    typeof error ===
+      "object" &&
     error !== null &&
     "code" in error &&
     (
@@ -317,24 +333,32 @@ function normalizeActor(
 ): LoanActor {
   if (
     !actor ||
-    typeof actor !== "object"
+    typeof actor !==
+      "object"
   ) {
     return SYSTEM_ACTOR;
   }
 
   const name =
-    typeof actor.name === "string"
-      ? normalizeText(actor.name)
+    typeof actor.name ===
+    "string"
+      ? normalizeText(
+          actor.name,
+        )
       : "";
 
   const email =
-    typeof actor.email === "string"
+    typeof actor.email ===
+    "string"
       ? actor.email
           .trim()
           .toLowerCase()
       : "";
 
-  if (!name || !email) {
+  if (
+    !name ||
+    !email
+  ) {
     throw new Error(
       "A valid actor name and email are required.",
     );
@@ -350,18 +374,19 @@ function money(
   value: number,
 ): number {
   if (
-    !Number.isFinite(value)
+    !Number.isFinite(
+      value,
+    )
   ) {
     throw new Error(
       "Invalid monetary value.",
     );
   }
 
-  return (
-    Math.round(
-      (value + Number.EPSILON) * 100,
-    ) / 100
-  );
+  return Math.round(
+    (value + Number.EPSILON) *
+      100,
+  ) / 100;
 }
 
 function addDays(
@@ -374,7 +399,8 @@ function addDays(
     );
 
   result.setDate(
-    result.getDate() + days,
+    result.getDate() +
+      days,
   );
 
   return result;
@@ -403,10 +429,16 @@ function dayKey(
     date.getFullYear(),
     String(
       date.getMonth() + 1,
-    ).padStart(2, "0"),
+    ).padStart(
+      2,
+      "0",
+    ),
     String(
       date.getDate(),
-    ).padStart(2, "0"),
+    ).padStart(
+      2,
+      "0",
+    ),
   ].join("-");
 }
 
@@ -423,7 +455,8 @@ function isValidDate(
   value: Date,
 ): boolean {
   return (
-    value instanceof Date &&
+    value instanceof
+      Date &&
     !Number.isNaN(
       value.getTime(),
     )
@@ -445,8 +478,10 @@ function toLoan(
 
   return {
     ...document,
+
     id:
       document._id.toString(),
+
     memberId:
       document.memberId.toString(),
   };
@@ -463,6 +498,7 @@ function toSettings(
 
   return {
     ...document,
+
     id:
       document._id.toString(),
   };
@@ -479,10 +515,13 @@ function toRepayment(
 
   return {
     ...document,
+
     id:
       document._id.toString(),
+
     loanId:
       document.loanId.toString(),
+
     memberId:
       document.memberId.toString(),
   };
@@ -499,10 +538,13 @@ function toFine(
 
   return {
     ...document,
+
     id:
       document._id.toString(),
+
     loanId:
       document.loanId.toString(),
+
     memberId:
       document.memberId.toString(),
   };
@@ -519,8 +561,10 @@ function toAudit(
 
   return {
     ...document,
+
     id:
       document._id.toString(),
+
     loanId:
       document.loanId.toString(),
   };
@@ -547,6 +591,7 @@ export async function ensureLoanIndexes(): Promise<void> {
       },
       {
         unique: true,
+
         name:
           "loans_loanNumber_unique",
       },
@@ -580,6 +625,7 @@ export async function ensureLoanIndexes(): Promise<void> {
       },
       {
         unique: true,
+
         name:
           "loanRepayments_transactionReference_unique",
       },
@@ -616,6 +662,7 @@ export async function ensureLoanIndexes(): Promise<void> {
       },
       {
         unique: true,
+
         name:
           "loanFines_loan_date_unique",
       },
@@ -667,7 +714,8 @@ async function getNextSequence(
       },
       {
         $inc: {
-          sequence: 1,
+          sequence:
+            1,
         },
 
         $set: {
@@ -677,7 +725,10 @@ async function getNextSequence(
       },
       {
         upsert: true,
-        returnDocument: "after",
+
+        returnDocument:
+          "after",
+
         session,
       },
     );
@@ -702,7 +753,9 @@ async function generateLoanNumber(
 
   return (
     "LOAN-" +
-    String(sequence).padStart(
+    String(
+      sequence,
+    ).padStart(
       6,
       "0",
     )
@@ -762,8 +815,11 @@ export async function getLoanSettings(): Promise<LoanSettings> {
       {},
       {
         sort: {
-          createdAt: -1,
-          _id: -1,
+          createdAt:
+            -1,
+
+          _id:
+            -1,
         },
       },
     );
@@ -780,8 +836,10 @@ export async function getLoanSettings(): Promise<LoanSettings> {
   const document:
     LoanSettingsDocument = {
     ...DEFAULT_SETTINGS,
+
     createdAt:
       now,
+
     updatedAt:
       now,
   };
@@ -793,6 +851,7 @@ export async function getLoanSettings(): Promise<LoanSettings> {
 
   return toSettings({
     ...document,
+
     _id:
       result.insertedId,
   });
@@ -825,9 +884,12 @@ export async function updateLoanSettings(
 
   const {
     id: _id,
-    createdAt: _createdAt,
-    updatedAt: _updatedAt,
-    updatedBy: _updatedBy,
+    createdAt:
+      _createdAt,
+    updatedAt:
+      _updatedAt,
+    updatedBy:
+      _updatedBy,
     ...safeChanges
   } = changes;
 
@@ -858,8 +920,10 @@ export async function updateLoanSettings(
       {
         $set: {
           ...safeChanges,
+
           updatedBy:
             actor,
+
           updatedAt:
             now,
         },
@@ -867,7 +931,8 @@ export async function updateLoanSettings(
     );
 
   if (
-    result.matchedCount !== 1
+    result.matchedCount !==
+    1
   ) {
     throw new Error(
       "Loan settings could not be found.",
@@ -897,19 +962,29 @@ export async function updateLoanSettings(
 
 type MemberForLoan = {
   _id: ObjectId;
+
   membershipNumber: string;
+
   firstName: string;
+
   middleName?: string;
+
   lastName: string;
+
   status: string;
 };
 
 type SavingsAccountForLoan = {
   _id?: ObjectId;
+
   memberId: ObjectId;
+
   accountNumber: string;
+
   accountType: string;
+
   balance: number;
+
   status: string;
 };
 
@@ -1018,6 +1093,7 @@ async function getLoanPaidTotal(
     await repayments
       .aggregate<{
         _id: null;
+
         total: number;
       }>(
         [
@@ -1029,7 +1105,8 @@ async function getLoanPaidTotal(
 
           {
             $group: {
-              _id: null,
+              _id:
+                null,
 
               total: {
                 $sum:
@@ -1065,6 +1142,7 @@ async function getLoanFineTotal(
     await fines
       .aggregate<{
         _id: null;
+
         total: number;
       }>(
         [
@@ -1076,7 +1154,8 @@ async function getLoanFineTotal(
 
           {
             $group: {
-              _id: null,
+              _id:
+                null,
 
               total: {
                 $sum:
@@ -1103,12 +1182,6 @@ async function getLoanFineTotal(
    RECONCILE LOAN PROJECTION
 ========================================================= */
 
-/**
- * Reconcile the maintained loan totals from the immutable
- * ledgers.
- *
- * This function does NOT create financial records.
- */
 async function reconcileLoan(
   loanId: ObjectId,
   session?: ClientSession,
@@ -1197,9 +1270,13 @@ async function reconcileLoan(
       {
         $set: {
           amountPaid,
+
           totalFines,
+
           outstandingBalance,
+
           status,
+
           updatedAt:
             new Date(),
         },
@@ -1241,7 +1318,10 @@ async function writeAudit(
   loanNumber: string,
   action: LoanAuditEntry["action"],
   actor: LoanActor,
-  details?: Record<string, unknown>,
+  details?: Record<
+    string,
+    unknown
+  >,
   session?: ClientSession,
 ): Promise<void> {
   const {
@@ -1322,242 +1402,232 @@ export async function createLoan(
     client.startSession();
 
   try {
-    let createdLoan:
-      | Loan
-      | null =
-      null;
-
-    await session.withTransaction(
-      async () => {
-        const member =
-          await getMemberForLoan(
-            input.memberId,
-            session,
-          );
-
-        if (
-          member.status !==
-          "active"
-        ) {
-          throw new Error(
-            "Only active members can receive loans.",
-          );
-        }
-
-        const settings =
-          await getLoanSettings();
-
-        if (
-          input.type ===
-            "emergency" &&
-          !settings.emergencyLoansEnabled
-        ) {
-          throw new Error(
-            "Emergency loans are currently disabled.",
-          );
-        }
-
-        if (
-          input.type ===
-            "regular" &&
-          !settings.regularLoansEnabled
-        ) {
-          throw new Error(
-            "Regular loans are currently disabled.",
-          );
-        }
-
-        const {
-          loans,
-        } =
-          await getCollections();
-
-        const existing =
-          await loans.findOne(
-            {
-              memberId:
-                member._id,
-
-              status: {
-                $in: [
-                  "pending",
-                  "active",
-                ],
-              },
-            },
-            {
-              session,
-            },
-          );
-
-        if (existing) {
-          throw new Error(
-            `Member already has an existing loan (${existing.loanNumber}).`,
-          );
-        }
-
-        let savingsBalance:
-          | number
-          | null =
-          null;
-
-        if (
-          input.type ===
-          "regular"
-        ) {
-          savingsBalance =
-            await getSavingsBalance(
-              member._id,
+    /*
+     * Return the transaction result directly.
+     *
+     * This avoids the TypeScript `never` narrowing problem
+     * that occurs when assigning to an outer nullable variable
+     * from inside withTransaction().
+     */
+    const createdLoan =
+      await session.withTransaction(
+        async (): Promise<Loan> => {
+          const member =
+            await getMemberForLoan(
+              input.memberId,
               session,
             );
 
           if (
-            savingsBalance <
-            settings.regularMinimumSavings
+            member.status !==
+            "active"
           ) {
             throw new Error(
-              `Regular loan requires minimum savings of KSh ${settings.regularMinimumSavings.toLocaleString()}.`,
+              "Only active members can receive loans.",
             );
           }
 
-          const maximumLoan =
-            money(
-              savingsBalance *
-                settings.regularSavingsMultiplier,
-            );
+          const settings =
+            await getLoanSettings();
 
           if (
-            input.principal >
-            maximumLoan
+            input.type ===
+              "emergency" &&
+            !settings.emergencyLoansEnabled
           ) {
             throw new Error(
-              `Regular loan cannot exceed KSh ${maximumLoan.toLocaleString()} based on current savings.`,
+              "Emergency loans are currently disabled.",
             );
           }
-        }
 
-        const previousLoans =
-          await loans
-            .find(
+          if (
+            input.type ===
+              "regular" &&
+            !settings.regularLoansEnabled
+          ) {
+            throw new Error(
+              "Regular loans are currently disabled.",
+            );
+          }
+
+          const {
+            loans,
+          } =
+            await getCollections();
+
+          const existing =
+            await loans.findOne(
               {
                 memberId:
                   member._id,
 
                 status: {
-                  $ne:
-                    "cancelled",
+                  $in: [
+                    "pending",
+                    "active",
+                  ],
                 },
               },
               {
                 session,
               },
-            )
-            .toArray();
+            );
 
-        for (
-          const previous of
-            previousLoans
-        ) {
-          if (
-            previous.outstandingBalance >
-            0
-          ) {
+          if (existing) {
             throw new Error(
-              `Member has an outstanding balance on loan ${previous.loanNumber}.`,
+              `Member already has an existing loan (${existing.loanNumber}).`,
             );
           }
-        }
 
-        const rate =
-          input.type ===
-          "emergency"
-            ? settings.emergencyInterestRate
-            : settings.regularInterestRate;
+          let savingsBalance:
+            | number
+            | null =
+            null;
 
-        const principal =
-          money(
-            input.principal,
-          );
-
-        const interestAmount =
-          money(
-            principal *
-              rate,
-          );
-
-        const dailyFine =
-          input.dailyFine !==
-          undefined
-            ? money(
-                input.dailyFine,
-              )
-            : money(
-                settings.defaultDailyFine,
+          if (
+            input.type ===
+            "regular"
+          ) {
+            savingsBalance =
+              await getSavingsBalance(
+                member._id,
+                session,
               );
 
-        const fineSource:
-          FineSource =
-          input.dailyFine !==
-          undefined
-            ? "custom"
-            : "default";
+            if (
+              savingsBalance <
+              settings.regularMinimumSavings
+            ) {
+              throw new Error(
+                `Regular loan requires minimum savings of KSh ${settings.regularMinimumSavings.toLocaleString()}.`,
+              );
+            }
 
-        const disbursementDate =
-          input.disbursementDate
-            ? new Date(
-                input.disbursementDate,
+            const maximumLoan =
+              money(
+                savingsBalance *
+                  settings.regularSavingsMultiplier,
+              );
+
+            if (
+              input.principal >
+              maximumLoan
+            ) {
+              throw new Error(
+                `Regular loan cannot exceed KSh ${maximumLoan.toLocaleString()} based on current savings.`,
+              );
+            }
+          }
+
+          const previousLoans =
+            await loans
+              .find(
+                {
+                  memberId:
+                    member._id,
+
+                  status: {
+                    $ne:
+                      "cancelled",
+                  },
+                },
+                {
+                  session,
+                },
               )
-            : new Date();
+              .toArray();
 
-        if (
-          !isValidDate(
-            disbursementDate,
-          )
-        ) {
-          throw new Error(
-            "Invalid disbursement date.",
-          );
-        }
+          for (
+            const previous of
+              previousLoans
+          ) {
+            if (
+              previous.outstandingBalance >
+              0
+            ) {
+              throw new Error(
+                `Member has an outstanding balance on loan ${previous.loanNumber}.`,
+              );
+            }
+          }
 
-        const firstDueDate =
-          addDays(
-            disbursementDate,
-            settings.repaymentGraceDays,
-          );
+          const rate =
+            input.type ===
+            "emergency"
+              ? settings.emergencyInterestRate
+              : settings.regularInterestRate;
 
-        const totalDue =
-          money(
-            principal +
-              interestAmount,
-          );
+          const principal =
+            money(
+              input.principal,
+            );
 
-        const loanNumber =
-          await generateLoanNumber(
-            session,
-          );
+          const interestAmount =
+            money(
+              principal *
+                rate,
+            );
 
-        const guarantor =
-          normalizeGuarantor(
-            input.guarantor,
-          );
+          const dailyFine =
+            input.dailyFine !==
+            undefined
+              ? money(
+                  input.dailyFine,
+                )
+              : money(
+                  settings.defaultDailyFine,
+                );
 
-        const now =
-          new Date();
+          const fineSource:
+            FineSource =
+            input.dailyFine !==
+            undefined
+              ? "custom"
+              : "default";
 
-        const loanDocument:
-          LoanDocument = {
-          _id:
-            new ObjectId(),
+          const disbursementDate =
+            input.disbursementDate
+              ? new Date(
+                  input.disbursementDate,
+                )
+              : new Date();
 
-          loanNumber,
+          if (
+            !isValidDate(
+              disbursementDate,
+            )
+          ) {
+            throw new Error(
+              "Invalid disbursement date.",
+            );
+          }
 
-          memberId:
-            member._id,
+          const firstDueDate =
+            addDays(
+              disbursementDate,
+              settings.repaymentGraceDays,
+            );
 
-          memberNumber:
-            member.membershipNumber,
+          const totalDue =
+            money(
+              principal +
+                interestAmount,
+            );
 
-          memberName:
+          const loanNumber =
+            await generateLoanNumber(
+              session,
+            );
+
+          const guarantor =
+            normalizeGuarantor(
+              input.guarantor,
+            );
+
+          const now =
+            new Date();
+
+          const memberName =
             normalizeText(
               [
                 member.firstName,
@@ -1566,74 +1636,23 @@ export async function createLoan(
               ]
                 .filter(Boolean)
                 .join(" "),
-            ),
+            );
 
-          type:
-            input.type,
+          const loanDocument:
+            LoanDocument = {
+            _id:
+              new ObjectId(),
 
-          principal,
+            loanNumber,
 
-          interestRate:
-            rate,
+            memberId:
+              member._id,
 
-          interestAmount,
+            memberNumber:
+              member.membershipNumber,
 
-          dailyFine,
+            memberName,
 
-          fineSource,
-
-          disbursementDate,
-
-          firstDueDate,
-
-          totalDue,
-
-          amountPaid:
-            0,
-
-          totalFines:
-            0,
-
-          outstandingBalance:
-            totalDue,
-
-          fineStatus:
-            "active",
-
-          guarantor,
-
-          status:
-            "active",
-
-          createdBy:
-            creator,
-
-          authorizedBy:
-            authorizer,
-
-          authorizedAt:
-            now,
-
-          createdAt:
-            now,
-
-          updatedAt:
-            now,
-        };
-
-        await loans.insertOne(
-          loanDocument,
-          {
-            session,
-          },
-        );
-
-        await writeAudit(
-          loanDocument._id!,
-          loanNumber,
-          "created",
-          creator,
-          {
             type:
               input.type,
 
@@ -1654,48 +1673,107 @@ export async function createLoan(
 
             totalDue,
 
-            savingsBalance,
-          },
-          session,
-        );
+            amountPaid:
+              0,
 
-        await writeAudit(
-          loanDocument._id!,
-          loanNumber,
-          "authorized",
-          authorizer,
-          {
+            totalFines:
+              0,
+
+            outstandingBalance:
+              totalDue,
+
+            fineStatus:
+              "active",
+
+            guarantor,
+
+            status:
+              "active",
+
+            createdBy:
+              creator,
+
+            authorizedBy:
+              authorizer,
+
             authorizedAt:
               now,
-          },
-          session,
-        );
 
-        createdLoan =
-          toLoan(
+            createdAt:
+              now,
+
+            updatedAt:
+              now,
+          };
+
+          await loans.insertOne(
+            loanDocument,
+            {
+              session,
+            },
+          );
+
+          await writeAudit(
+            loanDocument._id!,
+            loanNumber,
+            "created",
+            creator,
+            {
+              type:
+                input.type,
+
+              principal,
+
+              interestRate:
+                rate,
+
+              interestAmount,
+
+              dailyFine,
+
+              fineSource,
+
+              disbursementDate,
+
+              firstDueDate,
+
+              totalDue,
+
+              savingsBalance,
+            },
+            session,
+          );
+
+          await writeAudit(
+            loanDocument._id!,
+            loanNumber,
+            "authorized",
+            authorizer,
+            {
+              authorizedAt:
+                now,
+            },
+            session,
+          );
+
+          return toLoan(
             loanDocument,
           );
-      },
-      {
-        readConcern: {
-          level:
-            "snapshot",
         },
+        {
+          readConcern: {
+            level:
+              "snapshot",
+          },
 
-        writeConcern: {
-          w: "majority",
+          writeConcern: {
+            w: "majority",
+          },
+
+          maxCommitTimeMS:
+            10_000,
         },
-
-        maxCommitTimeMS:
-          10_000,
-      },
-    );
-
-    if (!createdLoan) {
-      throw new Error(
-        "Loan transaction completed without creating a loan.",
       );
-    }
 
     return createdLoan;
   } finally {
@@ -1796,6 +1874,7 @@ export async function getLoans(
     requestedLimit >= 1
       ? Math.min(
           100,
+
           Math.floor(
             requestedLimit,
           ),
@@ -1803,7 +1882,8 @@ export async function getLoans(
       : 25;
 
   const filter:
-    Record<string, unknown> = {};
+    Record<string, unknown> =
+    {};
 
   if (options.status) {
     filter.status =
@@ -1823,10 +1903,15 @@ export async function getLoans(
     ) {
       return {
         loans: [],
+
         total: 0,
+
         page: 1,
+
         limit,
-        totalPages: 0,
+
+        totalPages:
+          0,
       };
     }
 
@@ -1901,8 +1986,11 @@ export async function getLoans(
     await loans
       .find(filter)
       .sort({
-        createdAt: -1,
-        _id: -1,
+        createdAt:
+          -1,
+
+        _id:
+          -1,
       })
       .skip(
         (safePage - 1) *
@@ -2138,6 +2226,7 @@ export async function stopLoanFines(
   loanId: string,
   input: {
     reason: string;
+
     stoppedBy: LoanActor;
   },
 ): Promise<Loan> {
@@ -2214,13 +2303,9 @@ export async function stopLoanFines(
     loan.fineStatus ===
     "stopped"
   ) {
-    return loan
-      ? toLoan(loan)
-      : (() => {
-          throw new Error(
-            "Loan not found.",
-          );
-        })();
+    return toLoan(
+      loan,
+    );
   }
 
   const now =
@@ -2520,8 +2605,11 @@ async function resolveLoanForRepayment(
         },
       )
       .sort({
-        createdAt: -1,
-        _id: -1,
+        createdAt:
+          -1,
+
+        _id:
+          -1,
       })
       .limit(2)
       .toArray();
@@ -2550,34 +2638,6 @@ async function resolveLoanForRepayment(
    RECORD REPAYMENT
 ========================================================= */
 
-/**
- * Record a repayment atomically.
- *
- * IMPORTANT FOR BANK SMS
- * ------------------------------------------------------------------
- *
- * transactionReference must be the bank's immutable transaction
- * reference.
- *
- * Example:
- *
- *     input.transactionReference
- *          = "BANK-ABC123456"
- *
- * The SMS sender name is NOT used as the financial identity.
- *
- * The SMS adapter should already have resolved:
- *
- *     bank account number
- *          ↓
- *     GEO-SHUA account number
- *          ↓
- *     member
- *          ↓
- *     loan
- *
- * before invoking this function.
- */
 export async function createLoanRepayment(
   input: CreateLoanRepaymentInput,
 ): Promise<LoanRepayment> {
@@ -2596,14 +2656,9 @@ export async function createLoanRepayment(
 
   const reference =
     normalizeText(
-      input.transactionReference,
+      input.transactionReference ||
+        "",
     );
-
-  if (!reference) {
-    throw new Error(
-      "Transaction reference is required.",
-    );
-  }
 
   const amount =
     money(
@@ -2654,10 +2709,7 @@ export async function createLoanRepayment(
     await getCollections();
 
   /*
-   * Fast idempotency check BEFORE starting the transaction.
-   *
-   * This handles the normal retry case without opening
-   * a transaction unnecessarily.
+   * Fast idempotency check.
    */
   const existing =
     await repayments.findOne({
@@ -2666,12 +2718,6 @@ export async function createLoanRepayment(
     });
 
   if (existing) {
-    /*
-     * Same reference must represent the same financial event.
-     *
-     * If an external system attempts to reuse the reference
-     * for a different amount/loan/member, reject it.
-     */
     if (
       money(existing.amount) !==
         amount ||
@@ -2700,476 +2746,415 @@ export async function createLoanRepayment(
     client.startSession();
 
   try {
-    let result:
-      | LoanRepayment
-      | null =
-      null;
+    /*
+     * Return the transaction result directly.
+     *
+     * This prevents TypeScript from narrowing an outer
+     * nullable result variable to `never`.
+     */
+    const transactionResult =
+      await session.withTransaction(
+        async (): Promise<{
+          repayment: LoanRepayment;
 
-    await session.withTransaction(
-      async () => {
-        /*
-         * Re-check idempotency inside the transaction.
-         *
-         * This protects against the race where another
-         * request inserted the reference after our first
-         * check.
-         */
-        const alreadyExists =
-          await repayments.findOne(
-            {
-              transactionReference:
-                reference,
-            },
-            {
+          createdNew: boolean;
+        }> => {
+          const alreadyExists =
+            await repayments.findOne(
+              {
+                transactionReference:
+                  reference,
+              },
+              {
+                session,
+              },
+            );
+
+          if (alreadyExists) {
+            if (
+              money(
+                alreadyExists.amount,
+              ) !== amount
+            ) {
+              throw new Error(
+                "Transaction reference already exists for a different amount.",
+              );
+            }
+
+            if (
+              input.loanId &&
+              alreadyExists.loanId.toString() !==
+                input.loanId
+            ) {
+              throw new Error(
+                "Transaction reference already exists for a different loan.",
+              );
+            }
+
+            if (
+              input.memberId &&
+              alreadyExists.memberId.toString() !==
+                input.memberId
+            ) {
+              throw new Error(
+                "Transaction reference already exists for a different member.",
+              );
+            }
+
+            return {
+              repayment:
+                toRepayment(
+                  alreadyExists,
+                ),
+
+              createdNew:
+                false,
+            };
+          }
+
+          const loan =
+            await resolveLoanForRepayment(
+              input,
               session,
-            },
-          );
+            );
 
-        if (alreadyExists) {
+          if (!loan._id) {
+            throw new Error(
+              "Resolved loan has no MongoDB ID.",
+            );
+          }
+
           if (
+            loan.status ===
+            "cancelled"
+          ) {
+            throw new Error(
+              "Cancelled loans cannot receive repayments.",
+            );
+          }
+
+          if (
+            loan.status ===
+            "completed"
+          ) {
+            throw new Error(
+              "Completed loans cannot receive repayments.",
+            );
+          }
+
+          const loanObjectId =
+            loan._id;
+
+          /*
+           * Fine accrual remains an independent process.
+           *
+           * We deliberately calculate only from the current
+           * repayment and fine ledgers present in this transaction.
+           */
+          const amountPaidBefore =
+            await getLoanPaidTotal(
+              loanObjectId,
+              session,
+            );
+
+          const totalFinesBefore =
+            await getLoanFineTotal(
+              loanObjectId,
+              session,
+            );
+
+          const currentOutstanding =
             money(
-              alreadyExists.amount,
-            ) !== amount
-          ) {
-            throw new Error(
-              "Transaction reference already exists for a different amount.",
-            );
-          }
+              Math.max(
+                0,
 
-          result =
-            toRepayment(
-              alreadyExists,
+                loan.totalDue +
+                  totalFinesBefore -
+                  amountPaidBefore,
+              ),
             );
 
-          return;
-        }
-
-        const loan =
-          await resolveLoanForRepayment(
-            input,
-            session,
-          );
-
-        if (!loan._id) {
-          throw new Error(
-            "Resolved loan has no MongoDB ID.",
-          );
-        }
-
-        if (
-          loan.status ===
-          "cancelled"
-        ) {
-          throw new Error(
-            "Cancelled loans cannot receive repayments.",
-          );
-        }
-
-        if (
-          loan.status ===
-          "completed"
-        ) {
-          throw new Error(
-            "Completed loans cannot receive repayments.",
-          );
-        }
-
-        const loanObjectId =
-          loan._id;
-
-        /*
-         * ---------------------------------------------------
-         * FINE CUTOFF
-         * ---------------------------------------------------
-         *
-         * Fines are calculated up to the transaction date.
-         *
-         * Due date itself is not fined.
-         *
-         * First fine date:
-         *
-         *     firstDueDate + 1 day
-         */
-        const asOfDay =
-          startOfDay(
-            transactionDate,
-          );
-
-        const firstFineDate =
-          addDays(
-            startOfDay(
-              loan.firstDueDate,
-            ),
-            1,
-          );
-
-        /*
-         * We intentionally do not attempt to insert fines
-         * into this transaction.
-         *
-         * Fine accrual is an independent append-only process.
-         *
-         * The repayment transaction therefore never gets
-         * poisoned by a duplicate-key race on the fine ledger.
-         */
-        if (
-          loan.fineStatus !==
-            "stopped" &&
-          asOfDay >=
-            firstFineDate
-        ) {
-          /*
-           * Existing fine records are used to determine the
-           * liability at transaction time.
-           *
-           * Missing fines are not silently fabricated here.
-           *
-           * The scheduled fine-accrual process should keep
-           * the fine ledger current.
-           */
-        }
-
-        const amountPaidBefore =
-          await getLoanPaidTotal(
-            loanObjectId,
-            session,
-          );
-
-        const totalFinesBefore =
-          await getLoanFineTotal(
-            loanObjectId,
-            session,
-          );
-
-        const currentOutstanding =
-          money(
-            Math.max(
-              0,
-              loan.totalDue +
-                totalFinesBefore -
-                amountPaidBefore,
-            ),
-          );
-
-        if (
-          currentOutstanding <=
-          0
-        ) {
-          throw new Error(
-            "Loan has no outstanding balance.",
-          );
-        }
-
-        if (
-          amount >
-          currentOutstanding
-        ) {
-          throw new Error(
-            `Repayment exceeds the outstanding balance of KSh ${currentOutstanding.toLocaleString()}.`,
-          );
-        }
-
-        /*
-         * ---------------------------------------------------
-         * BUILD REPAYMENT
-         * ---------------------------------------------------
-         */
-        const repaymentDocument:
-          LoanRepaymentDocument = {
-          _id:
-            new ObjectId(),
-
-          loanId:
-            loanObjectId,
-
-          loanNumber:
-            loan.loanNumber,
-
-          memberId:
-            loan.memberId,
-
-          memberNumber:
-            loan.memberNumber,
-
-          amount,
-
-          transactionReference:
-            reference,
-
-          transactionDate,
-
-          source:
-            input.source,
-
-          ...(input.rawMessage
-            ? {
-                rawMessage:
-                  input.rawMessage,
-              }
-            : {}),
-
-          ...(input.recordedBy
-            ? {
-                recordedBy:
-                  normalizeActor(
-                    input.recordedBy,
-                  ),
-              }
-            : {}),
-
-          createdAt:
-            new Date(),
-        };
-
-        /*
-         * Append-only financial ledger.
-         */
-        try {
-          await repayments.insertOne(
-            repaymentDocument,
-            {
-              session,
-            },
-          );
-        } catch (error) {
-          /*
-           * A duplicate reference means another request
-           * won the idempotency race.
-           *
-           * Do not continue the transaction after a duplicate
-           * write error.
-           */
           if (
-            isDuplicateKeyError(
-              error,
-            )
+            currentOutstanding <=
+            0
           ) {
             throw new Error(
-              "REPAYMENT_IDEMPOTENCY_RACE",
+              "Loan has no outstanding balance.",
             );
           }
 
-          throw error;
-        }
+          if (
+            amount >
+            currentOutstanding
+          ) {
+            throw new Error(
+              `Repayment exceeds the outstanding balance of KSh ${currentOutstanding.toLocaleString()}.`,
+            );
+          }
 
-        /*
-         * ---------------------------------------------------
-         * NEW LEDGER STATE
-         * ---------------------------------------------------
-         */
-        const newAmountPaid =
-          money(
-            amountPaidBefore +
-              amount,
-          );
+          const repaymentDocument:
+            LoanRepaymentDocument = {
+            _id:
+              new ObjectId(),
 
-        const newOutstanding =
-          money(
-            Math.max(
-              0,
-              loan.totalDue +
-                totalFinesBefore -
-                newAmountPaid,
-            ),
-          );
+            loanId:
+              loanObjectId,
 
-        const newStatus:
-          | Loan["status"] =
-          newOutstanding <=
-          0
-            ? "completed"
-            : loan.status;
+            loanNumber:
+              loan.loanNumber,
 
-        /*
-         * ---------------------------------------------------
-         * ATOMIC LOAN UPDATE
-         * ---------------------------------------------------
-         *
-         * MongoDB transactions already provide write-conflict
-         * protection when another transaction modifies the same
-         * loan document concurrently.
-         *
-         * We also match the loan's current financial projection
-         * so stale transactions cannot silently overwrite newer
-         * state.
-         */
-        const {
-          loans,
-        } =
-          await getCollections();
+            memberId:
+              loan.memberId,
 
-        const updateResult =
-          await loans.updateOne(
+            memberNumber:
+              loan.memberNumber,
+
+            amount,
+
+            transactionReference:
+              reference,
+
+            transactionDate,
+
+            source:
+              input.source,
+
+            ...(input.rawMessage
+              ? {
+                  rawMessage:
+                    input.rawMessage,
+                }
+              : {}),
+
+            ...(input.recordedBy
+              ? {
+                  recordedBy:
+                    normalizeActor(
+                      input.recordedBy,
+                    ),
+                }
+              : {}),
+
+            createdAt:
+              new Date(),
+          };
+
+          try {
+            await repayments.insertOne(
+              repaymentDocument,
+              {
+                session,
+              },
+            );
+          } catch (error) {
+            if (
+              isDuplicateKeyError(
+                error,
+              )
+            ) {
+              throw new Error(
+                "REPAYMENT_IDEMPOTENCY_RACE",
+              );
+            }
+
+            throw error;
+          }
+
+          const newAmountPaid =
+            money(
+              amountPaidBefore +
+                amount,
+            );
+
+          const newOutstanding =
+            money(
+              Math.max(
+                0,
+
+                loan.totalDue +
+                  totalFinesBefore -
+                  newAmountPaid,
+              ),
+            );
+
+          const newStatus:
+            Loan["status"] =
+            newOutstanding <=
+            0
+              ? "completed"
+              : loan.status;
+
+          const {
+            loans,
+          } =
+            await getCollections();
+
+          const updateResult =
+            await loans.updateOne(
+              {
+                _id:
+                  loanObjectId,
+
+                amountPaid:
+                  loan.amountPaid,
+
+                totalFines:
+                  loan.totalFines,
+
+                outstandingBalance:
+                  loan.outstandingBalance,
+
+                status: {
+                  $in: [
+                    "pending",
+                    "active",
+                  ],
+                },
+              },
+              {
+                $set: {
+                  amountPaid:
+                    newAmountPaid,
+
+                  totalFines:
+                    totalFinesBefore,
+
+                  outstandingBalance:
+                    newOutstanding,
+
+                  status:
+                    newStatus,
+
+                  updatedAt:
+                    new Date(),
+                },
+              },
+              {
+                session,
+              },
+            );
+
+          if (
+            updateResult.modifiedCount !==
+            1
+          ) {
+            throw new Error(
+              "Loan balance changed while recording this repayment. The transaction was aborted; please retry.",
+            );
+          }
+
+          const repayment =
+            toRepayment(
+              repaymentDocument,
+            );
+
+          const actor =
+            input.recordedBy
+              ? normalizeActor(
+                  input.recordedBy,
+                )
+              : SYSTEM_ACTOR;
+
+          await writeAudit(
+            loanObjectId,
+            loan.loanNumber,
+            "repayment_recorded",
+            actor,
             {
-              _id:
-                loanObjectId,
+              repaymentId:
+                repayment.id,
 
-              amountPaid:
-                loan.amountPaid,
+              amount:
+                repayment.amount,
+
+              transactionReference:
+                repayment.transactionReference,
+
+              source:
+                repayment.source,
+
+              transactionDate:
+                repayment.transactionDate,
+
+              outstandingBefore:
+                currentOutstanding,
+
+              outstandingAfter:
+                newOutstanding,
+
+              amountPaidBefore,
+
+              amountPaidAfter:
+                newAmountPaid,
 
               totalFines:
-                loan.totalFines,
-
-              outstandingBalance:
-                loan.outstandingBalance,
-
-              status: {
-                $in: [
-                  "pending",
-                  "active",
-                ],
-              },
+                totalFinesBefore,
             },
-            {
-              $set: {
-                amountPaid:
+            session,
+          );
+
+          if (
+            newStatus ===
+            "completed"
+          ) {
+            await writeAudit(
+              loanObjectId,
+              loan.loanNumber,
+              "completed",
+              SYSTEM_ACTOR,
+              {
+                completedAt:
+                  new Date(),
+
+                finalAmountPaid:
                   newAmountPaid,
+
+                totalDue:
+                  loan.totalDue,
 
                 totalFines:
                   totalFinesBefore,
 
-                outstandingBalance:
+                finalOutstandingBalance:
                   newOutstanding,
-
-                status:
-                  newStatus,
-
-                updatedAt:
-                  new Date(),
               },
-            },
-            {
               session,
-            },
-          );
+            );
+          }
 
-        if (
-          updateResult.modifiedCount !==
-          1
-        ) {
-          throw new Error(
-            "Loan balance changed while recording this repayment. The transaction was aborted; please retry.",
-          );
-        }
+          return {
+            repayment,
 
-        /*
-         * ---------------------------------------------------
-         * AUDIT
-         * ---------------------------------------------------
-         */
-        const repayment =
-          toRepayment(
-            repaymentDocument,
-          );
-
-        const actor =
-          input.recordedBy
-            ? normalizeActor(
-                input.recordedBy,
-              )
-            : SYSTEM_ACTOR;
-
-        await writeAudit(
-          loanObjectId,
-          loan.loanNumber,
-          "repayment_recorded",
-          actor,
-          {
-            repaymentId:
-              repayment.id,
-
-            amount:
-              repayment.amount,
-
-            transactionReference:
-              repayment.transactionReference,
-
-            source:
-              repayment.source,
-
-            transactionDate:
-              repayment.transactionDate,
-
-            outstandingBefore:
-              currentOutstanding,
-
-            outstandingAfter:
-              newOutstanding,
-
-            amountPaidBefore,
-
-            amountPaidAfter:
-              newAmountPaid,
-
-            totalFines:
-              totalFinesBefore,
+            createdNew:
+              true,
+          };
+        },
+        {
+          readConcern: {
+            level:
+              "snapshot",
           },
-          session,
-        );
 
-        if (
-          newStatus ===
-          "completed"
-        ) {
-          await writeAudit(
-            loanObjectId,
-            loan.loanNumber,
-            "completed",
-            SYSTEM_ACTOR,
-            {
-              completedAt:
-                new Date(),
+          writeConcern: {
+            w: "majority",
+          },
 
-              finalAmountPaid:
-                newAmountPaid,
-
-              totalDue:
-                loan.totalDue,
-
-              totalFines:
-                totalFinesBefore,
-
-              finalOutstandingBalance:
-                newOutstanding,
-            },
-            session,
-          );
-        }
-
-        result =
-          repayment;
-      },
-      {
-        readConcern: {
-          level:
-            "snapshot",
+          maxCommitTimeMS:
+            10_000,
         },
-
-        writeConcern: {
-          w: "majority",
-        },
-
-        maxCommitTimeMS:
-          10_000,
-      },
-    );
-
-    if (!result) {
-      throw new Error(
-        "Repayment transaction completed without a result.",
       );
-    }
 
-    return result;
+    /*
+     * Financial result only.
+     *
+     * No notification side effect.
+     */
+    return transactionResult.repayment;
   } catch (error) {
     /*
-     * If the unique transactionReference was won by another
-     * concurrent request, retrieve the committed repayment
-     * AFTER the transaction has aborted.
+     * Unique transactionReference race.
      *
-     * This is deliberately outside the transaction because
-     * MongoDB transactions must not continue after a duplicate
-     * key error.
+     * Another transaction inserted the same reference first.
      */
     if (
       error instanceof Error &&
@@ -3194,6 +3179,26 @@ export async function createLoanRepayment(
       ) {
         throw new Error(
           "Transaction reference already exists for a different amount.",
+        );
+      }
+
+      if (
+        input.loanId &&
+        existing.loanId.toString() !==
+          input.loanId
+      ) {
+        throw new Error(
+          "Transaction reference already exists for a different loan.",
+        );
+      }
+
+      if (
+        input.memberId &&
+        existing.memberId.toString() !==
+          input.memberId
+      ) {
+        throw new Error(
+          "Transaction reference already exists for a different member.",
         );
       }
 
@@ -3390,157 +3395,167 @@ export async function cancelLoan(
     client.startSession();
 
   try {
-    let cancelledLoan:
-      | Loan
-      | null =
-      null;
+    /*
+     * Return transaction result directly.
+     *
+     * This avoids the `never` narrowing issue.
+     */
+    const transactionResult =
+      await session.withTransaction(
+        async (): Promise<{
+          loan: Loan;
 
-    await session.withTransaction(
-      async () => {
-        const {
-          loans,
-        } =
-          await getCollections();
+          changed: boolean;
+        }> => {
+          const {
+            loans,
+          } =
+            await getCollections();
 
-        const objectId =
-          createObjectId(
-            loanId,
-          );
-
-        const loan =
-          await loans.findOne(
-            {
-              _id:
-                objectId,
-            },
-            {
-              session,
-            },
-          );
-
-        if (!loan) {
-          throw new Error(
-            "Loan not found.",
-          );
-        }
-
-        if (
-          loan.status ===
-          "completed"
-        ) {
-          throw new Error(
-            "A completed loan cannot be cancelled.",
-          );
-        }
-
-        if (
-          loan.status ===
-          "cancelled"
-        ) {
-          cancelledLoan =
-            toLoan(
-              loan,
+          const objectId =
+            createObjectId(
+              loanId,
             );
 
-          return;
-        }
-
-        const now =
-          new Date();
-
-        const result =
-          await loans.updateOne(
-            {
-              _id:
-                objectId,
-
-              status: {
-                $ne:
-                  "cancelled",
+          const loan =
+            await loans.findOne(
+              {
+                _id:
+                  objectId,
               },
-            },
-            {
-              $set: {
-                status:
-                  "cancelled",
-
-                updatedAt:
-                  now,
+              {
+                session,
               },
-            },
+            );
+
+          if (!loan) {
+            throw new Error(
+              "Loan not found.",
+            );
+          }
+
+          if (
+            loan.status ===
+            "completed"
+          ) {
+            throw new Error(
+              "A completed loan cannot be cancelled.",
+            );
+          }
+
+          /*
+           * Idempotent cancellation.
+           */
+          if (
+            loan.status ===
+            "cancelled"
+          ) {
+            return {
+              loan:
+                toLoan(
+                  loan,
+                ),
+
+              changed:
+                false,
+            };
+          }
+
+          const now =
+            new Date();
+
+          const result =
+            await loans.updateOne(
+              {
+                _id:
+                  objectId,
+
+                status: {
+                  $ne:
+                    "cancelled",
+                },
+              },
+              {
+                $set: {
+                  status:
+                    "cancelled",
+
+                  updatedAt:
+                    now,
+                },
+              },
+              {
+                session,
+              },
+            );
+
+          if (
+            result.modifiedCount !==
+            1
+          ) {
+            throw new Error(
+              "Loan cancellation failed because the loan changed concurrently.",
+            );
+          }
+
+          await writeAudit(
+            objectId,
+            loan.loanNumber,
+            "cancelled",
+            actor,
             {
-              session,
+              reason:
+                cleanReason,
+
+              cancelledAt:
+                now,
             },
+            session,
           );
 
-        if (
-          result.modifiedCount !==
-          1
-        ) {
-          throw new Error(
-            "Loan cancellation failed because the loan changed concurrently.",
-          );
-        }
+          const updated =
+            await loans.findOne(
+              {
+                _id:
+                  objectId,
+              },
+              {
+                session,
+              },
+            );
 
-        await writeAudit(
-          objectId,
-          loan.loanNumber,
-          "cancelled",
-          actor,
-          {
-            reason:
-              cleanReason,
+          if (!updated) {
+            throw new Error(
+              "Cancelled loan could not be retrieved.",
+            );
+          }
 
-            cancelledAt:
-              now,
+          return {
+            loan:
+              toLoan(
+                updated,
+              ),
+
+            changed:
+              true,
+          };
+        },
+        {
+          readConcern: {
+            level:
+              "snapshot",
           },
-          session,
-        );
 
-        const updated =
-          await loans.findOne(
-            {
-              _id:
-                objectId,
-            },
-            {
-              session,
-            },
-          );
+          writeConcern: {
+            w: "majority",
+          },
 
-        if (!updated) {
-          throw new Error(
-            "Cancelled loan could not be retrieved.",
-          );
-        }
-
-        cancelledLoan =
-          toLoan(
-            updated,
-          );
-      },
-      {
-        readConcern: {
-          level:
-            "snapshot",
+          maxCommitTimeMS:
+            10_000,
         },
-
-        writeConcern: {
-          w: "majority",
-        },
-
-        maxCommitTimeMS:
-          10_000,
-      },
-    );
-
-    if (!cancelledLoan) {
-      throw new Error(
-        "Loan cancellation completed without a result.",
       );
-    }
 
-    return cancelledLoan;
+    return transactionResult.loan;
   } finally {
     await session.endSession();
   }
@@ -3567,17 +3582,25 @@ export async function getLoanSummary(): Promise<LoanSummary> {
       loans
         .aggregate<{
           _id: null;
+
           totalLoans: number;
+
           activeLoans: number;
+
           completedLoans: number;
+
           pendingLoans: number;
+
           cancelledLoans: number;
+
           totalPrincipal: number;
+
           totalInterest: number;
         }>([
           {
             $group: {
-              _id: null,
+              _id:
+                null,
 
               totalLoans: {
                 $sum: 1,
@@ -3592,7 +3615,9 @@ export async function getLoanSummary(): Promise<LoanSummary> {
                         "active",
                       ],
                     },
+
                     1,
+
                     0,
                   ],
                 },
@@ -3607,7 +3632,9 @@ export async function getLoanSummary(): Promise<LoanSummary> {
                         "completed",
                       ],
                     },
+
                     1,
+
                     0,
                   ],
                 },
@@ -3622,7 +3649,9 @@ export async function getLoanSummary(): Promise<LoanSummary> {
                         "pending",
                       ],
                     },
+
                     1,
+
                     0,
                   ],
                 },
@@ -3637,7 +3666,9 @@ export async function getLoanSummary(): Promise<LoanSummary> {
                         "cancelled",
                       ],
                     },
+
                     1,
+
                     0,
                   ],
                 },
@@ -3660,11 +3691,13 @@ export async function getLoanSummary(): Promise<LoanSummary> {
       repayments
         .aggregate<{
           _id: null;
+
           totalPaid: number;
         }>([
           {
             $group: {
-              _id: null,
+              _id:
+                null,
 
               totalPaid: {
                 $sum:
@@ -3678,11 +3711,13 @@ export async function getLoanSummary(): Promise<LoanSummary> {
       fines
         .aggregate<{
           _id: null;
+
           totalFines: number;
         }>([
           {
             $group: {
-              _id: null,
+              _id:
+                null,
 
               totalFines: {
                 $sum:
@@ -3717,7 +3752,8 @@ export async function getLoanSummary(): Promise<LoanSummary> {
     money(
       Number(
         repaymentStats[0]
-          ?.totalPaid || 0,
+          ?.totalPaid ||
+          0,
       ),
     );
 
@@ -3725,7 +3761,8 @@ export async function getLoanSummary(): Promise<LoanSummary> {
     money(
       Number(
         fineStats[0]
-          ?.totalFines || 0,
+          ?.totalFines ||
+          0,
       ),
     );
 
@@ -3739,6 +3776,7 @@ export async function getLoanSummary(): Promise<LoanSummary> {
     money(
       Math.max(
         0,
+
         totalDue +
           totalFines -
           totalPaid,

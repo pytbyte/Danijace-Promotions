@@ -1,9 +1,13 @@
+import { randomUUID } from "crypto";
+
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
 
 import {
   createLoanRepayment,
+  getLoanById,
+  getLoanRepayments,
 } from "@/lib/loans/service";
 
 import type {
@@ -23,7 +27,9 @@ function successResponse<T>(
       success: true,
       data,
     },
-    { status },
+    {
+      status,
+    },
   );
 }
 
@@ -36,7 +42,9 @@ function errorResponse(
       success: false,
       error: message,
     },
-    { status },
+    {
+      status,
+    },
   );
 }
 
@@ -52,19 +60,6 @@ type AuthenticatedSession = {
 };
 
 /* =========================================================
-   REQUEST TYPE
-========================================================= */
-
-type RepaymentRequest = {
-  loanId?: unknown;
-  amount?: unknown;
-  transactionReference?: unknown;
-  transactionDate?: unknown;
-  source?: unknown;
-  rawMessage?: unknown;
-};
-
-/* =========================================================
    ACTOR
 ========================================================= */
 
@@ -72,13 +67,17 @@ function getSessionActor(
   session: AuthenticatedSession,
 ) {
   const name =
-    typeof session?.user?.name === "string"
+    typeof session?.user?.name ===
+    "string"
       ? session.user.name.trim()
       : "";
 
   const email =
-    typeof session?.user?.email === "string"
-      ? session.user.email.trim().toLowerCase()
+    typeof session?.user?.email ===
+    "string"
+      ? session.user.email
+          .trim()
+          .toLowerCase()
       : "";
 
   if (!name || !email) {
@@ -94,9 +93,212 @@ function getSessionActor(
 }
 
 /* =========================================================
+   REQUEST TYPE
+========================================================= */
+
+type RepaymentRequest = {
+  loanId?: unknown;
+  amount?: unknown;
+  transactionReference?: unknown;
+  transactionDate?: unknown;
+  source?: unknown;
+  rawMessage?: unknown;
+};
+
+/* =========================================================
+   REFERENCE
+========================================================= */
+
+/**
+ * Generate an internal reference when a manual/system
+ * repayment does not provide one.
+ *
+ * IMPORTANT:
+ *
+ * The reference is still stored because the financial
+ * service requires a unique transaction identity.
+ *
+ * The user does NOT have to type it.
+ */
+function generateInternalReference(
+  source: TransactionSource,
+): string {
+  const prefix =
+    source === "sms"
+      ? "SMS"
+      : source === "system"
+        ? "SYS"
+        : "MAN";
+
+  return `${prefix}-${Date.now()}-${randomUUID()}`;
+}
+
+/* =========================================================
+   GET /api/loans/repayments?loanId=...
+========================================================= */
+
+/**
+ * Return the immutable repayment ledger for one loan.
+ *
+ * This endpoint ONLY reads repayment history.
+ *
+ * It does not:
+ *
+ * - modify the loan
+ * - create repayments
+ * - change balances
+ * - recalculate financial state
+ */
+export async function GET(
+  request: Request,
+) {
+  try {
+    /* -------------------------------------------------------
+       AUTHENTICATION
+    ------------------------------------------------------- */
+
+    const session =
+      (await auth()) as AuthenticatedSession | null;
+
+    if (!session?.user) {
+      return errorResponse(
+        "Authentication required.",
+        401,
+      );
+    }
+
+    /* -------------------------------------------------------
+       LOAN ID
+    ------------------------------------------------------- */
+
+    const url =
+      new URL(request.url);
+
+    const loanId =
+      url.searchParams
+        .get("loanId")
+        ?.trim() || "";
+
+    if (!loanId) {
+      return errorResponse(
+        "Loan ID is required.",
+        400,
+      );
+    }
+
+    /* -------------------------------------------------------
+       VERIFY LOAN EXISTS
+    ------------------------------------------------------- */
+
+    const loan =
+      await getLoanById(
+        loanId,
+      );
+
+    if (!loan) {
+      return errorResponse(
+        "Loan not found.",
+        404,
+      );
+    }
+
+    /* -------------------------------------------------------
+       GET REPAYMENTS
+    ------------------------------------------------------- */
+
+    const repayments =
+      await getLoanRepayments(
+        loanId,
+      );
+
+    /* -------------------------------------------------------
+       RESPONSE
+    ------------------------------------------------------- */
+
+    return NextResponse.json(
+      {
+        success: true,
+
+        data:
+          repayments,
+
+        loan: {
+          id:
+            loan.id,
+
+          loanNumber:
+            loan.loanNumber,
+
+          memberId:
+            loan.memberId,
+
+          memberName:
+            loan.memberName,
+
+          principal:
+            loan.principal,
+
+          totalDue:
+            loan.totalDue,
+
+          amountPaid:
+            loan.amountPaid,
+
+          totalFines:
+            loan.totalFines,
+
+          outstandingBalance:
+            loan.outstandingBalance,
+
+          status:
+            loan.status,
+        },
+
+        count:
+          repayments.length,
+      },
+      {
+        status: 200,
+
+        headers: {
+          "Cache-Control":
+            "no-store, no-cache, must-revalidate, proxy-revalidate",
+        },
+      },
+    );
+  } catch (error) {
+    console.error(
+      "GET /api/loans/repayments error:",
+      error,
+    );
+
+    return errorResponse(
+      error instanceof Error
+        ? error.message
+        : "Unable to retrieve loan repayment history.",
+      500,
+    );
+  }
+}
+
+/* =========================================================
    POST /api/loans/repayments
 ========================================================= */
 
+/**
+ * Record a new immutable loan repayment.
+ *
+ * REFERENCE RULE
+ * ---------------------------------------------------------
+ *
+ * Manual/system:
+ *   reference is optional.
+ *   The server generates one when missing.
+ *
+ * SMS:
+ *   reference is required because it comes from the bank
+ *   and is the real external transaction identity.
+ */
 export async function POST(
   request: Request,
 ) {
@@ -116,7 +318,9 @@ export async function POST(
     }
 
     const actor =
-      getSessionActor(session);
+      getSessionActor(
+        session,
+      );
 
     /* =====================================================
        PARSE BODY
@@ -129,7 +333,8 @@ export async function POST(
         await request.json();
 
       if (
-        typeof parsed !== "object" ||
+        typeof parsed !==
+          "object" ||
         parsed === null ||
         Array.isArray(parsed)
       ) {
@@ -153,7 +358,8 @@ export async function POST(
     ===================================================== */
 
     if (
-      typeof body.loanId !== "string" ||
+      typeof body.loanId !==
+        "string" ||
       !body.loanId.trim()
     ) {
       return errorResponse(
@@ -170,8 +376,10 @@ export async function POST(
     ===================================================== */
 
     if (
-      body.amount === undefined ||
-      body.amount === null ||
+      body.amount ===
+        undefined ||
+      body.amount ===
+        null ||
       body.amount === ""
     ) {
       return errorResponse(
@@ -181,12 +389,17 @@ export async function POST(
     }
 
     const amount =
-      typeof body.amount === "number"
+      typeof body.amount ===
+        "number"
         ? body.amount
-        : Number(body.amount);
+        : Number(
+            body.amount,
+          );
 
     if (
-      !Number.isFinite(amount) ||
+      !Number.isFinite(
+        amount,
+      ) ||
       amount <= 0
     ) {
       return errorResponse(
@@ -195,9 +408,10 @@ export async function POST(
       );
     }
 
-    /*
-     * Normalize to two decimal places.
-     */
+    /* -------------------------------------------------------
+       TWO DECIMAL PLACES
+    ------------------------------------------------------- */
+
     const normalizedAmount =
       Math.round(
         amount * 100,
@@ -215,9 +429,10 @@ export async function POST(
       );
     }
 
-    /*
-     * Prevent unsafe financial precision.
-     */
+    /* -------------------------------------------------------
+       SAFE FINANCIAL RANGE
+    ------------------------------------------------------- */
+
     if (
       !Number.isSafeInteger(
         Math.round(
@@ -232,24 +447,89 @@ export async function POST(
     }
 
     /* =====================================================
-       TRANSACTION REFERENCE
+       SOURCE
     ===================================================== */
 
+    const source =
+      body.source ===
+      undefined
+        ? "manual"
+        : body.source;
+
     if (
-      typeof body.transactionReference !==
-        "string" ||
-      !body.transactionReference.trim()
+      source !== "manual" &&
+      source !== "sms" &&
+      source !== "system"
     ) {
       return errorResponse(
-        "Transaction reference is required.",
+        "Invalid payment source.",
         400,
       );
     }
 
-    const transactionReference =
-      body.transactionReference
-        .trim()
-        .toUpperCase();
+    const transactionSource =
+      source as TransactionSource;
+
+    /* =====================================================
+       TRANSACTION REFERENCE
+       
+       OPTIONAL FOR MANUAL/SYSTEM
+       REQUIRED FOR SMS
+    ===================================================== */
+
+    let transactionReference =
+      "";
+
+    if (
+      body.transactionReference !==
+        undefined &&
+      body.transactionReference !==
+        null
+    ) {
+      if (
+        typeof body.transactionReference !==
+        "string"
+      ) {
+        return errorResponse(
+          "Transaction reference must be a string.",
+          400,
+        );
+      }
+
+      transactionReference =
+        body.transactionReference
+          .trim()
+          .toUpperCase();
+    }
+
+    /*
+     * SMS payments MUST preserve the bank reference.
+     */
+    if (
+      transactionSource ===
+        "sms" &&
+      !transactionReference
+    ) {
+      return errorResponse(
+        "Bank transaction reference is required for an SMS repayment.",
+        400,
+      );
+    }
+
+    /*
+     * Manual/system repayments do not require the user
+     * to enter a reference.
+     *
+     * The server creates an internal unique identity.
+     */
+    if (
+      !transactionReference
+    ) {
+      transactionReference =
+        generateInternalReference(
+          transactionSource,
+        );
+    }
 
     /* =====================================================
        TRANSACTION DATE
@@ -282,11 +562,10 @@ export async function POST(
       );
     }
 
-    /*
-     * Do not allow future transactions.
-     *
-     * The service must also enforce this rule.
-     */
+    /* -------------------------------------------------------
+       FUTURE DATE PROTECTION
+    ------------------------------------------------------- */
+
     const futureTolerance =
       5 * 60 * 1000;
 
@@ -300,29 +579,6 @@ export async function POST(
         400,
       );
     }
-
-    /* =====================================================
-       SOURCE
-    ===================================================== */
-
-    const source =
-      body.source === undefined
-        ? "manual"
-        : body.source;
-
-    if (
-      source !== "manual" &&
-      source !== "sms" &&
-      source !== "system"
-    ) {
-      return errorResponse(
-        "Invalid payment source.",
-        400,
-      );
-    }
-
-    const transactionSource =
-      source as TransactionSource;
 
     /* =====================================================
        RAW SMS
@@ -357,6 +613,10 @@ export async function POST(
       }
     }
 
+    /*
+     * SMS repayments must preserve the original bank
+     * message for auditability.
+     */
     if (
       transactionSource ===
         "sms" &&
@@ -387,10 +647,8 @@ export async function POST(
           transactionSource,
 
         /*
-         * IMPORTANT:
-         *
-         * Actor is supplied by the authenticated
-         * server session, never by the browser.
+         * Actor always comes from the authenticated
+         * server session.
          */
         recordedBy:
           actor,
@@ -416,23 +674,24 @@ export async function POST(
       error,
     );
 
-    /*
-     * -----------------------------------------------------
-     * KNOWN APPLICATION ERRORS
-     * -----------------------------------------------------
-     */
-
     if (
       error instanceof Error
     ) {
       const message =
         error.message;
 
+      const lower =
+        message.toLowerCase();
+
+      /* ---------------------------------------------------
+         NOT FOUND
+      --------------------------------------------------- */
+
       if (
-        message.includes(
+        lower.includes(
           "not found",
         ) ||
-        message.includes(
+        lower.includes(
           "does not exist",
         )
       ) {
@@ -442,15 +701,22 @@ export async function POST(
         );
       }
 
+      /* ---------------------------------------------------
+         DUPLICATE
+      --------------------------------------------------- */
+
       if (
-        message.includes(
+        lower.includes(
           "already exists",
         ) ||
-        message.includes(
+        lower.includes(
           "already recorded",
         ) ||
-        message.includes(
+        lower.includes(
           "duplicate",
+        ) ||
+        lower.includes(
+          "different financial transaction",
         )
       ) {
         return errorResponse(
@@ -459,33 +725,43 @@ export async function POST(
         );
       }
 
+      /* ---------------------------------------------------
+         VALIDATION / DOMAIN
+      --------------------------------------------------- */
+
       if (
-        message.includes(
+        lower.includes(
           "outstanding",
         ) ||
-        message.includes(
+        lower.includes(
           "exceed",
         ) ||
-        message.includes(
+        lower.includes(
           "active loan",
         ) ||
-        message.includes(
+        lower.includes(
+          "cancelled",
+        ) ||
+        lower.includes(
+          "completed",
+        ) ||
+        lower.includes(
           "cannot",
         ) ||
-        message.includes(
+        lower.includes(
           "required",
         ) ||
-        message.includes(
+        lower.includes(
           "invalid",
         ) ||
-        message.includes(
-          "Invalid",
-        ) ||
-        message.includes(
+        lower.includes(
           "future",
         ) ||
-        message.includes(
+        lower.includes(
           "amount",
+        ) ||
+        lower.includes(
+          "transaction date",
         )
       ) {
         return errorResponse(
@@ -495,11 +771,9 @@ export async function POST(
       }
     }
 
-    /*
-     * -----------------------------------------------------
-     * GENERIC SERVER ERROR
-     * -----------------------------------------------------
-     */
+    /* ---------------------------------------------------
+       GENERIC SERVER ERROR
+    --------------------------------------------------- */
 
     return errorResponse(
       "Unable to record the loan repayment.",

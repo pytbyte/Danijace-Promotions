@@ -18,39 +18,53 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /**
+ * =========================================================
  * GEO-SHUA
- *
  * SMS RECOVERY SWEEP
+ * =========================================================
  *
- * Responsibility:
+ * PURPOSE
+ * ---------------------------------------------------------
  *
- *  - Periodically inspect the Android SMS inbox.
- *  - Find recent bank transaction messages.
- *  - Forward them to the SAME server endpoint used by
- *    SmsReceiver.
+ * Recovery mechanism for bank SMS messages that may have
+ * been missed by the real-time SMS_RECEIVED receiver.
+ *
+ * PRIMARY FLOW
+ *
+ *     Bank SMS
+ *        ↓
+ *     SmsReceiver
+ *        ↓
+ *     /api/sms/process
+ *
+ * RECOVERY FLOW
+ *
+ *     AlarmManager
+ *        ↓
+ *     SmsSweepReceiver
+ *        ↓
+ *     Recent SMS inbox
+ *        ↓
+ *     lightweight local filter
+ *        ↓
+ *     /api/sms/process
+ *
+ * =========================================================
+ *
+ * IMPORTANT
+ * ---------------------------------------------------------
  *
  * This class does NOT:
  *
- *  - classify savings vs loan
- *  - identify members
- *  - calculate balances
- *  - write MongoDB
- *  - create financial transactions
+ * - identify members
+ * - classify savings vs loan
+ * - calculate balances
+ * - create financial records
+ * - access MongoDB
  *
- * The server remains authoritative:
+ * The server remains authoritative.
  *
- * inbox
- *   ↓
- * /api/sms/process
- *   ↓
- * parser
- *   ↓
- * processIncomingTransaction()
- *   ↓
- * savings / loan service
- *
- * Duplicate submissions are intentionally safe because
- * the existing financial services provide idempotency.
+ * =========================================================
  */
 public class SmsSweepReceiver extends BroadcastReceiver {
 
@@ -58,39 +72,83 @@ public class SmsSweepReceiver extends BroadcastReceiver {
         "GeoShuaSmsSweep";
 
     /**
-     * Production GEO-SHUA API.
+     * =====================================================
+     * PRODUCTION API
+     * =====================================================
      */
     private static final String PROCESS_URL =
         "https://geoshua.vercel.app/api/sms/process";
 
     /**
-     * Requested sweep interval.
+     * =====================================================
+     * SWEEP CONFIGURATION
+     * =====================================================
      *
-     * Android may defer this because of battery/doze
-     * restrictions. It is therefore a recovery interval,
-     * not a guaranteed exact execution time.
+     * Run approximately once every hour.
+     *
+     * Android may delay execution because of:
+     *
+     * - Doze
+     * - battery optimization
+     * - device sleep
+     * - OEM background restrictions
+     *
+     * Therefore this should be treated as approximate.
      */
     private static final long SWEEP_INTERVAL_MS =
-        5 * 60 * 1000L;
+        60L * 60L * 1000L;
 
     /**
-     * Look back farther than the sweep interval so a delayed
-     * alarm does not leave a gap.
+     * Look back two hours.
+     *
+     * The sweep runs approximately every hour, but Android
+     * can delay alarms.
+     *
+     * A two-hour window protects against a delayed sweep
+     * leaving an SMS unprocessed.
+     *
+     * Server-side idempotency MUST prevent duplicate
+     * financial transactions.
      */
     private static final long LOOKBACK_MS =
-        10 * 60 * 1000L;
+        2L * 60L * 60L * 1000L;
 
+    /**
+     * First execution after scheduling.
+     *
+     * One minute gives the application time to finish
+     * startup before the first recovery operation.
+     */
+    private static final long FIRST_RUN_DELAY_MS =
+        60L * 1000L;
+
+    /**
+     * Stable PendingIntent request code.
+     */
     private static final int REQUEST_CODE =
         9001;
+
+    /**
+     * HTTP connection timeout.
+     */
+    private static final int CONNECT_TIMEOUT_MS =
+        10_000;
+
+    /**
+     * HTTP response timeout.
+     */
+    private static final int READ_TIMEOUT_MS =
+        15_000;
 
     /* =====================================================
        SCHEDULE
     ===================================================== */
 
     /**
-     * Start the repeating SMS recovery sweep.
+     * Schedule the hourly SMS recovery sweep.
      *
-     * Safe to call repeatedly.
+     * Safe to call repeatedly because the same
+     * PendingIntent identity is used.
      */
     public static void schedule(
         Context context
@@ -111,7 +169,7 @@ public class SmsSweepReceiver extends BroadcastReceiver {
         if (alarmManager == null) {
             Log.w(
                 TAG,
-                "AlarmManager is unavailable."
+                "AlarmManager unavailable."
             );
 
             return;
@@ -128,22 +186,19 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                 applicationContext,
                 REQUEST_CODE,
                 intent,
-                PendingIntent.FLAG_UPDATE_CURRENT |
-                PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_UPDATE_CURRENT
+                    | PendingIntent.FLAG_IMMUTABLE
             );
 
-        /*
-         * Run the first recovery shortly after the app
-         * starts, then continue periodically.
-         */
         long firstRun =
             System.currentTimeMillis()
-                + 30_000L;
+                + FIRST_RUN_DELAY_MS;
 
         /*
-         * Inexact repeating is deliberate.
+         * Inexact repeating is preferred here.
          *
-         * Android may move execution for battery efficiency.
+         * This allows Android to batch the alarm with other
+         * background work and therefore reduces battery use.
          */
         alarmManager.setInexactRepeating(
             AlarmManager.RTC_WAKEUP,
@@ -154,7 +209,7 @@ public class SmsSweepReceiver extends BroadcastReceiver {
 
         Log.d(
             TAG,
-            "SMS recovery sweep scheduled."
+            "Hourly SMS recovery sweep scheduled."
         );
     }
 
@@ -163,7 +218,7 @@ public class SmsSweepReceiver extends BroadcastReceiver {
     ===================================================== */
 
     /**
-     * Cancel the recovery sweep.
+     * Cancel the hourly recovery sweep.
      */
     public static void cancel(
         Context context
@@ -196,22 +251,24 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                 applicationContext,
                 REQUEST_CODE,
                 intent,
-                PendingIntent.FLAG_NO_CREATE |
-                PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_NO_CREATE
+                    | PendingIntent.FLAG_IMMUTABLE
             );
 
-        if (pendingIntent != null) {
-            alarmManager.cancel(
-                pendingIntent
-            );
-
-            pendingIntent.cancel();
-
-            Log.d(
-                TAG,
-                "SMS recovery sweep cancelled."
-            );
+        if (pendingIntent == null) {
+            return;
         }
+
+        alarmManager.cancel(
+            pendingIntent
+        );
+
+        pendingIntent.cancel();
+
+        Log.d(
+            TAG,
+            "SMS recovery sweep cancelled."
+        );
     }
 
     /* =====================================================
@@ -223,43 +280,57 @@ public class SmsSweepReceiver extends BroadcastReceiver {
         final Context context,
         Intent intent
     ) {
+        if (context == null) {
+            return;
+        }
+
         /*
-         * A manifest-declared receiver is allowed to receive
-         * this callback from AlarmManager without requiring
-         * a special custom action.
+         * Network and ContentResolver operations should not
+         * execute directly on the BroadcastReceiver thread.
          */
         final PendingResult pendingResult =
             goAsync();
 
-        new Thread(() -> {
-            try {
-                sweepRecentSms(
-                    context.getApplicationContext()
-                );
+        final Context applicationContext =
+            context.getApplicationContext();
 
-            } catch (Exception e) {
-                Log.e(
-                    TAG,
-                    "SMS recovery sweep failed.",
-                    e
-                );
+        Thread worker =
+            new Thread(
+                () -> {
+                    try {
+                        sweepRecentSms(
+                            applicationContext
+                        );
 
-            } finally {
-                pendingResult.finish();
-            }
-        }).start();
+                    } catch (Exception e) {
+                        Log.e(
+                            TAG,
+                            "SMS recovery sweep failed.",
+                            e
+                        );
+
+                    } finally {
+                        pendingResult.finish();
+                    }
+                },
+                "GeoShuaSmsRecovery"
+            );
+
+        worker.start();
     }
 
     /* =====================================================
-       SWEEP
+       SMS SWEEP
     ===================================================== */
 
     private void sweepRecentSms(
         Context context
     ) {
-        long cutoff =
-            System.currentTimeMillis()
-                - LOOKBACK_MS;
+        final long now =
+            System.currentTimeMillis();
+
+        final long cutoff =
+            now - LOOKBACK_MS;
 
         Uri uri =
             Uri.parse(
@@ -269,6 +340,18 @@ public class SmsSweepReceiver extends BroadcastReceiver {
         Cursor cursor =
             null;
 
+        int scannedCount =
+            0;
+
+        int matchedCount =
+            0;
+
+        int submittedCount =
+            0;
+
+        int failedCount =
+            0;
+
         try {
             cursor =
                 context
@@ -276,6 +359,10 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                     .query(
                         uri,
 
+                        /*
+                         * Only request columns that we actually
+                         * need.
+                         */
                         new String[] {
                             "_id",
                             "address",
@@ -283,6 +370,11 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                             "date"
                         },
 
+                        /*
+                         * Restrict the query at the ContentProvider
+                         * level instead of retrieving the entire
+                         * inbox.
+                         */
                         "date >= ?",
 
                         new String[] {
@@ -291,13 +383,19 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                             )
                         },
 
-                        "date DESC"
+                        /*
+                         * Oldest first.
+                         *
+                         * This allows recovery to submit older
+                         * missed messages before newer ones.
+                         */
+                        "date ASC"
                     );
 
             if (cursor == null) {
                 Log.w(
                     TAG,
-                    "SMS sweep returned a null cursor."
+                    "SMS inbox query returned null."
                 );
 
                 return;
@@ -318,11 +416,14 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                     "date"
                 );
 
-            int count =
-                0;
+            while (
+                cursor.moveToNext()
+            ) {
+                scannedCount++;
 
-            while (cursor.moveToNext()) {
-
+                /*
+                 * Read address.
+                 */
                 String address =
                     addressIndex >= 0
                         ? cursor.getString(
@@ -330,6 +431,9 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                         )
                         : null;
 
+                /*
+                 * Read message body.
+                 */
                 String body =
                     bodyIndex >= 0
                         ? cursor.getString(
@@ -337,6 +441,9 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                         )
                         : null;
 
+                /*
+                 * Read SMS timestamp.
+                 */
                 long date =
                     dateIndex >= 0
                         ? cursor.getLong(
@@ -344,6 +451,9 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                         )
                         : 0L;
 
+                /*
+                 * Reject malformed messages immediately.
+                 */
                 if (
                     body == null ||
                     body.trim().isEmpty()
@@ -351,11 +461,15 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                     continue;
                 }
 
+                if (date <= 0L) {
+                    continue;
+                }
+
                 /*
-                 * Cheap local filter only.
+                 * Lightweight local filter.
                  *
-                 * The actual parser on the server decides
-                 * whether the message is valid.
+                 * This prevents unrelated SMS messages from
+                 * being sent over the network.
                  */
                 if (
                     !looksLikeBankTransaction(
@@ -365,6 +479,12 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                     continue;
                 }
 
+                matchedCount++;
+
+                /*
+                 * Build request only after the message has
+                 * passed the local filter.
+                 */
                 String json =
                     buildJson(
                         address,
@@ -372,64 +492,106 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                         date
                     );
 
-                postJson(
-                    PROCESS_URL,
-                    json
-                );
+                /*
+                 * Do not count failed requests as submitted.
+                 */
+                if (
+                    postJson(
+                        PROCESS_URL,
+                        json
+                    )
+                ) {
+                    submittedCount++;
 
-                count++;
+                } else {
+                    failedCount++;
+                }
             }
-
-            Log.d(
-                TAG,
-                "SMS recovery sweep completed. "
-                    + count
-                    + " bank-like message(s) submitted."
-            );
 
         } finally {
             if (cursor != null) {
                 cursor.close();
             }
         }
+
+        Log.d(
+            TAG,
+            "SMS recovery completed. "
+                + "scanned="
+                + scannedCount
+                + ", matched="
+                + matchedCount
+                + ", submitted="
+                + submittedCount
+                + ", failed="
+                + failedCount
+        );
     }
 
     /* =====================================================
-       BANK SMS FILTER
+       LOCAL BANK FILTER
     ===================================================== */
 
     /**
-     * This is deliberately broad.
+     * Lightweight pre-filter.
      *
-     * We do NOT determine savings or loan here.
+     * IMPORTANT:
+     *
+     * This method does NOT decide whether a transaction
+     * belongs to savings or loans.
+     *
+     * It does NOT identify the member.
+     *
+     * It does NOT create financial records.
+     *
+     * Its only purpose is to avoid sending obviously
+     * unrelated SMS messages to the server.
      */
     private boolean looksLikeBankTransaction(
         String body
     ) {
+        if (body == null) {
+            return false;
+        }
+
         String normalized =
             body
-                .toLowerCase()
-                .trim();
+                .replaceAll(
+                    "\\s+",
+                    " "
+                )
+                .trim()
+                .toLowerCase();
 
+        /*
+         * GEO-SHUA currently expects bank transaction SMS
+         * containing these characteristics.
+         */
         return
             normalized.contains(
                 "confirmed"
-            ) &&
+            )
+            &&
             normalized.contains(
                 "kes"
-            ) &&
+            )
+            &&
             normalized.contains(
                 "received from"
-            ) &&
+            )
+            &&
             normalized.contains(
                 "for account"
             );
     }
 
     /* =====================================================
-       JSON
+       BUILD JSON
     ===================================================== */
 
+    /**
+     * Build the minimal payload required by the server.
+     */
     private String buildJson(
         String address,
         String body,
@@ -447,6 +609,16 @@ public class SmsSweepReceiver extends BroadcastReceiver {
             + "}";
     }
 
+    /* =====================================================
+       JSON ESCAPING
+    ===================================================== */
+
+    /**
+     * Safely escape an SMS field for JSON.
+     *
+     * This avoids introducing a JSON dependency solely for
+     * three simple fields.
+     */
     private String quote(
         String value
     ) {
@@ -483,7 +655,19 @@ public class SmsSweepReceiver extends BroadcastReceiver {
        HTTP POST
     ===================================================== */
 
-    private void postJson(
+    /**
+     * Send one SMS to the authoritative server.
+     *
+     * Returns:
+     *
+     *     true  = HTTP response received
+     *     false = request failed
+     *
+     * A HTTP 4xx/5xx response is still considered a completed
+     * HTTP request, but is NOT treated as a successful
+     * submission.
+     */
+    private boolean postJson(
         String endpoint,
         String json
     ) {
@@ -503,20 +687,24 @@ public class SmsSweepReceiver extends BroadcastReceiver {
             );
 
             connection.setConnectTimeout(
-                10_000
+                CONNECT_TIMEOUT_MS
             );
 
             connection.setReadTimeout(
-                15_000
+                READ_TIMEOUT_MS
             );
 
             connection.setDoOutput(
                 true
             );
 
+            connection.setUseCaches(
+                false
+            );
+
             connection.setRequestProperty(
                 "Content-Type",
-                "application/json"
+                "application/json; charset=UTF-8"
             );
 
             connection.setRequestProperty(
@@ -529,6 +717,10 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                     StandardCharsets.UTF_8
                 );
 
+            connection.setFixedLengthStreamingMode(
+                payload.length
+            );
+
             try (
                 OutputStream output =
                     connection.getOutputStream()
@@ -536,41 +728,53 @@ public class SmsSweepReceiver extends BroadcastReceiver {
                 output.write(
                     payload
                 );
-
-                output.flush();
             }
 
             int responseCode =
                 connection.getResponseCode();
 
+            /*
+             * Read the response only for logging/debugging.
+             *
+             * The response is capped to avoid wasting memory
+             * if the server ever returns an unexpectedly large
+             * response.
+             */
             InputStream stream =
-                responseCode >= 200 &&
-                responseCode < 400
+                responseCode >= 200
+                    && responseCode < 400
                     ? connection.getInputStream()
                     : connection.getErrorStream();
 
             String response =
-                readStream(stream);
+                readResponse(
+                    stream
+                );
 
             Log.d(
                 TAG,
-                "Sweep API response: HTTP "
+                "API response: HTTP "
                     + responseCode
                     + " "
                     + response
             );
 
-        } catch (Exception e) {
             /*
-             * A failed sweep must never crash the app.
-             *
-             * The next sweep will try again.
+             * Only HTTP 2xx is considered successful.
              */
+            return
+                responseCode >= 200
+                &&
+                responseCode < 300;
+
+        } catch (Exception e) {
             Log.e(
                 TAG,
-                "Failed forwarding sweep SMS.",
+                "Failed forwarding recovery SMS.",
                 e
             );
+
+            return false;
 
         } finally {
             if (connection != null) {
@@ -583,7 +787,13 @@ public class SmsSweepReceiver extends BroadcastReceiver {
        READ RESPONSE
     ===================================================== */
 
-    private String readStream(
+    /**
+     * Read a small server response.
+     *
+     * The server response is not needed for financial logic.
+     * It is only useful for diagnostics.
+     */
+    private String readResponse(
         InputStream stream
     ) {
         if (stream == null) {
@@ -607,6 +817,21 @@ public class SmsSweepReceiver extends BroadcastReceiver {
             while (
                 (line = reader.readLine()) != null
             ) {
+                /*
+                 * Prevent an unexpectedly large response
+                 * from consuming excessive memory.
+                 */
+                if (
+                    result.length()
+                        >= 2_000
+                ) {
+                    result.append(
+                        "...[truncated]"
+                    );
+
+                    break;
+                }
+
                 result.append(
                     line
                 );
@@ -615,7 +840,7 @@ public class SmsSweepReceiver extends BroadcastReceiver {
         } catch (Exception e) {
             Log.e(
                 TAG,
-                "Unable to read sweep API response.",
+                "Unable to read API response.",
                 e
             );
         }

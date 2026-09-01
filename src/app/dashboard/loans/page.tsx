@@ -9,7 +9,9 @@ import {
 
 import {
   AlertCircle,
+  ArrowUpRight,
   Banknote,
+  Eye,
   Plus,
   RefreshCw,
   Settings2,
@@ -22,6 +24,11 @@ import LoanCard from "@/components/loans/LoanCard";
 import LoanForm from "@/components/loans/LoanForm";
 import LoanSettingsForm from "@/components/loans/LoanSettingsForm";
 import LoanRepaymentModal from "@/components/loans/LoanRepaymentForm";
+import LoanSearch, {
+  DEFAULT_LOAN_FILTERS,
+  type LoanSearchFilters,
+} from "@/components/loans/LoanSearch";
+import LoanTransactionModal from "@/components/loans/LoanTransactionModal";
 
 import type {
   Loan,
@@ -29,14 +36,11 @@ import type {
 } from "@/lib/loans/types";
 
 /* =========================================================
-   API
+   CONSTANTS
 ========================================================= */
 
-/**
- * Change this ONE constant if your repayment API
- * uses a different route.
- */
-const REPAYMENT_API = "/api/loans/repayments";
+const REPAYMENT_API =
+  "/api/loans/repayments";
 
 /* =========================================================
    RESPONSE TYPES
@@ -61,10 +65,11 @@ type RepaymentResponse = {
 
 export default function LoansPage() {
   /* =======================================================
-     STATE
+     CORE STATE
   ======================================================= */
 
-  const [loans, setLoans] = useState<Loan[]>([]);
+  const [loans, setLoans] =
+    useState<Loan[]>([]);
 
   const [loading, setLoading] =
     useState(true);
@@ -79,15 +84,20 @@ export default function LoansPage() {
     useState(false);
 
   /* =======================================================
-     LOAN FORM
+     SEARCH / FILTERS
+  ======================================================= */
+
+  const [loanFilters, setLoanFilters] =
+    useState<LoanSearchFilters>(
+      DEFAULT_LOAN_FILTERS,
+    );
+
+  /* =======================================================
+     LOAN MODALS
   ======================================================= */
 
   const [loanFormOpen, setLoanFormOpen] =
     useState(false);
-
-  /* =======================================================
-     SETTINGS
-  ======================================================= */
 
   const [settingsOpen, setSettingsOpen] =
     useState(false);
@@ -106,6 +116,16 @@ export default function LoansPage() {
     useState(false);
 
   /* =======================================================
+     TRANSACTION HISTORY MODAL
+  ======================================================= */
+
+  const [selectedLoan, setSelectedLoan] =
+    useState<Loan | null>(null);
+
+  const [transactionHistoryOpen, setTransactionHistoryOpen] =
+    useState(false);
+
+  /* =======================================================
      MOUNT
   ======================================================= */
 
@@ -118,7 +138,9 @@ export default function LoansPage() {
   ======================================================= */
 
   const loadLoans = useCallback(
-    async (isRefresh = false) => {
+    async (
+      isRefresh = false,
+    ) => {
       try {
         if (isRefresh) {
           setRefreshing(true);
@@ -128,23 +150,28 @@ export default function LoansPage() {
 
         setError("");
 
-        const response = await fetch(
-          "/api/loans",
-          {
-            method: "GET",
-            cache: "no-store",
-            headers: {
-              Accept:
-                "application/json",
+        const response =
+          await fetch(
+            "/api/loans",
+            {
+              method: "GET",
+              cache: "no-store",
+              credentials: "same-origin",
+              headers: {
+                Accept:
+                  "application/json",
+              },
             },
-          },
-        );
+          );
 
-        let result: LoansResponse;
+        let result:
+          | LoansResponse
+          | null =
+          null;
 
         try {
           result =
-            await response.json();
+            (await response.json()) as LoansResponse;
         } catch {
           throw new Error(
             "The server returned an invalid response.",
@@ -153,10 +180,10 @@ export default function LoansPage() {
 
         if (
           !response.ok ||
-          !result.success
+          !result?.success
         ) {
           throw new Error(
-            result.error ||
+            result?.error ||
               `Unable to load loans. Server returned ${response.status}.`,
           );
         }
@@ -180,7 +207,7 @@ export default function LoansPage() {
             "Failed to fetch"
         ) {
           setError(
-            "Unable to connect to the server. Check your connection and try again.",
+            "Unable to connect to the server. Check your internet connection and try again.",
           );
         } else if (
           err instanceof Error
@@ -217,542 +244,564 @@ export default function LoansPage() {
   ]);
 
   /* =======================================================
+     FILTERED LOANS
+  ======================================================= */
+
+  const filteredLoans =
+    useMemo(() => {
+      const search =
+        loanFilters.search
+          .trim()
+          .toLowerCase();
+
+      return loans.filter(
+        (loan) => {
+          /* SEARCH */
+
+          if (search) {
+            const searchableText = [
+              loan.loanNumber,
+              loan.memberName,
+              loan.memberNumber,
+              loan.type,
+            ]
+              .filter(
+                (
+                  value,
+                ) =>
+                  typeof value ===
+                    "string" &&
+                  value.trim()
+                    .length > 0,
+              )
+              .join(" ")
+              .toLowerCase();
+
+            if (
+              !searchableText.includes(
+                search,
+              )
+            ) {
+              return false;
+            }
+          }
+
+          /* STATUS */
+
+          if (
+            loanFilters.status &&
+            loan.status !==
+              loanFilters.status
+          ) {
+            return false;
+          }
+
+          /* TYPE */
+
+          if (
+            loanFilters.type &&
+            loan.type
+              .trim()
+              .toLowerCase() !==
+              loanFilters.type
+                .trim()
+                .toLowerCase()
+          ) {
+            return false;
+          }
+
+          return true;
+        },
+      );
+    }, [
+      loans,
+      loanFilters,
+    ]);
+
+  /* =======================================================
+     LOAN TYPES
+  ======================================================= */
+
+  const loanTypes =
+    useMemo(() => {
+      return Array.from(
+        new Set(
+          loans
+            .map(
+              (loan) =>
+                typeof loan.type ===
+                "string"
+                  ? loan.type.trim()
+                  : "",
+            )
+            .filter(Boolean),
+        ),
+      );
+    }, [loans]);
+
+  /* =======================================================
      REFRESH
   ======================================================= */
 
-  function handleRefresh() {
-    if (
-      loading ||
-      refreshing
-    ) {
-      return;
-    }
+  const handleRefresh =
+    useCallback(() => {
+      if (
+        loading ||
+        refreshing
+      ) {
+        return;
+      }
 
-    void loadLoans(true);
-  }
+      void loadLoans(true);
+    }, [
+      loading,
+      refreshing,
+      loadLoans,
+    ]);
 
   /* =======================================================
      NEW LOAN
   ======================================================= */
 
-  function handleNewLoan() {
-    setLoanFormOpen(true);
-  }
+  const handleNewLoan =
+    useCallback(() => {
+      setError("");
+      setLoanFormOpen(true);
+    }, []);
 
-  /* =======================================================
-     LOAN CREATED
-  ======================================================= */
-
-  function handleLoanCreated() {
-    setLoanFormOpen(false);
-
-    void loadLoans(true);
-  }
+  const handleLoanCreated =
+    useCallback(() => {
+      setLoanFormOpen(false);
+      void loadLoans(true);
+    }, [loadLoans]);
 
   /* =======================================================
      SETTINGS
   ======================================================= */
 
-  function handleOpenSettings() {
-    setSettingsOpen(true);
-  }
+  const handleOpenSettings =
+    useCallback(() => {
+      setSettingsOpen(true);
+    }, []);
 
-  function handleCloseSettings() {
-    setSettingsOpen(false);
-  }
-
-  /* =======================================================
-     OPEN REPAYMENT
-  ======================================================= */
-
-  function handleOpenRepayment(
-    loan: Loan,
-  ) {
-    /*
-     * Only active loans with an outstanding
-     * balance should normally be repayable.
-     *
-     * We still let the backend remain the
-     * authoritative validator.
-     */
-    if (
-      loan.status !== "active"
-    ) {
-      return;
-    }
-
-    if (
-      !Number.isFinite(
-        loan.outstandingBalance,
-      ) ||
-      loan.outstandingBalance <= 0
-    ) {
-      return;
-    }
-
-    setRepaymentLoan(loan);
-    setRepaymentOpen(true);
-  }
+  const handleCloseSettings =
+    useCallback(() => {
+      setSettingsOpen(false);
+    }, []);
 
   /* =======================================================
-     CLOSE REPAYMENT
+     REPAYMENT
   ======================================================= */
 
-  function handleCloseRepayment() {
-    if (
-      repaymentLoading
-    ) {
-      return;
-    }
+  const handleOpenRepayment =
+    useCallback(
+      (loan: Loan) => {
+        if (
+          loan.status !==
+          "active"
+        ) {
+          return;
+        }
 
-    setRepaymentOpen(false);
-    setRepaymentLoan(null);
-  }
+        if (
+          !Number.isFinite(
+            loan.outstandingBalance,
+          ) ||
+          loan.outstandingBalance <=
+            0
+        ) {
+          return;
+        }
 
+        setError("");
 
-/* =======================================================
-   RECORD REPAYMENT
-======================================================= */
+        setRepaymentLoan(
+          loan,
+        );
 
-async function handleRepaymentSubmit(
-  data: {
-    loanId: string;
-    amount: number;
-    transactionReference: string;
-    transactionDate: Date;
-    source: TransactionSource;
-    rawMessage?: string;
-  },
-) {
-  console.group(
-    "💰 GEO-SHUA | REPAYMENT SUBMISSION",
-  );
-
-  console.log(
-    "Repayment data received:",
-    data,
-  );
-
-  /* -------------------------------------------------------
-     DEFENSIVE CHECK
-  ------------------------------------------------------- */
-
-  if (!repaymentLoan) {
-    console.error(
-      "❌ No repayment loan is selected.",
-    );
-
-    console.groupEnd();
-    return;
-  }
-
-  console.log(
-    "Selected repayment loan:",
-    repaymentLoan,
-  );
-
-  /* -------------------------------------------------------
-     STALE LOAN CHECK
-  ------------------------------------------------------- */
-
-  if (
-    repaymentLoan.id !==
-    data.loanId
-  ) {
-    console.error(
-      "❌ Loan ID mismatch.",
-      {
-        selectedLoanId:
-          repaymentLoan.id,
-        submittedLoanId:
-          data.loanId,
+        setRepaymentOpen(
+          true,
+        );
       },
+      [],
     );
 
-    console.groupEnd();
-
-    throw new Error(
-      "The selected loan has changed. Please reopen the repayment form.",
-    );
-  }
-
-  console.log(
-    "✅ Loan ID verified:",
-    data.loanId,
-  );
-
-  try {
-    setRepaymentLoading(true);
-    setError("");
-
-    /* -------------------------------------------------------
-       BUILD REQUEST PAYLOAD
-    ------------------------------------------------------- */
-
-    const requestBody = {
-      loanId:
-        data.loanId,
-
-      amount:
-        data.amount,
-
-      transactionReference:
-        data.transactionReference,
-
-      transactionDate:
-        data.transactionDate.toISOString(),
-
-      source:
-        data.source,
-
-      ...(data.rawMessage
-        ? {
-            rawMessage:
-              data.rawMessage,
-          }
-        : {}),
-    };
-
-    console.log(
-      "📤 POST repayment request:",
-      {
-        url: REPAYMENT_API,
-        body: requestBody,
-      },
-    );
-
-    /* -------------------------------------------------------
-       SEND REQUEST
-    ------------------------------------------------------- */
-
-    const response =
-      await fetch(
-        REPAYMENT_API,
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json",
-
-            Accept:
-              "application/json",
-          },
-
-          body: JSON.stringify(
-            requestBody,
-          ),
-        },
-      );
-
-    /* -------------------------------------------------------
-       RESPONSE METADATA
-    ------------------------------------------------------- */
-
-    const contentType =
-      response.headers.get(
-        "content-type",
-      ) ?? "";
-
-    console.log(
-      "📥 Repayment API response:",
-      {
-        status:
-          response.status,
-
-        statusText:
-          response.statusText,
-
-        ok:
-          response.ok,
-
-        contentType,
-      },
-    );
-
-    /* -------------------------------------------------------
-       READ RAW RESPONSE
-       
-       IMPORTANT:
-       We use text() first so we can see exactly what
-       the server returned if JSON parsing fails.
-    ------------------------------------------------------- */
-
-    const rawResponse =
-      await response.text();
-
-    console.log(
-      "📄 Raw repayment API response:",
-      rawResponse,
-    );
-
-    /* -------------------------------------------------------
-       PARSE JSON
-    ------------------------------------------------------- */
-
-    let result:
-      | RepaymentResponse
-      | null = null;
-
-    try {
-      result =
-        JSON.parse(
-          rawResponse,
-        ) as RepaymentResponse;
-
-      console.log(
-        "✅ Parsed repayment response:",
-        result,
-      );
-    } catch (parseError) {
-      console.error(
-        "❌ Repayment API returned invalid JSON.",
-        {
-          parseError,
-          status:
-            response.status,
-          contentType,
-          rawResponse,
-        },
-      );
-
-      throw new Error(
-        `The repayment server returned an invalid response (${response.status}).`,
-      );
-    }
-
-    /* -------------------------------------------------------
-       SERVER/API ERROR
-    ------------------------------------------------------- */
-
-    if (
-      !response.ok ||
-      !result.success
-    ) {
-      console.error(
-        "❌ Repayment API rejected request:",
-        {
-          status:
-            response.status,
-
-          statusText:
-            response.statusText,
-
-          result,
-        },
-      );
-
-      throw new Error(
-        result.error ||
-          `Unable to record repayment. Server returned ${response.status}.`,
-      );
-    }
-
-    /* -------------------------------------------------------
-       REPAYMENT SUCCESS
-    ------------------------------------------------------- */
-
-    console.log(
-      "✅ REPAYMENT RECORDED SUCCESSFULLY",
-      {
-        loanId:
-          data.loanId,
-
-        amount:
-          data.amount,
-
-        transactionReference:
-          data.transactionReference,
-
-        transactionDate:
-          data.transactionDate,
-
-        source:
-          data.source,
-
-        serverResult:
-          result,
-      },
-    );
-
-    /*
-     * IMPORTANT:
-     *
-     * At this point the repayment API has confirmed
-     * success.
-     *
-     * MongoDB/service layer is authoritative.
-     *
-     * Do NOT manually update:
-     *
-     * - amountPaid
-     * - outstandingBalance
-     * - totalFines
-     * - loan status
-     */
-
-    setRepaymentOpen(false);
-    setRepaymentLoan(null);
-
-    /* -------------------------------------------------------
-       REFRESH LOANS
-    ------------------------------------------------------- */
-
-    console.log(
-      "🔄 Refreshing loans after successful repayment...",
-    );
-
-    try {
-      await loadLoans(true);
-
-      console.log(
-        "✅ Loans refreshed successfully after repayment.",
-      );
-    } catch (refreshError) {
-      /*
-       * IMPORTANT:
-       *
-       * The repayment already succeeded.
-       *
-       * A failed refresh MUST NOT be reported as a
-       * failed repayment because that could cause the
-       * user to submit the same payment again.
-       */
-
-      console.error(
-        "⚠️ Repayment succeeded, but loan refresh failed:",
-        refreshError,
-      );
-
-      setError(
-        "Repayment was recorded successfully, but the loan list could not be refreshed. Please refresh the page.",
-      );
-    }
-
-    console.log(
-      "🏁 Repayment submission completed.",
-    );
-  } catch (err) {
-    console.error(
-      "❌ FAILED TO RECORD REPAYMENT:",
-      err,
-    );
-
-    const message =
-      err instanceof Error
-        ? err.message
-        : "Something went wrong while recording the repayment.";
-
-    console.error(
-      "Repayment error message:",
-      message,
-    );
-
-    setError(message);
-
-    /*
-     * Re-throw so the repayment modal can handle
-     * its own loading/error state if required.
-     */
-    throw err;
-  } finally {
-    setRepaymentLoading(false);
-
-    console.log(
-      "🔓 Repayment loading state released.",
-    );
-
-    console.groupEnd();
-  }
-}
-
-
-
-  /* =======================================================
-     DASHBOARD STATISTICS
-  ======================================================= */
-
-  const statistics = useMemo(() => {
-    let totalPrincipal = 0;
-    let totalPaid = 0;
-    let totalOutstanding = 0;
-    let totalFines = 0;
-
-    let activeLoans = 0;
-    let pendingLoans = 0;
-    let completedLoans = 0;
-
-    for (const loan of loans) {
-      totalPrincipal +=
-        Number.isFinite(
-          loan.principal,
-        )
-          ? loan.principal
-          : 0;
-
-      totalPaid +=
-        Number.isFinite(
-          loan.amountPaid,
-        )
-          ? loan.amountPaid
-          : 0;
-
-      totalOutstanding +=
-        Number.isFinite(
-          loan.outstandingBalance,
-        )
-          ? loan.outstandingBalance
-          : 0;
-
-      totalFines +=
-        Number.isFinite(
-          loan.totalFines,
-        )
-          ? loan.totalFines
-          : 0;
-
-      switch (
-        loan.status
+  const handleCloseRepayment =
+    useCallback(() => {
+      if (
+        repaymentLoading
       ) {
-        case "active":
-          activeLoans += 1;
-          break;
-
-        case "pending":
-          pendingLoans += 1;
-          break;
-
-        case "completed":
-          completedLoans += 1;
-          break;
-
-        default:
-          break;
+        return;
       }
-    }
 
-    return {
-      totalLoans:
-        loans.length,
+      setRepaymentOpen(
+        false,
+      );
 
-      activeLoans,
-
-      pendingLoans,
-
-      completedLoans,
-
-      totalPrincipal,
-
-      totalPaid,
-
-      totalOutstanding,
-
-      totalFines,
-    };
-  }, [loans]);
+      setRepaymentLoan(
+        null,
+      );
+    }, [
+      repaymentLoading,
+    ]);
 
   /* =======================================================
-     SERVER-SAFE INITIAL STATE
+     VIEW LOAN TRANSACTION HISTORY
+  ======================================================= */
+
+  const handleViewLoanHistory =
+    useCallback(
+      (loan: Loan) => {
+        /*
+         * Important:
+         *
+         * We set selectedLoan first and open the modal
+         * only with an actual Loan object.
+         *
+         * This prevents the classic:
+         *
+         * "selectedLoan is possibly null"
+         *
+         * problem when building the request URL.
+         */
+
+        if (
+          !loan ||
+          typeof loan.id !==
+            "string" ||
+          !loan.id.trim()
+        ) {
+          setError(
+            "This loan does not have a valid ID.",
+          );
+
+          return;
+        }
+
+        setSelectedLoan(
+          loan,
+        );
+
+        setTransactionHistoryOpen(
+          true,
+        );
+      },
+      [],
+    );
+
+  const handleCloseLoanHistory =
+    useCallback(() => {
+      setTransactionHistoryOpen(
+        false,
+      );
+
+      setSelectedLoan(
+        null,
+      );
+    }, []);
+
+  /* =======================================================
+     REPAYMENT SUBMISSION
+  ======================================================= */
+
+  const handleRepaymentSubmit =
+    useCallback(
+      async (
+        data: {
+          loanId: string;
+          amount: number;
+          transactionReference: string;
+          transactionDate: Date;
+          source: TransactionSource;
+          rawMessage?: string;
+        },
+      ) => {
+        const currentLoan =
+          repaymentLoan;
+
+        if (!currentLoan) {
+          throw new Error(
+            "No repayment loan is selected.",
+          );
+        }
+
+        if (
+          currentLoan.id !==
+          data.loanId
+        ) {
+          throw new Error(
+            "The selected loan has changed. Please reopen the repayment form.",
+          );
+        }
+
+        if (
+          !Number.isFinite(
+            data.amount,
+          ) ||
+          data.amount <= 0
+        ) {
+          throw new Error(
+            "Repayment amount must be greater than zero.",
+          );
+        }
+
+       
+        setRepaymentLoading(
+          true,
+        );
+
+        setError("");
+
+        try {
+          const requestBody = {
+              loanId:
+                data.loanId,
+
+              amount:
+                data.amount,
+
+              ...(data.transactionReference?.trim()
+                ? {
+                    transactionReference:
+                      data.transactionReference.trim(),
+                  }
+                : {}),
+
+              transactionDate:
+                data.transactionDate.toISOString(),
+
+              source:
+                data.source,
+
+              ...(data.rawMessage?.trim()
+                ? {
+                    rawMessage:
+                      data.rawMessage.trim(),
+                  }
+                : {}),
+            };
+
+          const response =
+            await fetch(
+              REPAYMENT_API,
+              {
+                method:
+                  "POST",
+
+                credentials:
+                  "same-origin",
+
+                headers: {
+                  "Content-Type":
+                    "application/json",
+
+                  Accept:
+                    "application/json",
+                },
+
+                body:
+                  JSON.stringify(
+                    requestBody,
+                  ),
+              },
+            );
+
+          const rawResponse =
+            await response.text();
+
+          let result:
+            | RepaymentResponse
+            | null =
+            null;
+
+          try {
+            result =
+              JSON.parse(
+                rawResponse,
+              ) as RepaymentResponse;
+          } catch {
+            throw new Error(
+              `The repayment server returned an invalid response (${response.status}).`,
+            );
+          }
+
+          if (
+            !response.ok ||
+            !result?.success
+          ) {
+            throw new Error(
+              result?.error ||
+                `Unable to record repayment. Server returned ${response.status}.`,
+            );
+          }
+
+          /*
+           * Server remains authoritative for all financial
+           * calculations.
+           */
+
+          setRepaymentOpen(
+            false,
+          );
+
+          setRepaymentLoan(
+            null,
+          );
+
+          /*
+           * Refresh authoritative loan balances.
+           */
+
+          try {
+            await loadLoans(
+              true,
+            );
+          } catch (
+            refreshError
+          ) {
+            console.error(
+              "Repayment succeeded but loan refresh failed:",
+              refreshError,
+            );
+
+            setError(
+              "Repayment was recorded successfully, but the loan list could not be refreshed. Please refresh the page.",
+            );
+          }
+        } catch (
+          err
+        ) {
+          const message =
+            err instanceof Error
+              ? err.message
+              : "Something went wrong while recording the repayment.";
+
+          setError(
+            message,
+          );
+
+          throw err;
+        } finally {
+          setRepaymentLoading(
+            false,
+          );
+        }
+      },
+      [
+        repaymentLoan,
+        loadLoans,
+      ],
+    );
+
+  /* =======================================================
+     STATISTICS
+  ======================================================= */
+
+  const statistics =
+    useMemo(() => {
+      let totalPrincipal =
+        0;
+
+      let totalPaid =
+        0;
+
+      let totalOutstanding =
+        0;
+
+      let totalFines =
+        0;
+
+      let activeLoans =
+        0;
+
+      let pendingLoans =
+        0;
+
+      let completedLoans =
+        0;
+
+      for (
+        const loan of loans
+      ) {
+        totalPrincipal +=
+          Number.isFinite(
+            loan.principal,
+          )
+            ? loan.principal
+            : 0;
+
+        totalPaid +=
+          Number.isFinite(
+            loan.amountPaid,
+          )
+            ? loan.amountPaid
+            : 0;
+
+        totalOutstanding +=
+          Number.isFinite(
+            loan.outstandingBalance,
+          )
+            ? Math.max(
+                0,
+                loan.outstandingBalance,
+              )
+            : 0;
+
+        totalFines +=
+          Number.isFinite(
+            loan.totalFines,
+          )
+            ? Math.max(
+                0,
+                loan.totalFines,
+              )
+            : 0;
+
+        switch (
+          loan.status
+        ) {
+          case "active":
+            activeLoans +=
+              1;
+            break;
+
+          case "pending":
+            pendingLoans +=
+              1;
+            break;
+
+          case "completed":
+            completedLoans +=
+              1;
+            break;
+
+          default:
+            break;
+        }
+      }
+
+      return {
+        totalLoans:
+          loans.length,
+
+        activeLoans,
+
+        pendingLoans,
+
+        completedLoans,
+
+        totalPrincipal,
+
+        totalPaid,
+
+        totalOutstanding,
+
+        totalFines,
+      };
+    }, [loans]);
+
+  /* =======================================================
+     HYDRATION
   ======================================================= */
 
   if (!mounted) {
@@ -770,93 +819,54 @@ async function handleRepaymentSubmit(
   }
 
   /* =======================================================
-     PAGE
+     MAIN PAGE
   ======================================================= */
 
   return (
     <main className="min-h-[100dvh] w-full max-w-full overflow-x-clip bg-[#050505] text-white">
-      {/* =====================================================
-          TOP BAR
-      ===================================================== */}
-
       <TopBar />
 
-      {/* =====================================================
-          PAGE BODY
-      ===================================================== */}
-
       <div className="w-full min-w-0 pt-16">
-        <div
-          className="
-            mx-auto
-            w-full
-            min-w-0
-            max-w-[1800px]
-            px-4
-            py-6
-            sm:px-6
-            sm:py-8
-            lg:px-8
-            lg:py-10
-            xl:px-10
-            2xl:px-12
-          "
-        >
+        <div className="mx-auto w-full min-w-0 max-w-[1800px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10 xl:px-10 2xl:px-12">
+
           {/* =================================================
               HEADER
           ================================================= */}
 
-          <section className="mb-6 w-full min-w-0 sm:mb-8">
-            <div
-              className="
-                flex
-                w-full
-                min-w-0
-                flex-col
-                gap-5
-                lg:flex-row
-                lg:items-end
-                lg:justify-between
-              "
-            >
-              {/* TITLE */}
+          <header className="mb-6">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
 
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-2">
-                  <Banknote
-                    size={16}
-                    strokeWidth={1.8}
-                    className="shrink-0 text-yellow-400"
-                  />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
 
-                  <p className="truncate text-xs font-medium uppercase tracking-[0.22em] text-yellow-500/60">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-yellow-500/10 text-yellow-400">
+                    <Banknote
+                      size={16}
+                      strokeWidth={1.8}
+                    />
+                  </div>
+
+                  <span className="text-[10px] font-medium uppercase tracking-[0.22em] text-yellow-500/60">
                     Loans
-                  </p>
+                  </span>
+
                 </div>
 
-                <h1 className="mt-2 truncate text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+                <h1 className="mt-3 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
                   Loan Management
                 </h1>
 
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-white/35">
-                  Monitor loans, repayments,
-                  outstanding balances and fines.
+                  Monitor lending,
+                  repayments,
+                  balances and
+                  loan performance
+                  from one place.
                 </p>
               </div>
 
-              {/* ACTIONS */}
+              <div className="flex w-full gap-2 sm:w-auto">
 
-              <div
-                className="
-                  flex
-                  w-full
-                  min-w-0
-                  shrink-0
-                  items-center
-                  gap-2
-                  lg:w-auto
-                "
-              >
                 {/* REFRESH */}
 
                 <button
@@ -881,7 +891,7 @@ async function handleRepaymentSubmit(
                     bg-white/[0.025]
                     text-white/45
                     transition
-                    hover:border-white/[0.12]
+                    hover:border-white/[0.14]
                     hover:bg-white/[0.05]
                     hover:text-white
                     disabled:cursor-not-allowed
@@ -923,24 +933,21 @@ async function handleRepaymentSubmit(
                     px-4
                     text-sm
                     font-medium
-                    text-white/65
+                    text-white/60
                     transition
                     hover:border-yellow-500/20
                     hover:bg-white/[0.05]
                     hover:text-white
-                    lg:w-auto
-                    lg:flex-none
+                    sm:flex-none
                   "
-                  aria-label="Open loan settings"
                 >
                   <Settings2
                     size={17}
                     strokeWidth={1.8}
-                    className="shrink-0"
                   />
 
-                  <span className="truncate">
-                    Loan Settings
+                  <span>
+                    Settings
                   </span>
                 </button>
 
@@ -965,52 +972,37 @@ async function handleRepaymentSubmit(
                     text-sm
                     font-semibold
                     text-black
+                    shadow-[0_8px_30px_rgba(234,179,8,0.08)]
                     transition
                     hover:bg-yellow-400
                     active:scale-[0.98]
-                    lg:w-auto
-                    lg:flex-none
+                    sm:flex-none
                   "
                 >
                   <Plus
                     size={17}
                     strokeWidth={2}
-                    className="shrink-0"
                   />
 
-                  <span className="truncate">
+                  <span>
                     New Loan
                   </span>
                 </button>
+
               </div>
             </div>
-          </section>
+          </header>
 
           {/* =================================================
               ERROR
           ================================================= */}
 
           {error && (
-            <section className="mb-6 w-full min-w-0">
-              <div
-                className="
-                  flex
-                  w-full
-                  min-w-0
-                  flex-col
-                  gap-4
-                  rounded-2xl
-                  border
-                  border-red-500/15
-                  bg-red-500/[0.05]
-                  p-4
-                  sm:flex-row
-                  sm:items-center
-                  sm:justify-between
-                  sm:px-5
-                "
-              >
+            <section className="mb-6">
+              <div className="flex flex-col gap-4 rounded-2xl border border-red-500/15 bg-red-500/[0.045] p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+
                 <div className="flex min-w-0 items-start gap-3">
+
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-400">
                     <AlertCircle
                       size={18}
@@ -1019,13 +1011,15 @@ async function handleRepaymentSubmit(
                   </div>
 
                   <div className="min-w-0">
+
                     <p className="text-sm font-medium text-red-300">
                       Loan operation failed
                     </p>
 
-                    <p className="mt-1 break-words text-xs leading-5 text-red-300/50">
+                    <p className="mt-1 break-words text-xs leading-5 text-red-300/55">
                       {error}
                     </p>
+
                   </div>
                 </div>
 
@@ -1035,23 +1029,11 @@ async function handleRepaymentSubmit(
                     setError("");
                     void loadLoans();
                   }}
-                  className="
-                    h-10
-                    shrink-0
-                    rounded-xl
-                    border
-                    border-red-400/10
-                    bg-red-400/[0.06]
-                    px-4
-                    text-xs
-                    font-medium
-                    text-red-300
-                    transition
-                    hover:bg-red-400/10
-                  "
+                  className="h-10 shrink-0 rounded-xl border border-red-400/10 bg-red-400/[0.06] px-4 text-xs font-medium text-red-300 transition hover:bg-red-400/10"
                 >
                   Try again
                 </button>
+
               </div>
             </section>
           )}
@@ -1064,7 +1046,7 @@ async function handleRepaymentSubmit(
             <LoansLoading />
           ) : (
             <>
-              <section className="w-full min-w-0">
+              <section>
                 <LoanDashboard
                   totalLoans={
                     statistics.totalLoans
@@ -1094,149 +1076,96 @@ async function handleRepaymentSubmit(
               </section>
 
               {/* =================================================
-                  LOAN DIRECTORY
+                  SEARCH
               ================================================= */}
 
-              <section className="mt-6 w-full min-w-0">
-                {/* =================================================
-                    DIRECTORY HEADER
-                ================================================= */}
+              <section className="mt-7">
+                <LoanSearch
+                  value={
+                    loanFilters
+                  }
+                  onChange={
+                    setLoanFilters
+                  }
+                  onReset={() =>
+                    setLoanFilters(
+                      DEFAULT_LOAN_FILTERS,
+                    )
+                  }
+                  loanTypes={
+                    loanTypes
+                  }
+                />
+              </section>
 
-                <div className="mb-4 flex items-center justify-between gap-3">
+              {/* =================================================
+                  DIRECTORY
+              ================================================= */}
+
+              <section className="mt-5">
+
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+
                   <div className="min-w-0">
+
                     <h2 className="text-sm font-semibold text-white">
                       Loan Directory
                     </h2>
 
                     <p className="mt-1 text-xs text-white/30">
-                      {loans.length.toLocaleString(
+                      {filteredLoans.length.toLocaleString(
                         "en-KE",
                       )}{" "}
-                      {loans.length === 1
+                      {filteredLoans.length ===
+                      1
                         ? "loan"
                         : "loans"}{" "}
-                      recorded
+                      shown
                     </p>
+
                   </div>
+
+                  <div className="w-fit rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-1.5 text-[9px] uppercase tracking-[0.12em] text-white/25">
+                    {statistics.activeLoans}{" "}
+                    active
+                  </div>
+
                 </div>
 
-                {/* =================================================
-                    EMPTY
-                ================================================= */}
+                {/* EMPTY */}
 
-                {loans.length === 0 ? (
-                  <div
-                    className="
-                      flex
-                      min-h-[220px]
-                      w-full
-                      items-center
-                      justify-center
-                      rounded-2xl
-                      border
-                      border-yellow-500/10
-                      bg-yellow-500/[0.025]
-                      p-6
-                    "
-                  >
-                    <div className="max-w-md text-center">
-                      <div
-                        className="
-                          mx-auto
-                          flex
-                          h-12
-                          w-12
-                          items-center
-                          justify-center
-                          rounded-2xl
-                          border
-                          border-white/[0.08]
-                          bg-white/[0.03]
-                          text-white/25
-                        "
-                      >
-                        <Banknote
-                          size={21}
-                          strokeWidth={1.5}
-                        />
-                      </div>
-
-                      <h2 className="mt-4 text-sm font-semibold text-white/60">
-                        No loans recorded
-                      </h2>
-
-                      <p className="mt-2 text-xs leading-5 text-white/25">
-                        Loans will appear here
-                        after they are created.
-                      </p>
-
-                      <button
-                        type="button"
-                        onClick={
-                          handleNewLoan
-                        }
-                        className="
-                          mt-5
-                          inline-flex
-                          min-h-10
-                          items-center
-                          justify-center
-                          gap-2
-                          rounded-xl
-                          bg-yellow-500
-                          px-4
-                          text-xs
-                          font-semibold
-                          text-black
-                          transition
-                          hover:bg-yellow-400
-                        "
-                      >
-                        <Plus
-                          size={16}
-                        />
-
-                        Create First Loan
-                      </button>
-                    </div>
-                  </div>
+                {filteredLoans.length ===
+                0 ? (
+                  loans.length ===
+                  0 ? (
+                    <EmptyLoans
+                      onCreate={
+                        handleNewLoan
+                      }
+                    />
+                  ) : (
+                    <NoMatchingLoans
+                      onReset={() =>
+                        setLoanFilters(
+                          DEFAULT_LOAN_FILTERS,
+                        )
+                      }
+                    />
+                  )
                 ) : (
                   <>
                     {/* =================================================
-                        DESKTOP TABLE
+                        DESKTOP
                     ================================================= */}
 
-                    <div className="hidden w-full min-w-0 lg:block">
-                      <div
-                        className="
-                          w-full
-                          min-w-0
-                          overflow-hidden
-                          rounded-2xl
-                          border
-                          border-white/[0.08]
-                          bg-white/[0.025]
-                        "
-                      >
-                        {/* FIXED HEADER */}
+                    <div className="hidden lg:block">
 
-                        <div
-                          className="
-                            grid
-                            grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_100px]
-                            gap-4
-                            border-b
-                            border-white/[0.06]
-                            bg-[#080808]
-                            px-4
-                            py-3
-                            text-[10px]
-                            font-medium
-                            uppercase
-                            tracking-wider
-                            text-white/25
-                          "
-                        >
+                      <div className="overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02] shadow-[0_20px_80px_rgba(0,0,0,0.18)]">
+
+                        {/* HEADER */}
+
+                        <div className="grid grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_120px] gap-4 border-b border-white/[0.06] bg-[#080808] px-4 py-3 text-[9px] font-medium uppercase tracking-[0.14em] text-white/25">
+
                           <span>
                             Loan
                           </span>
@@ -1258,24 +1187,18 @@ async function handleRepaymentSubmit(
                           </span>
 
                           <span className="text-right">
-                            Action
+                            Actions
                           </span>
+
                         </div>
 
-                        {/* SCROLLABLE ROWS */}
+                        {/* BODY */}
 
-                        <div
-                          className="
-                            max-h-[400px]
-                            overflow-y-auto
-                            overscroll-contain
-                            scrollbar-thin
-                            scrollbar-track-transparent
-                            scrollbar-thumb-white/10
-                          "
-                        >
+                        <div className="h-[200px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
+
                           <div className="divide-y divide-white/[0.05]">
-                            {loans.map(
+
+                            {filteredLoans.map(
                               (
                                 loan,
                               ) => (
@@ -1289,97 +1212,172 @@ async function handleRepaymentSubmit(
                                   onRepay={
                                     handleOpenRepayment
                                   }
+                                  onView={
+                                    handleViewLoanHistory
+                                  }
                                 />
                               ),
                             )}
+
                           </div>
+
                         </div>
+
                       </div>
+
                     </div>
 
                     {/* =================================================
-                        MOBILE / TABLET
+                        MOBILE
                     ================================================= */}
 
-                    <div
-                      className="
-                        grid
-                        max-h-[600px]
-                        w-full
-                        min-w-0
-                        gap-3
-                        overflow-y-auto
-                        overscroll-contain
-                        lg:hidden
-                        scrollbar-thin
-                        scrollbar-track-transparent
-                        scrollbar-thumb-white/10
-                      "
-                    >
-                      {loans.map(
-                        (
-                          loan,
-                        ) => (
-                          <div
-                            key={
-                              loan.id
-                            }
-                            className="min-w-0"
-                          >
-                            <LoanCard
-                              loan={
-                                loan
+                    <div className="lg:hidden">
+
+                      <div className="flex w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden scroll-smooth overscroll-x-contain touch-pan-x scrollbar-none">
+
+                        {filteredLoans.map(
+                          (
+                            loan,
+                          ) => (
+                            <div
+                              key={
+                                loan.id
                               }
-                            />
+                              className="
+                                w-full
+                                min-w-full
+                                shrink-0
+                                snap-start
+                                px-0.5
+                              "
+                            >
 
-                            {/* MOBILE REPAYMENT ACTION */}
+                              <LoanCard
+                                loan={
+                                  loan
+                                }
+                              />
 
-                            {loan.status ===
-                              "active" &&
-                              Number.isFinite(
-                                loan.outstandingBalance,
-                              ) &&
-                              loan.outstandingBalance >
-                                0 && (
+                              <div className="mt-2 flex gap-2">
+
+                                {/* VIEW */}
+
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    handleOpenRepayment(
+                                    handleViewLoanHistory(
                                       loan,
                                     )
                                   }
                                   className="
-                                    mt-2
                                     flex
                                     h-10
-                                    w-full
+                                    w-10
+                                    shrink-0
                                     items-center
                                     justify-center
-                                    gap-2
                                     rounded-xl
                                     border
-                                    border-yellow-500/15
-                                    bg-yellow-500/[0.06]
-                                    text-xs
-                                    font-semibold
-                                    text-yellow-400
+                                    border-white/[0.08]
+                                    bg-white/[0.03]
+                                    text-white/40
                                     transition
-                                    hover:border-yellow-500/25
-                                    hover:bg-yellow-500/10
+                                    hover:bg-white/[0.06]
+                                    hover:text-white
+                                    active:scale-[0.98]
                                   "
+                                  aria-label={`View transaction history for ${loan.loanNumber}`}
+                                  title="View transaction history"
                                 >
-                                  <Banknote
-                                    size={
-                                      15
-                                    }
+                                  <Eye
+                                    size={16}
+                                    strokeWidth={1.8}
                                   />
-
-                                  Record Repayment
                                 </button>
+
+                                {/* REPAY */}
+
+                                {isRepayable(
+                                  loan,
+                                ) && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleOpenRepayment(
+                                        loan,
+                                      )
+                                    }
+                                    className="
+                                      flex
+                                      h-10
+                                      flex-1
+                                      items-center
+                                      justify-center
+                                      gap-2
+                                      rounded-xl
+                                      border
+                                      border-yellow-500/15
+                                      bg-yellow-500/[0.06]
+                                      text-xs
+                                      font-semibold
+                                      text-yellow-400
+                                      transition
+                                      hover:border-yellow-500/25
+                                      hover:bg-yellow-500/10
+                                      active:scale-[0.99]
+                                    "
+                                  >
+                                    <Banknote
+                                      size={15}
+                                      strokeWidth={1.8}
+                                    />
+
+                                    Record Repayment
+                                  </button>
+                                )}
+
+                              </div>
+
+                            </div>
+                          ),
+                        )}
+
+                      </div>
+
+                      {filteredLoans.length >
+                        1 && (
+                        <div className="mt-3 border-t border-white/[0.05] pt-2.5">
+
+                          <div className="flex items-center justify-center gap-1.5">
+
+                            {filteredLoans
+                              .slice(
+                                0,
+                                Math.min(
+                                  filteredLoans.length,
+                                  8,
+                                ),
+                              )
+                              .map(
+                                (
+                                  loan,
+                                ) => (
+                                  <span
+                                    key={`loan-dot-${loan.id}`}
+                                    className="h-1 w-4 rounded-full bg-white/10"
+                                  />
+                                ),
                               )}
+
                           </div>
-                        ),
+
+                          <p className="mt-1 text-center text-[9px] text-white/15">
+                            Swipe left for more loans
+                          </p>
+
+                        </div>
                       )}
+
                     </div>
                   </>
                 )}
@@ -1389,37 +1387,31 @@ async function handleRepaymentSubmit(
                   FOOTER
               ================================================= */}
 
-              {loans.length > 0 && (
-                <div
-                  className="
-                    mt-5
-                    flex
-                    w-full
-                    min-w-0
-                    flex-col
-                    gap-1
-                    px-1
-                    sm:flex-row
-                    sm:items-center
-                    sm:justify-between
-                  "
-                >
+              {loans.length >
+                0 && (
+                <div className="mt-5 flex flex-col gap-2 px-1 sm:flex-row sm:items-center sm:justify-between">
+
                   <p className="text-[10px] text-white/20">
                     Showing{" "}
+                    {filteredLoans.length.toLocaleString(
+                      "en-KE",
+                    )}{" "}
+                    of{" "}
                     {loans.length.toLocaleString(
                       "en-KE",
                     )}{" "}
-                    {loans.length === 1
-                      ? "loan"
-                      : "loans"}
+                    loans
                   </p>
 
                   <p className="text-[10px] text-white/20">
-                    Data synchronized with
-                    MongoDB
+                    Financial records remain
+                    authoritative in the domain
+                    services.
                   </p>
+
                 </div>
               )}
+
             </>
           )}
         </div>
@@ -1444,7 +1436,7 @@ async function handleRepaymentSubmit(
       />
 
       {/* =====================================================
-          LOAN SETTINGS MODAL
+          SETTINGS MODAL
       ===================================================== */}
 
       <LoanSettingsForm
@@ -1477,7 +1469,129 @@ async function handleRepaymentSubmit(
           repaymentLoading
         }
       />
+
+      {/* =====================================================
+          LOAN TRANSACTION HISTORY MODAL
+      ===================================================== */}
+
+      <LoanTransactionModal
+        loan={
+          selectedLoan
+        }
+        open={
+          transactionHistoryOpen
+        }
+        onClose={
+          handleCloseLoanHistory
+        }
+      />
     </main>
+  );
+}
+
+/* =========================================================
+   REPAYMENT HELPER
+========================================================= */
+
+function isRepayable(
+  loan: Loan,
+): boolean {
+  return (
+    loan.status ===
+      "active" &&
+    Number.isFinite(
+      loan.outstandingBalance,
+    ) &&
+    loan.outstandingBalance >
+      0
+  );
+}
+
+/* =========================================================
+   EMPTY LOANS
+========================================================= */
+
+function EmptyLoans({
+  onCreate,
+}: {
+  onCreate: () => void;
+}) {
+  return (
+    <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-yellow-500/10 bg-yellow-500/[0.018] p-6">
+
+      <div className="max-w-md text-center">
+
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.03] text-yellow-400/70">
+          <Banknote
+            size={24}
+            strokeWidth={1.5}
+          />
+        </div>
+
+        <h2 className="mt-5 text-base font-semibold text-white/70">
+          No loans yet
+        </h2>
+
+        <p className="mt-2 text-xs leading-6 text-white/25">
+          Create the first loan to start
+          tracking lending, repayments and
+          outstanding balances.
+        </p>
+
+        <button
+          type="button"
+          onClick={
+            onCreate
+          }
+          className="mt-6 inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-yellow-500 px-4 text-xs font-semibold text-black transition hover:bg-yellow-400 active:scale-[0.98]"
+        >
+          <Plus
+            size={16}
+            strokeWidth={2}
+          />
+
+          Create First Loan
+        </button>
+
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   NO MATCHING LOANS
+========================================================= */
+
+function NoMatchingLoans({
+  onReset,
+}: {
+  onReset: () => void;
+}) {
+  return (
+    <div className="flex min-h-[200px] items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.02] p-6">
+
+      <div className="text-center">
+
+        <p className="text-sm font-medium text-white/55">
+          No matching loans
+        </p>
+
+        <p className="mt-1 text-xs leading-5 text-white/25">
+          Try changing your search or filters.
+        </p>
+
+        <button
+          type="button"
+          onClick={
+            onReset
+          }
+          className="mt-4 inline-flex h-9 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 text-xs font-medium text-white/45 transition hover:bg-white/[0.06] hover:text-white"
+        >
+          Clear filters
+        </button>
+
+      </div>
+    </div>
   );
 }
 
@@ -1488,9 +1602,17 @@ async function handleRepaymentSubmit(
 function LoanRow({
   loan,
   onRepay,
+  onView,
 }: {
   loan: Loan;
-  onRepay: (loan: Loan) => void;
+
+  onRepay: (
+    loan: Loan,
+  ) => void;
+
+  onView: (
+    loan: Loan,
+  ) => void;
 }) {
   function formatMoney(
     value: number,
@@ -1519,71 +1641,66 @@ function LoanRow({
       status
     ) {
       case "active":
-        return "bg-emerald-500/10 text-emerald-300 border-emerald-500/20";
+        return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
 
       case "pending":
-        return "bg-amber-500/10 text-amber-300 border-amber-500/20";
+        return "border-amber-500/20 bg-amber-500/10 text-amber-300";
 
       case "completed":
-        return "bg-blue-500/10 text-blue-300 border-blue-500/20";
+        return "border-blue-500/20 bg-blue-500/10 text-blue-300";
 
       case "cancelled":
-        return "bg-red-500/10 text-red-300 border-red-500/20";
+        return "border-red-500/20 bg-red-500/10 text-red-300";
 
       default:
-        return "bg-white/5 text-white/60 border-white/10";
+        return "border-white/10 bg-white/5 text-white/60";
     }
   }
 
   const canRepay =
-    loan.status ===
-      "active" &&
-    Number.isFinite(
-      loan.outstandingBalance,
-    ) &&
-    loan.outstandingBalance >
-      0;
+    isRepayable(
+      loan,
+    );
 
   return (
-    <div
-      className="
-        grid
-        grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_100px]
-        items-center
-        gap-4
-        px-4
-        py-4
-        transition
-        hover:bg-white/[0.025]
-      "
-    >
+    <div className="grid grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_120px] items-center gap-4 px-4 py-3.5 transition hover:bg-white/[0.022]">
+
       {/* LOAN */}
 
       <div className="min-w-0">
-        <p className="truncate text-xs font-medium text-white">
-          {loan.loanNumber}
+
+        <p className="truncate text-xs font-semibold text-white/85">
+          {loan.loanNumber ||
+            "—"}
         </p>
 
-        <p className="mt-1 truncate text-[10px] text-white/30">
-          {loan.type} loan
+        <p className="mt-1 truncate text-[10px] text-white/25">
+          {loan.type ||
+            "loan"}{" "}
+          loan
         </p>
+
       </div>
 
       {/* MEMBER */}
 
       <div className="min-w-0">
+
         <p className="truncate text-xs text-white/70">
-          {loan.memberName}
+          {loan.memberName ||
+            "Unknown member"}
         </p>
 
-        <p className="mt-1 truncate text-[10px] text-white/30">
-          {loan.memberNumber}
+        <p className="mt-1 truncate text-[10px] text-white/25">
+          {loan.memberNumber ||
+            "—"}
         </p>
+
       </div>
 
       {/* PRINCIPAL */}
 
-      <p className="truncate text-xs font-medium text-white/70">
+      <p className="truncate text-xs font-medium text-white/65">
         {formatMoney(
           loan.principal,
         )}
@@ -1600,16 +1717,53 @@ function LoanRow({
       {/* STATUS */}
 
       <span
-        className={`w-fit rounded-full border px-2.5 py-1 text-[10px] capitalize ${statusClass(
+        className={`w-fit rounded-full border px-2.5 py-1 text-[9px] font-medium capitalize ${statusClass(
           loan.status,
         )}`}
       >
         {loan.status}
       </span>
 
-      {/* ACTION */}
+      {/* ACTIONS */}
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-1">
+
+        {/* EYE */}
+
+        <button
+          type="button"
+          onClick={() =>
+            onView(
+              loan,
+            )
+          }
+          className="
+            flex
+            h-8
+            w-8
+            shrink-0
+            items-center
+            justify-center
+            rounded-lg
+            text-white/30
+            transition
+            hover:bg-white/[0.06]
+            hover:text-white
+            focus:outline-none
+            focus:ring-1
+            focus:ring-white/15
+          "
+          aria-label={`View transaction history for ${loan.loanNumber}`}
+          title="View transaction history"
+        >
+          <Eye
+            size={15}
+            strokeWidth={1.8}
+          />
+        </button>
+
+        {/* REPAY */}
+
         {canRepay ? (
           <button
             type="button"
@@ -1645,25 +1799,26 @@ function LoanRow({
             Repay
           </button>
         ) : (
-          <span className="text-[10px] text-white/15">
+          <span className="px-1 text-[10px] text-white/15">
             —
           </span>
         )}
+
       </div>
     </div>
   );
 }
 
 /* =========================================================
-   LOADING
+   LOADING STATE
 ========================================================= */
 
 function LoansLoading() {
   return (
-    <div className="w-full min-w-0 space-y-5 sm:space-y-6">
-      {/* DASHBOARD */}
+    <div className="w-full min-w-0 animate-pulse space-y-6">
 
       <section className="grid w-full grid-cols-2 gap-3 lg:grid-cols-4">
+
         {Array.from({
           length: 8,
         }).map(
@@ -1675,49 +1830,21 @@ function LoansLoading() {
               key={
                 index
               }
-              className="
-                h-[105px]
-                animate-pulse
-                rounded-2xl
-                border
-                border-white/[0.06]
-                bg-white/[0.025]
-              "
+              className="h-[105px] rounded-2xl border border-white/[0.06] bg-white/[0.025]"
             />
           ),
         )}
+
       </section>
 
-      {/* MOBILE */}
+      <section className="h-[72px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
 
-      <section className="grid w-full gap-3 lg:hidden">
-        {Array.from({
-          length: 3,
-        }).map(
-          (
-            _,
-            index,
-          ) => (
-            <div
-              key={
-                index
-              }
-              className="
-                h-[210px]
-                animate-pulse
-                rounded-2xl
-                border
-                border-white/[0.06]
-                bg-white/[0.025]
-              "
-            />
-          ),
-        )}
+      <section className="hidden h-[280px] rounded-2xl border border-white/[0.06] bg-white/[0.025] lg:block" />
+
+      <section className="lg:hidden">
+        <div className="h-[230px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
       </section>
 
-      {/* DESKTOP */}
-
-      <section className="hidden h-[400px] animate-pulse rounded-2xl border border-white/[0.06] bg-white/[0.025] lg:block" />
     </div>
   );
 }

@@ -71,16 +71,7 @@ export default function LoanDashboard({
 }: LoanDashboardProps) {
   return (
     <section className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-white">
-          Loans
-        </h1>
-
-        <p className="mt-1 text-sm text-white/50">
-          Monitor loans, repayments, outstanding balances and fines.
-        </p>
-      </div>
-
+      
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Total Loans"
