@@ -4,7 +4,7 @@ import { put } from "@vercel/blob";
 
 import clientPromise from "@/lib/mongodb";
 
-const DB_NAME = process.env.MONGODB_DB || "geoshua";
+const DB_NAME = process.env.MONGODB_DB || "geo-shua";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 
