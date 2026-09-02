@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import {
   CalendarDays,
   CreditCard,
@@ -46,7 +48,7 @@ type MemberViewModalProps = {
 
 function formatMoney(
   value: number | null | undefined
-) {
+): string {
   if (
     value === null ||
     value === undefined ||
@@ -63,7 +65,7 @@ function formatMoney(
 
 function formatDate(
   value: string | undefined
-) {
+): string {
   if (!value) {
     return "—";
   }
@@ -83,7 +85,7 @@ function formatDate(
 
 function getFullName(
   member: MemberWithFinancialSummary
-) {
+): string {
   return [
     member.firstName,
     member.middleName,
@@ -95,10 +97,18 @@ function getFullName(
 
 function getInitials(
   member: MemberWithFinancialSummary
-) {
+): string {
   return `${member.firstName?.charAt(0) ?? ""}${
     member.lastName?.charAt(0) ?? ""
   }`.toUpperCase();
+}
+
+function getProfileImageUrl(
+  membershipNumber: string
+): string {
+  return `/api/members/photos/${encodeURIComponent(
+    membershipNumber
+  )}`;
 }
 
 /* =========================================================
@@ -129,6 +139,13 @@ export default function MemberViewModal({
   ]
     .filter(Boolean)
     .join(", ");
+
+  const profileImageUrl =
+    member.profileImage
+      ? getProfileImageUrl(
+          member.membershipNumber
+        )
+      : null;
 
   return (
     <div
@@ -207,47 +224,25 @@ export default function MemberViewModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-6 p-5 sm:p-6">
+
             {/* =================================================
                 PROFILE
             ================================================= */}
 
             <section className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5">
               <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+
                 <div className="shrink-0">
-                  {member.profileImage ? (
-                    <img
-                      src={member.profileImage}
+                  {profileImageUrl ? (
+                    <ProfileImage
+                      src={profileImageUrl}
                       alt={fullName}
-                      className="
-                        h-20
-                        w-20
-                        rounded-2xl
-                        object-cover
-                        ring-1
-                        ring-white/10
-                      "
+                      initials={initials}
                     />
                   ) : (
-                    <div
-                      className="
-                        flex
-                        h-20
-                        w-20
-                        items-center
-                        justify-center
-                        rounded-2xl
-                        bg-sky-400/10
-                        text-xl
-                        font-bold
-                        text-sky-300
-                        ring-1
-                        ring-sky-400/15
-                      "
-                    >
-                      {initials || (
-                        <UserRound className="h-8 w-8" />
-                      )}
-                    </div>
+                    <InitialsAvatar
+                      initials={initials}
+                    />
                   )}
                 </div>
 
@@ -545,7 +540,9 @@ export default function MemberViewModal({
             <InfoSection title="Membership Information">
               <DetailValue
                 label="Membership Number"
-                value={member.membershipNumber}
+                value={
+                  member.membershipNumber
+                }
                 icon={
                   <CreditCard className="h-3.5 w-3.5" />
                 }
@@ -574,12 +571,16 @@ export default function MemberViewModal({
             <InfoSection title="Next of Kin">
               <DetailValue
                 label="Name"
-                value={member.nextOfKinName}
+                value={
+                  member.nextOfKinName
+                }
               />
 
               <DetailValue
                 label="Phone"
-                value={member.nextOfKinPhone}
+                value={
+                  member.nextOfKinPhone
+                }
               />
 
               <DetailValue
@@ -597,7 +598,9 @@ export default function MemberViewModal({
             <InfoSection title="Record Information">
               <DetailValue
                 label="Created By"
-                value={member.createdBy}
+                value={
+                  member.createdBy
+                }
                 icon={
                   <ShieldCheck className="h-3.5 w-3.5" />
                 }
@@ -612,7 +615,9 @@ export default function MemberViewModal({
 
               <DetailValue
                 label="Updated By"
-                value={member.updatedBy}
+                value={
+                  member.updatedBy
+                }
               />
 
               <DetailValue
@@ -723,6 +728,80 @@ export default function MemberViewModal({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   PROFILE IMAGE
+========================================================= */
+
+function ProfileImage({
+  src,
+  alt,
+  initials,
+}: {
+  src: string;
+  alt: string;
+  initials: string;
+}) {
+  const [failed, setFailed] =
+    useState(false);
+
+  if (failed) {
+    return (
+      <InitialsAvatar
+        initials={initials}
+      />
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      onError={() => setFailed(true)}
+      className="
+        h-24
+        w-24
+        rounded-2xl
+        object-cover
+        ring-1
+        ring-white/10
+      "
+    />
+  );
+}
+
+/* =========================================================
+   INITIALS AVATAR
+========================================================= */
+
+function InitialsAvatar({
+  initials,
+}: {
+  initials: string;
+}) {
+  return (
+    <div
+      className="
+        flex
+        h-24
+        w-24
+        items-center
+        justify-center
+        rounded-2xl
+        bg-sky-400/10
+        text-xl
+        font-bold
+        text-sky-300
+        ring-1
+        ring-sky-400/15
+      "
+    >
+      {initials || (
+        <UserRound className="h-8 w-8" />
+      )}
     </div>
   );
 }
