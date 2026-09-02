@@ -1449,7 +1449,7 @@ export default function DashboardPage() {
                     }
                   />
                 </section>
-                <SmsInboxMonitor />
+                
 
                 {/* =================================================
                     FOOTER
@@ -1459,6 +1459,7 @@ export default function DashboardPage() {
                   <p className="text-[10px] text-white/20">
                     GEO-SHUA SACCO Management
                   </p>
+
 
                   <p className="text-[10px] text-white/20">
                     Financial data sourced from domain APIs
@@ -1878,6 +1879,11 @@ function MobileDashboard({
           </div>
         </div>
       </button>
+       {/* =====================================================
+          SMS INGESTION MONITOR
+      ===================================================== */}
+
+      <SmsInboxMonitor />
 
       {/* =====================================================
           RECENT ACTIVITY
