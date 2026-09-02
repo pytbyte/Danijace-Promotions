@@ -56,7 +56,9 @@ function calculateProgress(loan: Loan): number {
     ? Math.max(0, loan.amountPaid)
     : 0;
 
-  const outstanding = Number.isFinite(loan.outstandingBalance)
+  const outstanding = Number.isFinite(
+    loan.outstandingBalance,
+  )
     ? Math.max(0, loan.outstandingBalance)
     : 0;
 
@@ -76,12 +78,16 @@ function getStatusLabel(loan: Loan): string {
   switch (loan.status) {
     case "active":
       return "Active";
+
     case "completed":
       return "Completed";
+
     case "pending":
       return "Pending";
+
     case "cancelled":
       return "Cancelled";
+
     default:
       return loan.status;
   }
@@ -162,20 +168,31 @@ export default function LoanCard({
       className="
         w-full
         overflow-hidden
-        rounded-3xl
+        rounded-[28px]
         border
-        border-border/60
-        bg-background
-        shadow-sm
+        border-sky-200/70
+        bg-sky-50/70
+        shadow-[0_8px_30px_rgba(14,165,233,0.08)]
         transition
-        dark:border-white/10
+        dark:border-sky-900/40
+        dark:bg-slate-950
+        dark:shadow-[0_8px_30px_rgba(0,0,0,0.25)]
       "
     >
       {/* =====================================================
           HEADER
       ====================================================== */}
 
-      <div className="border-b border-border/50 px-5 pb-4 pt-5 dark:border-white/10">
+      <div
+        className="
+          border-b
+          border-sky-200/60
+          px-5
+          pb-4
+          pt-5
+          dark:border-sky-900/30
+        "
+      >
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <div
@@ -191,6 +208,8 @@ export default function LoanCard({
                 text-sm
                 font-bold
                 text-sky-600
+                ring-1
+                ring-sky-500/10
                 dark:text-sky-400
               "
             >
@@ -225,7 +244,15 @@ export default function LoanCard({
 
         <div className="mt-4 flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+            <p
+              className="
+                text-[11px]
+                font-medium
+                uppercase
+                tracking-[0.12em]
+                text-muted-foreground
+              "
+            >
               {loan.loanNumber}
             </p>
 
@@ -234,8 +261,17 @@ export default function LoanCard({
             </p>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-            <CreditCard className="h-3.5 w-3.5" />
+          <div
+            className="
+              flex
+              shrink-0
+              items-center
+              gap-1.5
+              text-xs
+              text-muted-foreground
+            "
+          >
+            <CreditCard className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
 
             <span>
               {Number.isFinite(loan.interestRate)
@@ -254,10 +290,13 @@ export default function LoanCard({
       <div className="px-5 py-5">
         <div
           className="
-            rounded-2xl
-            bg-sky-500/[0.07]
+            rounded-[22px]
+            border
+            border-sky-200/60
+            bg-sky-100/60
             p-4
-            dark:bg-sky-400/[0.08]
+            dark:border-sky-900/30
+            dark:bg-sky-950/40
           "
         >
           <div className="flex items-start justify-between gap-4">
@@ -266,7 +305,16 @@ export default function LoanCard({
                 Outstanding balance
               </p>
 
-              <p className="mt-1 text-2xl font-bold tracking-tight text-foreground">
+              <p
+                className="
+                  mt-1
+                  text-[28px]
+                  font-bold
+                  tracking-tight
+                  text-sky-950
+                  dark:text-sky-100
+                "
+              >
                 {formatKES(outstanding)}
               </p>
             </div>
@@ -297,12 +345,12 @@ export default function LoanCard({
                 Repayment progress
               </span>
 
-              <span className="font-semibold text-foreground">
+              <span className="font-semibold text-sky-700 dark:text-sky-300">
                 {Math.round(progress)}%
               </span>
             </div>
 
-            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className="h-1.5 overflow-hidden rounded-full bg-sky-200/70 dark:bg-sky-900/50">
               <div
                 className="
                   h-full
@@ -324,8 +372,26 @@ export default function LoanCard({
           FINANCIAL SUMMARY
       ====================================================== */}
 
-      <div className="grid grid-cols-2 gap-px overflow-hidden border-y border-border/50 bg-border/50 dark:border-white/10 dark:bg-white/10">
-        <div className="bg-background px-5 py-4">
+      <div
+        className="
+          mx-5
+          grid
+          grid-cols-2
+          gap-2
+        "
+      >
+        <div
+          className="
+            rounded-2xl
+            border
+            border-sky-200/50
+            bg-white/50
+            px-4
+            py-3.5
+            dark:border-sky-900/25
+            dark:bg-slate-900/60
+          "
+        >
           <p className="text-[11px] text-muted-foreground">
             Principal
           </p>
@@ -335,7 +401,18 @@ export default function LoanCard({
           </p>
         </div>
 
-        <div className="bg-background px-5 py-4">
+        <div
+          className="
+            rounded-2xl
+            border
+            border-sky-200/50
+            bg-white/50
+            px-4
+            py-3.5
+            dark:border-sky-900/25
+            dark:bg-slate-900/60
+          "
+        >
           <p className="text-[11px] text-muted-foreground">
             Amount paid
           </p>
@@ -345,7 +422,18 @@ export default function LoanCard({
           </p>
         </div>
 
-        <div className="bg-background px-5 py-4">
+        <div
+          className="
+            rounded-2xl
+            border
+            border-sky-200/50
+            bg-white/50
+            px-4
+            py-3.5
+            dark:border-sky-900/25
+            dark:bg-slate-900/60
+          "
+        >
           <p className="text-[11px] text-muted-foreground">
             Interest
           </p>
@@ -355,7 +443,18 @@ export default function LoanCard({
           </p>
         </div>
 
-        <div className="bg-background px-5 py-4">
+        <div
+          className="
+            rounded-2xl
+            border
+            border-sky-200/50
+            bg-white/50
+            px-4
+            py-3.5
+            dark:border-sky-900/25
+            dark:bg-slate-900/60
+          "
+        >
           <p className="text-[11px] text-muted-foreground">
             Total due
           </p>
@@ -370,33 +469,46 @@ export default function LoanCard({
           DATES
       ====================================================== */}
 
-      <div className="px-5 py-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="flex min-w-0 items-start gap-2.5">
-            <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="px-5 py-5">
+        <div
+          className="
+            rounded-2xl
+            border
+            border-sky-200/50
+            bg-white/40
+            px-4
+            py-3.5
+            dark:border-sky-900/25
+            dark:bg-slate-900/40
+          "
+        >
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex min-w-0 items-start gap-2.5">
+              <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-sky-600 dark:text-sky-400" />
 
-            <div className="min-w-0">
-              <p className="text-[11px] text-muted-foreground">
-                Disbursed
-              </p>
+              <div className="min-w-0">
+                <p className="text-[11px] text-muted-foreground">
+                  Disbursed
+                </p>
 
-              <p className="mt-0.5 truncate text-xs font-medium text-foreground">
-                {formatDate(loan.disbursementDate)}
-              </p>
+                <p className="mt-0.5 truncate text-xs font-medium text-foreground">
+                  {formatDate(loan.disbursementDate)}
+                </p>
+              </div>
             </div>
-          </div>
 
-          <div className="flex min-w-0 items-start gap-2.5">
-            <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="flex min-w-0 items-start gap-2.5">
+              <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-sky-600 dark:text-sky-400" />
 
-            <div className="min-w-0">
-              <p className="text-[11px] text-muted-foreground">
-                First due
-              </p>
+              <div className="min-w-0">
+                <p className="text-[11px] text-muted-foreground">
+                  First due
+                </p>
 
-              <p className="mt-0.5 truncate text-xs font-medium text-foreground">
-                {formatDate(loan.firstDueDate)}
-              </p>
+                <p className="mt-0.5 truncate text-xs font-medium text-foreground">
+                  {formatDate(loan.firstDueDate)}
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -408,7 +520,20 @@ export default function LoanCard({
 
       {totalFines > 0 && (
         <div className="px-5 pb-4">
-          <div className="flex items-center justify-between rounded-2xl bg-amber-500/10 px-3.5 py-3">
+          <div
+            className="
+              flex
+              items-center
+              justify-between
+              rounded-2xl
+              border
+              border-amber-300/40
+              bg-amber-500/10
+              px-3.5
+              py-3
+              dark:border-amber-500/20
+            "
+          >
             <div className="flex min-w-0 items-center gap-2.5">
               <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
 
@@ -436,9 +561,30 @@ export default function LoanCard({
           GUARANTOR
       ====================================================== */}
 
-      <div className="border-t border-border/50 px-5 py-4 dark:border-white/10">
+      <div
+        className="
+          border-t
+          border-sky-200/50
+          px-5
+          py-4
+          dark:border-sky-900/25
+        "
+      >
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+          <div
+            className="
+              flex
+              h-9
+              w-9
+              shrink-0
+              items-center
+              justify-center
+              rounded-xl
+              bg-sky-500/10
+              text-sky-600
+              dark:text-sky-400
+            "
+          >
             <UserRound className="h-4 w-4" />
           </div>
 
@@ -476,19 +622,21 @@ export default function LoanCard({
             gap-2
             rounded-2xl
             border
-            border-border
-            bg-background
+            border-sky-200
+            bg-white/60
             px-4
             text-sm
             font-semibold
             text-foreground
             transition
-            hover:bg-muted
+            hover:bg-white
             active:scale-[0.98]
-            dark:border-white/10
+            dark:border-sky-900/40
+            dark:bg-slate-900/70
+            dark:hover:bg-slate-900
           "
         >
-          <ArrowUpRight className="h-4 w-4" />
+          <ArrowUpRight className="h-4 w-4 text-sky-600 dark:text-sky-400" />
           View
         </button>
 
@@ -508,6 +656,8 @@ export default function LoanCard({
             text-sm
             font-semibold
             text-white
+            shadow-sm
+            shadow-sky-500/20
             transition
             hover:bg-sky-700
             active:scale-[0.98]
