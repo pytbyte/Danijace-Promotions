@@ -33,28 +33,27 @@ import com.getcapacitor.annotation.Permission;
 )
 public class SmsReaderPlugin extends Plugin {
 
-    private static final String TAG =
-        "GeoShuaSmsReader";
-
-    /* =====================================================
-       READ INBOX
-    ===================================================== */
+    private static final String TAG = "GeoShuaSmsReader";
 
     @PluginMethod
-    public void readInbox(
-        PluginCall call
-    ) {
+    public void readInbox(PluginCall call) {
 
-        Context context =
-            getContext();
+        Log.d(TAG, "========== READ INBOX START ==========");
+
+        Context context = getContext();
 
         if (context == null) {
+            Log.e(TAG, "Context is NULL");
+
+            JSObject diagnostic = new JSObject();
+            diagnostic.put("stage", "context");
+            diagnostic.put("error", "Android context unavailable.");
 
             call.reject(
                 "Android context unavailable.",
-                "SMS_CONTEXT_UNAVAILABLE"
+                "SMS_CONTEXT_UNAVAILABLE",
+                diagnostic
             );
-
             return;
         }
 
@@ -70,32 +69,17 @@ public class SmsReaderPlugin extends Plugin {
                 Manifest.permission.RECEIVE_SMS
             ) == PackageManager.PERMISSION_GRANTED;
 
-        Log.d(
-            TAG,
-            "readInbox() permissions: " +
-            "READ_SMS=" + readGranted +
-            ", RECEIVE_SMS=" + receiveGranted
-        );
+        Log.d(TAG, "READ_SMS granted: " + readGranted);
+        Log.d(TAG, "RECEIVE_SMS granted: " + receiveGranted);
 
-        /*
-         * The GEO-SHUA SMS system uses READ_SMS to inspect
-         * the device inbox.
-         *
-         * RECEIVE_SMS is also declared because the native
-         * SMS listener can use it for incoming SMS events.
-         *
-         * We request the complete declared SMS permission set
-         * before reading the inbox.
-         */
-        if (
-            !readGranted ||
-            !receiveGranted
-        ) {
+        PermissionState aliasState =
+            getPermissionState("sms");
 
-            Log.d(
-                TAG,
-                "SMS permissions missing. Requesting permission alias 'sms'."
-            );
+        Log.d(TAG, "SMS alias state: " + aliasState);
+
+        if (!readGranted || !receiveGranted) {
+
+            Log.d(TAG, "SMS permission missing. Requesting permission...");
 
             requestPermissionForAlias(
                 "sms",
@@ -106,31 +90,28 @@ public class SmsReaderPlugin extends Plugin {
             return;
         }
 
-        Log.d(
-            TAG,
-            "SMS permissions already granted. Reading inbox."
-        );
+        Log.d(TAG, "All SMS permissions granted.");
 
         readSms(call);
     }
 
-    /* =====================================================
-       PERMISSION CALLBACK
-    ===================================================== */
-
     @PermissionCallback
-    private void smsPermissionCallback(
-        PluginCall call
-    ) {
+    private void smsPermissionCallback(PluginCall call) {
 
-        Context context =
-            getContext();
+        Log.d(TAG, "========== PERMISSION CALLBACK ==========");
+
+        Context context = getContext();
 
         if (context == null) {
 
+            JSObject diagnostic = new JSObject();
+            diagnostic.put("stage", "permission_callback");
+            diagnostic.put("error", "Android context unavailable.");
+
             call.reject(
                 "Android context unavailable.",
-                "SMS_CONTEXT_UNAVAILABLE"
+                "SMS_CONTEXT_UNAVAILABLE",
+                diagnostic
             );
 
             return;
@@ -151,58 +132,31 @@ public class SmsReaderPlugin extends Plugin {
         PermissionState aliasState =
             getPermissionState("sms");
 
-        Log.d(
-            TAG,
-            "SMS permission callback: " +
-            "alias=" + aliasState +
-            ", READ_SMS=" + readGranted +
-            ", RECEIVE_SMS=" + receiveGranted
-        );
+        Log.d(TAG, "Callback READ_SMS: " + readGranted);
+        Log.d(TAG, "Callback RECEIVE_SMS: " + receiveGranted);
+        Log.d(TAG, "Callback alias state: " + aliasState);
 
-        /*
-         * Do not proceed unless the permissions actually exist
-         * at the Android level.
-         */
-        if (
-            !readGranted ||
-            !receiveGranted
-        ) {
+        if (!readGranted || !receiveGranted) {
 
-            Log.w(
-                TAG,
-                "SMS permission request was not fully granted."
-            );
+            JSObject diagnostic = new JSObject();
 
-            JSObject diagnostic =
-                new JSObject();
-
-            diagnostic.put(
-                "stage",
-                "permission"
-            );
-
-            diagnostic.put(
-                "permission",
-                "denied"
-            );
-
+            diagnostic.put("stage", "permission");
+            diagnostic.put("permission", "denied");
             diagnostic.put(
                 "aliasState",
                 aliasState.toString()
             );
-
             diagnostic.put(
                 "readSms",
                 readGranted
             );
-
             diagnostic.put(
                 "receiveSms",
                 receiveGranted
             );
 
             call.reject(
-                "READ_SMS and RECEIVE_SMS permissions were not granted.",
+                "Android SMS permissions were not granted.",
                 "SMS_PERMISSION_DENIED",
                 diagnostic
             );
@@ -210,88 +164,73 @@ public class SmsReaderPlugin extends Plugin {
             return;
         }
 
-        Log.d(
-            TAG,
-            "SMS permissions granted. Continuing with inbox read."
-        );
+        Log.d(TAG, "Permissions granted after callback.");
 
         readSms(call);
     }
 
-    /* =====================================================
-       READ SMS INBOX
-    ===================================================== */
+    private void readSms(PluginCall call) {
 
-    private void readSms(
-        PluginCall call
-    ) {
+        Log.d(TAG, "========== SMS QUERY START ==========");
 
-        Context context =
-            getContext();
+        Context context = getContext();
 
         if (context == null) {
 
+            JSObject diagnostic = new JSObject();
+            diagnostic.put("stage", "query_context");
+
             call.reject(
                 "Android context unavailable.",
-                "SMS_CONTEXT_UNAVAILABLE"
+                "SMS_CONTEXT_UNAVAILABLE",
+                diagnostic
             );
 
             return;
         }
 
-        JSObject diagnostic =
-            new JSObject();
-
-        diagnostic.put(
-            "stage",
-            "starting"
-        );
-
-        diagnostic.put(
-            "permission",
-            "granted"
-        );
-
-        Cursor cursor =
-            null;
+        Cursor cursor = null;
 
         try {
 
+            Uri inboxUri =
+                Uri.parse("content://sms/inbox");
+
             Log.d(
                 TAG,
-                "Opening SMS inbox query."
+                "Querying URI: " + inboxUri.toString()
             );
 
-            Uri uri =
-                Uri.parse(
-                    "content://sms/inbox"
+            String[] projection = {
+                "_id",
+                "address",
+                "body",
+                "date"
+            };
+
+            Log.d(
+                TAG,
+                "Projection: _id,address,body,date"
+            );
+
+            cursor = context
+                .getContentResolver()
+                .query(
+                    inboxUri,
+                    projection,
+                    null,
+                    null,
+                    "date DESC"
                 );
-
-            String[] projection =
-                new String[] {
-                    "_id",
-                    "address",
-                    "body",
-                    "date"
-                };
-
-            cursor =
-                context
-                    .getContentResolver()
-                    .query(
-                        uri,
-                        projection,
-                        null,
-                        null,
-                        "date DESC"
-                    );
 
             if (cursor == null) {
 
                 Log.e(
                     TAG,
-                    "SMS inbox query returned null."
+                    "ContentResolver returned NULL cursor."
                 );
+
+                JSObject diagnostic = new JSObject();
 
                 diagnostic.put(
                     "stage",
@@ -299,12 +238,17 @@ public class SmsReaderPlugin extends Plugin {
                 );
 
                 diagnostic.put(
+                    "uri",
+                    inboxUri.toString()
+                );
+
+                diagnostic.put(
                     "error",
-                    "SMS inbox query returned null."
+                    "ContentResolver returned null cursor."
                 );
 
                 call.reject(
-                    "Unable to query SMS inbox.",
+                    "Android could not access the SMS inbox.",
                     "SMS_QUERY_FAILED",
                     diagnostic
                 );
@@ -312,53 +256,39 @@ public class SmsReaderPlugin extends Plugin {
                 return;
             }
 
+            Log.d(
+                TAG,
+                "Cursor opened successfully."
+            );
+
             int idIndex =
-                cursor.getColumnIndex(
-                    "_id"
-                );
+                cursor.getColumnIndex("_id");
 
             int addressIndex =
-                cursor.getColumnIndex(
-                    "address"
-                );
+                cursor.getColumnIndex("address");
 
             int bodyIndex =
-                cursor.getColumnIndex(
-                    "body"
-                );
+                cursor.getColumnIndex("body");
 
             int dateIndex =
-                cursor.getColumnIndex(
-                    "date"
-                );
+                cursor.getColumnIndex("date");
 
             Log.d(
                 TAG,
-                "SMS columns: " +
+                "Column indexes: " +
                 "_id=" + idIndex +
                 ", address=" + addressIndex +
                 ", body=" + bodyIndex +
                 ", date=" + dateIndex
             );
 
-            if (
-                bodyIndex < 0 ||
-                dateIndex < 0
-            ) {
+            if (bodyIndex < 0 || dateIndex < 0) {
 
-                Log.e(
-                    TAG,
-                    "Required SMS columns are unavailable."
-                );
+                JSObject diagnostic = new JSObject();
 
                 diagnostic.put(
                     "stage",
                     "columns"
-                );
-
-                diagnostic.put(
-                    "error",
-                    "Required SMS columns are unavailable."
                 );
 
                 diagnostic.put(
@@ -382,102 +312,62 @@ public class SmsReaderPlugin extends Plugin {
                 );
 
                 call.reject(
-                    "SMS provider does not expose required columns.",
-                    "SMS_COLUMNS_MISSING",
+                    "Android SMS inbox has an unexpected format.",
+                    "SMS_COLUMNS_INVALID",
                     diagnostic
                 );
 
                 return;
             }
 
-            JSArray messages =
-                new JSArray();
+            JSArray messages = new JSArray();
 
-            int skippedEmptyBody =
-                0;
+            int count = 0;
+            int skippedEmptyBody = 0;
+            int skippedInvalidDate = 0;
 
-            int skippedInvalidDate =
-                0;
-
-            while (
-                cursor.moveToNext()
-            ) {
+            while (cursor.moveToNext()) {
 
                 String id =
                     idIndex >= 0
-                        ? cursor.getString(
-                            idIndex
-                        )
+                        ? cursor.getString(idIndex)
                         : null;
 
                 String address =
                     addressIndex >= 0
-                        ? cursor.getString(
-                            addressIndex
-                        )
+                        ? cursor.getString(addressIndex)
                         : null;
 
                 String body =
-                    cursor.getString(
-                        bodyIndex
-                    );
+                    cursor.getString(bodyIndex);
 
                 long date =
-                    cursor.getLong(
-                        dateIndex
-                    );
+                    cursor.getLong(dateIndex);
 
-                if (
-                    body == null ||
-                    body.trim().isEmpty()
-                ) {
+                if (body == null || body.trim().isEmpty()) {
 
                     skippedEmptyBody++;
-
                     continue;
                 }
 
-                if (
-                    date <= 0L
-                ) {
+                if (date <= 0) {
 
                     skippedInvalidDate++;
-
                     continue;
                 }
 
                 JSObject message =
                     new JSObject();
 
-                if (id != null) {
+                message.put(
+                    "id",
+                    id
+                );
 
-                    message.put(
-                        "id",
-                        id
-                    );
-
-                } else {
-
-                    message.put(
-                        "id",
-                        (Object) null
-                    );
-                }
-
-                if (address != null) {
-
-                    message.put(
-                        "address",
-                        address
-                    );
-
-                } else {
-
-                    message.put(
-                        "address",
-                        (Object) null
-                    );
-                }
+                message.put(
+                    "address",
+                    address
+                );
 
                 message.put(
                     "body",
@@ -489,10 +379,19 @@ public class SmsReaderPlugin extends Plugin {
                     date
                 );
 
-                messages.put(
-                    message
-                );
+                messages.put(message);
+
+                count++;
             }
+
+            Log.d(
+                TAG,
+                "SMS messages successfully read: " +
+                count
+            );
+
+            JSObject diagnostic =
+                new JSObject();
 
             diagnostic.put(
                 "stage",
@@ -500,8 +399,13 @@ public class SmsReaderPlugin extends Plugin {
             );
 
             diagnostic.put(
+                "permission",
+                "granted"
+            );
+
+            diagnostic.put(
                 "count",
-                messages.length()
+                count
             );
 
             diagnostic.put(
@@ -511,21 +415,6 @@ public class SmsReaderPlugin extends Plugin {
 
             diagnostic.put(
                 "skippedInvalidDate",
-                skippedInvalidDate
-            );
-
-            diagnostic.put(
-                "permission",
-                "granted"
-            );
-
-            Log.d(
-                TAG,
-                "SMS inbox read complete. " +
-                "Messages=" + messages.length() +
-                ", skippedEmptyBody=" +
-                skippedEmptyBody +
-                ", skippedInvalidDate=" +
                 skippedInvalidDate
             );
 
@@ -542,17 +431,23 @@ public class SmsReaderPlugin extends Plugin {
                 diagnostic
             );
 
-            call.resolve(
-                result
+            Log.d(
+                TAG,
+                "========== SMS QUERY SUCCESS =========="
             );
+
+            call.resolve(result);
 
         } catch (SecurityException e) {
 
             Log.e(
                 TAG,
-                "SMS permission/security failure.",
+                "SECURITY EXCEPTION reading SMS inbox",
                 e
             );
+
+            JSObject diagnostic =
+                new JSObject();
 
             diagnostic.put(
                 "stage",
@@ -560,10 +455,15 @@ public class SmsReaderPlugin extends Plugin {
             );
 
             diagnostic.put(
-                "error",
+                "exception",
+                e.getClass().getName()
+            );
+
+            diagnostic.put(
+                "message",
                 e.getMessage() != null
                     ? e.getMessage()
-                    : "SecurityException while reading SMS."
+                    : "No exception message"
             );
 
             call.reject(
@@ -576,9 +476,12 @@ public class SmsReaderPlugin extends Plugin {
 
             Log.e(
                 TAG,
-                "Failed reading SMS inbox.",
+                "GENERAL EXCEPTION reading SMS inbox",
                 e
             );
+
+            JSObject diagnostic =
+                new JSObject();
 
             diagnostic.put(
                 "stage",
@@ -586,14 +489,19 @@ public class SmsReaderPlugin extends Plugin {
             );
 
             diagnostic.put(
-                "error",
+                "exception",
+                e.getClass().getName()
+            );
+
+            diagnostic.put(
+                "message",
                 e.getMessage() != null
                     ? e.getMessage()
-                    : "Unknown SMS reader exception."
+                    : "No exception message"
             );
 
             call.reject(
-                "Failed to read SMS inbox.",
+                "Android failed while reading the SMS inbox.",
                 "SMS_READ_FAILED",
                 diagnostic
             );
@@ -601,15 +509,13 @@ public class SmsReaderPlugin extends Plugin {
         } finally {
 
             if (cursor != null) {
-
                 cursor.close();
-
-                Log.d(
-                    TAG,
-                    "SMS cursor closed."
-                );
             }
+
+            Log.d(
+                TAG,
+                "========== SMS QUERY END =========="
+            );
         }
     }
 }
-
