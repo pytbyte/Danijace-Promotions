@@ -27,12 +27,15 @@ import type {
 
 type MemberListProps = {
   members: MemberWithFinancialSummary[];
+
   onView?: (
     member: MemberWithFinancialSummary,
   ) => void;
+
   onEdit?: (
     member: MemberWithFinancialSummary,
   ) => void;
+
   onDelete?: (
     member: MemberWithFinancialSummary,
   ) => void;
@@ -54,10 +57,12 @@ function getFullName(member: Member) {
 
 function getInitials(member: Member) {
   const first =
-    member.firstName?.charAt(0).toUpperCase() ?? "";
+    member.firstName?.charAt(0).toUpperCase() ??
+    "";
 
   const last =
-    member.lastName?.charAt(0).toUpperCase() ?? "";
+    member.lastName?.charAt(0).toUpperCase() ??
+    "";
 
   return `${first}${last}` || "M";
 }
@@ -81,14 +86,45 @@ function formatDate(value?: string) {
 }
 
 /* =========================================================
+   IMAGE URL
+========================================================= */
+
+/**
+ * Private Vercel Blob images must be requested through
+ * our authenticated API route.
+ *
+ * MongoDB now stores:
+ *
+ * members/GEO-001.webp
+ *
+ * The browser should request:
+ *
+ * /api/members/photos/GEO-001
+ */
+function getProfileImageUrl(
+  membershipNumber?: string,
+) {
+  if (!membershipNumber) {
+    return null;
+  }
+
+  return `/api/members/photos/${encodeURIComponent(
+    membershipNumber,
+  )}`;
+}
+
+/* =========================================================
    IMAGE COMPRESSION
 ========================================================= */
 
 async function compressProfileImage(
   file: File,
 ): Promise<Blob> {
-  const MAX_INPUT_SIZE = 5 * 1024 * 1024;
+  const MAX_INPUT_SIZE =
+    5 * 1024 * 1024;
+
   const SIZE = 512;
+
   const QUALITY = 0.78;
 
   if (file.size > MAX_INPUT_SIZE) {
@@ -111,7 +147,8 @@ async function compressProfileImage(
     );
   }
 
-  const bitmap = await createImageBitmap(file);
+  const bitmap =
+    await createImageBitmap(file);
 
   try {
     const canvas =
@@ -120,7 +157,8 @@ async function compressProfileImage(
     canvas.width = SIZE;
     canvas.height = SIZE;
 
-    const context = canvas.getContext("2d");
+    const context =
+      canvas.getContext("2d");
 
     if (!context) {
       throw new Error(
@@ -128,19 +166,25 @@ async function compressProfileImage(
       );
     }
 
-    const sourceWidth = bitmap.width;
-    const sourceHeight = bitmap.height;
+    const sourceWidth =
+      bitmap.width;
 
-    const sourceSize = Math.min(
-      sourceWidth,
-      sourceHeight,
-    );
+    const sourceHeight =
+      bitmap.height;
+
+    const sourceSize =
+      Math.min(
+        sourceWidth,
+        sourceHeight,
+      );
 
     const sourceX =
-      (sourceWidth - sourceSize) / 2;
+      (sourceWidth - sourceSize) /
+      2;
 
     const sourceY =
-      (sourceHeight - sourceSize) / 2;
+      (sourceHeight - sourceSize) /
+      2;
 
     context.drawImage(
       bitmap,
@@ -154,15 +198,16 @@ async function compressProfileImage(
       SIZE,
     );
 
-    const blob = await new Promise<Blob | null>(
-      (resolve) => {
-        canvas.toBlob(
-          resolve,
-          "image/webp",
-          QUALITY,
-        );
-      },
-    );
+    const blob =
+      await new Promise<Blob | null>(
+        (resolve) => {
+          canvas.toBlob(
+            resolve,
+            "image/webp",
+            QUALITY,
+          );
+        },
+      );
 
     if (!blob) {
       throw new Error(
@@ -190,9 +235,25 @@ function ProfileImage({
   const inputRef =
     useRef<HTMLInputElement>(null);
 
+  /*
+   * Important:
+   *
+   * member.profileImage is now a private Blob pathname,
+   * NOT a browser-accessible URL.
+   *
+   * Therefore we construct our API URL from the
+   * membership number.
+   */
+  const initialImageUrl =
+    member.profileImage
+      ? getProfileImageUrl(
+          member.membershipNumber,
+        )
+      : null;
+
   const [preview, setPreview] =
     useState<string | null>(
-      member.profileImage ?? null,
+      initialImageUrl,
     );
 
   const [uploading, setUploading] =
@@ -203,6 +264,10 @@ function ProfileImage({
 
   const [error, setError] =
     useState<string | null>(null);
+
+  /* -------------------------------------------------------
+     Select image
+  ------------------------------------------------------- */
 
   const handleSelectImage = () => {
     if (uploading) {
@@ -215,12 +280,19 @@ function ProfileImage({
     inputRef.current?.click();
   };
 
+  /* -------------------------------------------------------
+     Upload image
+  ------------------------------------------------------- */
+
   const handleImageChange = async (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
     const file =
       event.target.files?.[0];
 
+    /*
+     * Allow selecting the same file again.
+     */
     event.target.value = "";
 
     if (!file) {
@@ -231,19 +303,37 @@ function ProfileImage({
     setUploaded(false);
     setUploading(true);
 
-    let temporaryPreview: string | null =
-      null;
+    let temporaryPreview:
+      | string
+      | null = null;
 
     try {
+      /* ---------------------------------------------------
+         Show local preview immediately
+      --------------------------------------------------- */
+
       temporaryPreview =
         URL.createObjectURL(file);
 
-      setPreview(temporaryPreview);
+      setPreview(
+        temporaryPreview,
+      );
+
+      /* ---------------------------------------------------
+         Compress image
+      --------------------------------------------------- */
 
       const compressed =
-        await compressProfileImage(file);
+        await compressProfileImage(
+          file,
+        );
 
-      const formData = new FormData();
+      /* ---------------------------------------------------
+         Prepare upload
+      --------------------------------------------------- */
+
+      const formData =
+        new FormData();
 
       formData.append(
         "image",
@@ -251,15 +341,24 @@ function ProfileImage({
         `${member.membershipNumber}.webp`,
       );
 
-      const response = await fetch(
-        `/api/members/photos/${encodeURIComponent(
-          member.membershipNumber,
-        )}`,
-        {
-          method: "POST",
-          body: formData,
-        },
-      );
+      /* ---------------------------------------------------
+         Upload
+      --------------------------------------------------- */
+
+      const response =
+        await fetch(
+          `/api/members/photos/${encodeURIComponent(
+            member.membershipNumber,
+          )}`,
+          {
+            method: "POST",
+            body: formData,
+          },
+        );
+
+      /* ---------------------------------------------------
+         Parse response
+      --------------------------------------------------- */
 
       let result: {
         success?: boolean;
@@ -269,7 +368,8 @@ function ProfileImage({
       };
 
       try {
-        result = await response.json();
+        result =
+          await response.json();
       } catch {
         throw new Error(
           "The server returned an invalid response.",
@@ -286,15 +386,25 @@ function ProfileImage({
         );
       }
 
+      /* ---------------------------------------------------
+         Use API image URL returned by server
+      --------------------------------------------------- */
+
       const uploadedUrl =
         result.profileImageUrl ||
-        result.profileImage;
+        getProfileImageUrl(
+          member.membershipNumber,
+        );
 
-      if (uploadedUrl) {
-        setPreview(uploadedUrl);
-      }
+      setPreview(
+        uploadedUrl,
+      );
 
       setUploaded(true);
+
+      /* ---------------------------------------------------
+         Release temporary object URL
+      --------------------------------------------------- */
 
       if (temporaryPreview) {
         URL.revokeObjectURL(
@@ -303,6 +413,10 @@ function ProfileImage({
 
         temporaryPreview = null;
       }
+
+      /* ---------------------------------------------------
+         Remove success overlay
+      --------------------------------------------------- */
 
       window.setTimeout(() => {
         setUploaded(false);
@@ -313,12 +427,17 @@ function ProfileImage({
         uploadError,
       );
 
+      /* ---------------------------------------------------
+         Restore existing image
+      --------------------------------------------------- */
+
       setPreview(
-        member.profileImage ?? null,
+        initialImageUrl,
       );
 
       setError(
-        uploadError instanceof Error
+        uploadError instanceof
+          Error
           ? uploadError.message
           : "Failed to upload image.",
       );
@@ -327,11 +446,17 @@ function ProfileImage({
         URL.revokeObjectURL(
           temporaryPreview,
         );
+
+        temporaryPreview = null;
       }
     } finally {
       setUploading(false);
     }
   };
+
+  /* -------------------------------------------------------
+     Render
+  ------------------------------------------------------- */
 
   return (
     <div className="relative shrink-0">
@@ -368,6 +493,10 @@ function ProfileImage({
           disabled:cursor-wait
         "
       >
+        {/* -------------------------------------------------
+            IMAGE / INITIALS
+        ------------------------------------------------- */}
+
         {preview ? (
           <img
             src={preview}
@@ -400,28 +529,37 @@ function ProfileImage({
           </div>
         )}
 
-        {!uploading && !uploaded && (
-          <div
-            className="
-              absolute
-              inset-0
-              flex
-              items-center
-              justify-center
-              bg-black/50
-              opacity-0
-              transition
-              duration-200
-              group-hover:opacity-100
-            "
-          >
-            <Camera
-              size={18}
-              strokeWidth={1.8}
-              className="text-white"
-            />
-          </div>
-        )}
+        {/* -------------------------------------------------
+            HOVER CAMERA
+        ------------------------------------------------- */}
+
+        {!uploading &&
+          !uploaded && (
+            <div
+              className="
+                absolute
+                inset-0
+                flex
+                items-center
+                justify-center
+                bg-black/50
+                opacity-0
+                transition
+                duration-200
+                group-hover:opacity-100
+              "
+            >
+              <Camera
+                size={18}
+                strokeWidth={1.8}
+                className="text-white"
+              />
+            </div>
+          )}
+
+        {/* -------------------------------------------------
+            UPLOADING
+        ------------------------------------------------- */}
 
         {uploading && (
           <div
@@ -437,30 +575,42 @@ function ProfileImage({
           >
             <Loader2
               size={20}
-              className="animate-spin text-white"
+              className="
+                animate-spin
+                text-white
+              "
             />
           </div>
         )}
 
-        {uploaded && !uploading && (
-          <div
-            className="
-              absolute
-              inset-0
-              flex
-              items-center
-              justify-center
-              bg-emerald-500/75
-            "
-          >
-            <Check
-              size={22}
-              strokeWidth={3}
-              className="text-white"
-            />
-          </div>
-        )}
+        {/* -------------------------------------------------
+            SUCCESS
+        ------------------------------------------------- */}
+
+        {uploaded &&
+          !uploading && (
+            <div
+              className="
+                absolute
+                inset-0
+                flex
+                items-center
+                justify-center
+                bg-emerald-500/75
+              "
+            >
+              <Check
+                size={22}
+                strokeWidth={3}
+                className="text-white"
+              />
+            </div>
+          )}
       </button>
+
+      {/* ---------------------------------------------------
+          ERROR
+      --------------------------------------------------- */}
 
       {error && (
         <div
@@ -499,6 +649,10 @@ export default function MemberList({
   onEdit,
   onDelete,
 }: MemberListProps) {
+  /* -------------------------------------------------------
+     Empty state
+  ------------------------------------------------------- */
+
   if (members.length === 0) {
     return (
       <div
@@ -537,18 +691,38 @@ export default function MemberList({
             />
           </div>
 
-          <p className="mt-4 text-sm font-medium text-white/50">
+          <p
+            className="
+              mt-4
+              text-sm
+              font-medium
+              text-white/50
+            "
+          >
             No members found
           </p>
 
-          <p className="mx-auto mt-2 max-w-xs text-xs leading-5 text-white/25">
-            Members matching your search
-            will appear here.
+          <p
+            className="
+              mx-auto
+              mt-2
+              max-w-xs
+              text-xs
+              leading-5
+              text-white/25
+            "
+          >
+            Members matching your
+            search will appear here.
           </p>
         </div>
       </div>
     );
   }
+
+  /* -------------------------------------------------------
+     Member list
+  ------------------------------------------------------- */
 
   return (
     <div className="space-y-3 lg:hidden">
@@ -556,13 +730,32 @@ export default function MemberList({
           HEADER
       ===================================================== */}
 
-      <div className="flex items-center justify-between px-1">
+      <div
+        className="
+          flex
+          items-center
+          justify-between
+          px-1
+        "
+      >
         <div>
-          <h2 className="text-sm font-semibold text-white">
+          <h2
+            className="
+              text-sm
+              font-semibold
+              text-white
+            "
+          >
             Members
           </h2>
 
-          <p className="mt-1 text-xs text-white/30">
+          <p
+            className="
+              mt-1
+              text-xs
+              text-white/30
+            "
+          >
             {members.length.toLocaleString()}{" "}
             {members.length === 1
               ? "member"
@@ -571,8 +764,17 @@ export default function MemberList({
         </div>
 
         {members.length > 1 && (
-          <div className="flex items-center gap-1.5 text-[10px] text-white/25">
+          <div
+            className="
+              flex
+              items-center
+              gap-1.5
+              text-[10px]
+              text-white/25
+            "
+          >
             <span>Swipe</span>
+
             <span className="text-white/40">
               →
             </span>
@@ -596,34 +798,46 @@ export default function MemberList({
           [&::-webkit-scrollbar]:hidden
         "
       >
-        <div className="flex w-max snap-x snap-mandatory gap-3">
-          {members.map((member) => {
-            const fullName =
-              getFullName(member);
+        <div
+          className="
+            flex
+            w-max
+            snap-x
+            snap-mandatory
+            gap-3
+          "
+        >
+          {members.map(
+            (member) => {
+              const fullName =
+                getFullName(
+                  member,
+                );
 
-            return (
-              <div
-                key={
-                  member._id ||
-                  member.membershipNumber
-                }
-                className="
-                  w-[calc(100vw-56px)]
-                  max-w-[390px]
-                  shrink-0
-                  snap-center
-                "
-              >
-                <MemberCard
-                  member={member}
-                  fullName={fullName}
-                  onView={onView}
-                  onEdit={onEdit}
-                  onDelete={onDelete}
-                />
-              </div>
-            );
-          })}
+              return (
+                <div
+                  key={
+                    member._id ||
+                    member.membershipNumber
+                  }
+                  className="
+                    w-[calc(100vw-56px)]
+                    max-w-[390px]
+                    shrink-0
+                    snap-center
+                  "
+                >
+                  <MemberCard
+                    member={member}
+                    fullName={fullName}
+                    onView={onView}
+                    onEdit={onEdit}
+                    onDelete={onDelete}
+                  />
+                </div>
+              );
+            },
+          )}
         </div>
       </div>
     </div>
@@ -642,13 +856,17 @@ function MemberCard({
   onDelete,
 }: {
   member: MemberWithFinancialSummary;
+
   fullName: string;
+
   onView?: (
     member: MemberWithFinancialSummary,
   ) => void;
+
   onEdit?: (
     member: MemberWithFinancialSummary,
   ) => void;
+
   onDelete?: (
     member: MemberWithFinancialSummary,
   ) => void;
@@ -672,23 +890,59 @@ function MemberCard({
           MEMBER HEADER
       ===================================================== */}
 
-      <div className="flex items-center gap-3.5 p-4">
+      <div
+        className="
+          flex
+          items-center
+          gap-3.5
+          p-4
+        "
+      >
         <ProfileImage
           member={member}
           fullName={
-            fullName || "Unnamed member"
+            fullName ||
+            "Unnamed member"
           }
         />
 
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
+        <div
+          className="
+            min-w-0
+            flex-1
+          "
+        >
+          <div
+            className="
+              flex
+              items-start
+              justify-between
+              gap-3
+            "
+          >
             <div className="min-w-0">
-              <h3 className="truncate text-sm font-semibold text-white">
+              <h3
+                className="
+                  truncate
+                  text-sm
+                  font-semibold
+                  text-white
+                "
+              >
                 {fullName ||
                   "Unnamed member"}
               </h3>
 
-              <p className="mt-1 truncate text-[11px] font-medium tracking-wide text-white/30">
+              <p
+                className="
+                  mt-1
+                  truncate
+                  text-[11px]
+                  font-medium
+                  tracking-wide
+                  text-white/30
+                "
+              >
                 {member.membershipNumber ||
                   "—"}
               </p>
@@ -753,6 +1007,8 @@ function MemberCard({
           p-3
         "
       >
+        {/* VIEW */}
+
         <button
           type="button"
           onClick={() =>
@@ -787,6 +1043,8 @@ function MemberCard({
 
           <span>View</span>
         </button>
+
+        {/* EDIT */}
 
         <button
           type="button"
@@ -823,6 +1081,8 @@ function MemberCard({
           <span>Edit</span>
         </button>
 
+        {/* DELETE */}
+
         <button
           type="button"
           onClick={() =>
@@ -830,7 +1090,8 @@ function MemberCard({
           }
           disabled={!onDelete}
           aria-label={`Delete ${
-            fullName || "member"
+            fullName ||
+            "member"
           }`}
           title="Delete member"
           className="
@@ -874,12 +1135,33 @@ function MemberDetail({
   value?: string;
 }) {
   return (
-    <div className="bg-[#0b0b0b] px-4 py-3">
-      <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-white/25">
+    <div
+      className="
+        bg-[#0b0b0b]
+        px-4
+        py-3
+      "
+    >
+      <p
+        className="
+          text-[9px]
+          font-medium
+          uppercase
+          tracking-[0.14em]
+          text-white/25
+        "
+      >
         {label}
       </p>
 
-      <p className="mt-1.5 truncate text-xs text-white/60">
+      <p
+        className="
+          mt-1.5
+          truncate
+          text-xs
+          text-white/60
+        "
+      >
         {value || "—"}
       </p>
     </div>
@@ -922,9 +1204,14 @@ function StatusBadge({
     Member["status"],
     string
   > = {
-    active: "bg-emerald-400",
-    inactive: "bg-white/30",
-    suspended: "bg-red-400",
+    active:
+      "bg-emerald-400",
+
+    inactive:
+      "bg-white/30",
+
+    suspended:
+      "bg-red-400",
   };
 
   return (
