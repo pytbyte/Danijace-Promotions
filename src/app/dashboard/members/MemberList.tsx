@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Camera,
+  Camera as CameraIcon,
   Check,
   Eye,
   Loader2,
@@ -16,6 +16,12 @@ import {
   useState,
 } from "react";
 
+import {
+  Camera,
+  CameraResultType,
+  CameraSource,
+} from "@capacitor/camera";
+
 import type {
   Member,
   MemberWithFinancialSummary,
@@ -27,16 +33,27 @@ import type {
 
 type MemberListProps = {
   members: MemberWithFinancialSummary[];
-  onView?: (member: MemberWithFinancialSummary) => void;
-  onEdit?: (member: MemberWithFinancialSummary) => void;
-  onDelete?: (member: MemberWithFinancialSummary) => void;
+
+  onView?: (
+    member: MemberWithFinancialSummary,
+  ) => void;
+
+  onEdit?: (
+    member: MemberWithFinancialSummary,
+  ) => void;
+
+  onDelete?: (
+    member: MemberWithFinancialSummary,
+  ) => void;
 };
 
 /* =========================================================
    HELPERS
 ========================================================= */
 
-function getFullName(member: Member) {
+function getFullName(
+  member: Member,
+): string {
   return [
     member.firstName,
     member.middleName,
@@ -46,37 +63,60 @@ function getFullName(member: Member) {
     .join(" ");
 }
 
-function getInitials(member: Member) {
+function getInitials(
+  member: Member,
+): string {
   const first =
-    member.firstName?.charAt(0).toUpperCase() ?? "";
+    member.firstName
+      ?.charAt(0)
+      .toUpperCase() ?? "";
 
   const last =
-    member.lastName?.charAt(0).toUpperCase() ?? "";
+    member.lastName
+      ?.charAt(0)
+      .toUpperCase() ?? "";
 
   return `${first}${last}` || "M";
 }
 
-function formatDate(value?: string) {
-  if (!value) return "—";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
+function formatDate(
+  value?: string,
+): string {
+  if (!value) {
     return "—";
   }
 
-  return new Intl.DateTimeFormat("en-KE", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(date);
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime(),
+    )
+  ) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat(
+    "en-KE",
+    {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    },
+  ).format(date);
 }
 
-function formatCurrency(value: number) {
-  return `KES ${value.toLocaleString("en-KE", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })}`;
+function formatCurrency(
+  value: number,
+): string {
+  return `KES ${value.toLocaleString(
+    "en-KE",
+    {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    },
+  )}`;
 }
 
 /* =========================================================
@@ -86,7 +126,7 @@ function formatCurrency(value: number) {
 function getProfileImageUrl(
   membershipNumber?: string,
   cacheBust?: string | number,
-) {
+): string | null {
   if (!membershipNumber) {
     return null;
   }
@@ -96,7 +136,9 @@ function getProfileImageUrl(
       membershipNumber,
     )}`;
 
-  if (cacheBust === undefined) {
+  if (
+    cacheBust === undefined
+  ) {
     return baseUrl;
   }
 
@@ -123,17 +165,26 @@ function getProfileImageUrl(
 async function compressProfileImage(
   file: File,
 ): Promise<Blob> {
-  const MAX_INPUT_SIZE = 5 * 1024 * 1024;
+  const MAX_INPUT_SIZE =
+    5 * 1024 * 1024;
+
   const SIZE = 512;
   const QUALITY = 0.78;
 
-  if (file.size > MAX_INPUT_SIZE) {
+  if (
+    file.size >
+    MAX_INPUT_SIZE
+  ) {
     throw new Error(
       "Image must be smaller than 5 MB.",
     );
   }
 
-  if (!file.type.startsWith("image/")) {
+  if (
+    !file.type.startsWith(
+      "image/",
+    )
+  ) {
     throw new Error(
       "Please select a valid image.",
     );
@@ -151,7 +202,10 @@ async function compressProfileImage(
   let bitmap: ImageBitmap;
 
   try {
-    bitmap = await createImageBitmap(file);
+    bitmap =
+      await createImageBitmap(
+        file,
+      );
   } catch {
     throw new Error(
       "This image format cannot be processed on this device. Please use a JPEG or PNG photo.",
@@ -160,7 +214,9 @@ async function compressProfileImage(
 
   try {
     const canvas =
-      document.createElement("canvas");
+      document.createElement(
+        "canvas",
+      );
 
     canvas.width = SIZE;
     canvas.height = SIZE;
@@ -174,8 +230,11 @@ async function compressProfileImage(
       );
     }
 
-    const sourceWidth = bitmap.width;
-    const sourceHeight = bitmap.height;
+    const sourceWidth =
+      bitmap.width;
+
+    const sourceHeight =
+      bitmap.height;
 
     if (
       !sourceWidth ||
@@ -189,23 +248,29 @@ async function compressProfileImage(
     /*
      * Center crop into a square.
      */
-    const sourceSize = Math.min(
-      sourceWidth,
-      sourceHeight,
-    );
+    const sourceSize =
+      Math.min(
+        sourceWidth,
+        sourceHeight,
+      );
 
     const sourceX =
-      (sourceWidth - sourceSize) / 2;
+      (sourceWidth -
+        sourceSize) /
+      2;
 
     const sourceY =
-      (sourceHeight - sourceSize) / 2;
+      (sourceHeight -
+        sourceSize) /
+      2;
 
     /*
      * JPEG has no transparency.
      * White background prevents transparent
      * PNG/WebP areas from becoming black.
      */
-    context.fillStyle = "#ffffff";
+    context.fillStyle =
+      "#ffffff";
 
     context.fillRect(
       0,
@@ -227,15 +292,15 @@ async function compressProfileImage(
     );
 
     const blob =
-      await new Promise<Blob | null>(
-        (resolve) => {
-          canvas.toBlob(
-            resolve,
-            "image/jpeg",
-            QUALITY,
-          );
-        },
-      );
+      await new Promise<
+        Blob | null
+      >((resolve) => {
+        canvas.toBlob(
+          resolve,
+          "image/jpeg",
+          QUALITY,
+        );
+      });
 
     if (!blob) {
       throw new Error(
@@ -243,7 +308,9 @@ async function compressProfileImage(
       );
     }
 
-    if (blob.size === 0) {
+    if (
+      blob.size === 0
+    ) {
       throw new Error(
         "The compressed image is empty.",
       );
@@ -253,7 +320,10 @@ async function compressProfileImage(
      * A 512 × 512 JPEG should normally be
      * considerably smaller than this.
      */
-    if (blob.size > 1024 * 1024) {
+    if (
+      blob.size >
+      1024 * 1024
+    ) {
       throw new Error(
         "The processed image is too large. Please choose another photo.",
       );
@@ -263,6 +333,118 @@ async function compressProfileImage(
   } finally {
     bitmap.close();
   }
+}
+
+/* =========================================================
+   BASE64 → FILE
+========================================================= */
+
+/**
+ * Converts a Capacitor Base64 camera result into
+ * a real File object.
+ *
+ * Uses a concrete ArrayBuffer so newer TypeScript
+ * versions do not reject Uint8Array<ArrayBufferLike>
+ * as a BlobPart.
+ */
+function base64ToFile(
+  base64: string,
+  fileName: string,
+): File {
+  const byteCharacters =
+    atob(base64);
+
+  const CHUNK_SIZE =
+    1024;
+
+  const byteArrays: number[][] =
+    [];
+
+  for (
+    let offset = 0;
+    offset <
+    byteCharacters.length;
+    offset += CHUNK_SIZE
+  ) {
+    const slice =
+      byteCharacters.slice(
+        offset,
+        offset +
+          CHUNK_SIZE,
+      );
+
+    const byteNumbers =
+      new Array<number>(
+        slice.length,
+      );
+
+    for (
+      let index = 0;
+      index <
+      slice.length;
+      index++
+    ) {
+      byteNumbers[index] =
+        slice.charCodeAt(
+          index,
+        );
+    }
+
+    byteArrays.push(
+      byteNumbers,
+    );
+  }
+
+  const totalLength =
+    byteArrays.reduce(
+      (
+        total,
+        chunk,
+      ) =>
+        total +
+        chunk.length,
+      0,
+    );
+
+  const buffer =
+    new ArrayBuffer(
+      totalLength,
+    );
+
+  const view =
+    new Uint8Array(
+      buffer,
+    );
+
+  let offset = 0;
+
+  for (const chunk of byteArrays) {
+    view.set(
+      chunk,
+      offset,
+    );
+
+    offset +=
+      chunk.length;
+  }
+
+  const blob =
+    new Blob(
+      [buffer],
+      {
+        type: "image/jpeg",
+      },
+    );
+
+  return new File(
+    [blob],
+    fileName,
+    {
+      type: "image/jpeg",
+      lastModified:
+        Date.now(),
+    },
+  );
 }
 
 /* =========================================================
@@ -277,7 +459,9 @@ function ProfileImage({
   fullName: string;
 }) {
   const inputRef =
-    useRef<HTMLInputElement>(null);
+    useRef<HTMLInputElement>(
+      null,
+    );
 
   const initialImageUrl =
     member.profileImage
@@ -287,198 +471,394 @@ function ProfileImage({
       : null;
 
   const [preview, setPreview] =
-    useState<string | null>(
-      initialImageUrl,
-    );
+    useState<
+      string | null
+    >(initialImageUrl);
 
-  const [uploading, setUploading] =
-    useState(false);
+  const [
+    uploading,
+    setUploading,
+  ] = useState(false);
 
-  const [uploaded, setUploaded] =
-    useState(false);
+  const [
+    uploaded,
+    setUploaded,
+  ] = useState(false);
 
   const [error, setError] =
-    useState<string | null>(null);
+    useState<string | null>(
+      null,
+    );
 
   /* =======================================================
-     OPEN IMAGE PICKER
+     UPLOAD IMAGE
   ======================================================= */
 
-  const handleSelectImage = () => {
-    if (uploading) {
-      return;
-    }
+  const uploadProfileImage =
+    async (
+      file: File,
+    ): Promise<void> => {
+      let temporaryPreview:
+        | string
+        | null = null;
 
-    setError(null);
-    setUploaded(false);
+      try {
+        setError(null);
+        setUploaded(false);
+        setUploading(true);
 
-    inputRef.current?.click();
-  };
+        /* -------------------------------------------------
+           IMMEDIATE LOCAL PREVIEW
+        ------------------------------------------------- */
+
+        temporaryPreview =
+          URL.createObjectURL(
+            file,
+          );
+
+        setPreview(
+          temporaryPreview,
+        );
+
+        /* -------------------------------------------------
+           NORMALIZE IMAGE
+        ------------------------------------------------- */
+
+        const compressed =
+          await compressProfileImage(
+            file,
+          );
+
+        /* -------------------------------------------------
+           UPLOAD JPEG DIRECTLY
+        ------------------------------------------------- */
+
+        const response =
+          await fetch(
+            `/api/members/photos/${encodeURIComponent(
+              member.membershipNumber,
+            )}`,
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "image/jpeg",
+              },
+
+              body: compressed,
+            },
+          );
+
+        /* -------------------------------------------------
+           SERVER RESPONSE
+        ------------------------------------------------- */
+
+        let result: {
+          success?: boolean;
+          error?: string;
+          profileImage?: string;
+          profileImageUrl?: string;
+        };
+
+        try {
+          result =
+            await response.json();
+        } catch {
+          throw new Error(
+            "The server returned an invalid response.",
+          );
+        }
+
+        if (
+          !response.ok ||
+          !result.success
+        ) {
+          throw new Error(
+            result.error ||
+              "Failed to upload profile image.",
+          );
+        }
+
+        /* -------------------------------------------------
+           CACHE-BUSTED IMAGE URL
+        ------------------------------------------------- */
+
+        const uploadedUrl =
+          result.profileImageUrl ||
+          getProfileImageUrl(
+            member.membershipNumber,
+            Date.now(),
+          );
+
+        setPreview(
+          uploadedUrl,
+        );
+
+        setUploaded(true);
+
+        /* -------------------------------------------------
+           CLEAN TEMPORARY PREVIEW
+        ------------------------------------------------- */
+
+        if (
+          temporaryPreview
+        ) {
+          URL.revokeObjectURL(
+            temporaryPreview,
+          );
+
+          temporaryPreview =
+            null;
+        }
+
+        /* -------------------------------------------------
+           SUCCESS INDICATOR
+        ------------------------------------------------- */
+
+        window.setTimeout(
+          () => {
+            setUploaded(
+              false,
+            );
+          },
+          1800,
+        );
+      } catch (uploadError) {
+        console.error(
+          "[PROFILE IMAGE UPLOAD]",
+          uploadError,
+        );
+
+        /*
+         * Restore previous image if upload fails.
+         */
+        setPreview(
+          initialImageUrl,
+        );
+
+        setError(
+          uploadError instanceof
+            Error
+            ? uploadError.message
+            : "Failed to upload image.",
+        );
+
+        if (
+          temporaryPreview
+        ) {
+          URL.revokeObjectURL(
+            temporaryPreview,
+          );
+
+          temporaryPreview =
+            null;
+        }
+      } finally {
+        setUploading(
+          false,
+        );
+      }
+    };
+
+  /* =======================================================
+     OPEN CAMERA
+  ======================================================= */
+
+  const handleOpenCamera =
+    async (): Promise<void> => {
+      if (uploading) {
+        return;
+      }
+
+      setError(null);
+      setUploaded(false);
+
+      try {
+        /* -----------------------------------------------
+           CHECK PERMISSION
+        ------------------------------------------------ */
+
+        let permissions =
+          await Camera.checkPermissions();
+
+        let cameraPermission =
+          permissions.camera;
+
+        /* -----------------------------------------------
+           REQUEST PERMISSION
+        ------------------------------------------------ */
+
+        if (
+          cameraPermission !==
+          "granted"
+        ) {
+          permissions =
+            await Camera.requestPermissions(
+              {
+                permissions: [
+                  "camera",
+                ],
+              },
+            );
+
+          cameraPermission =
+            permissions.camera;
+        }
+
+        /* -----------------------------------------------
+           PERMISSION DENIED
+        ------------------------------------------------ */
+
+        if (
+          cameraPermission !==
+          "granted"
+        ) {
+          throw new Error(
+            "Camera permission was not granted. Please allow camera access in your device settings.",
+          );
+        }
+
+        /* -----------------------------------------------
+           OPEN CAMERA
+        ------------------------------------------------ */
+
+        const photo =
+          await Camera.getPhoto(
+            {
+              source:
+                CameraSource.Camera,
+
+              resultType:
+                CameraResultType.Base64,
+
+              quality: 90,
+
+              width: 1600,
+
+              height: 1600,
+
+              correctOrientation:
+                true,
+
+              allowEditing:
+                false,
+            },
+          );
+
+        /* -----------------------------------------------
+           CAMERA RESULT
+        ------------------------------------------------ */
+
+        if (
+          !photo.base64String
+        ) {
+          throw new Error(
+            "The camera did not return an image.",
+          );
+        }
+
+        /* -----------------------------------------------
+           CONVERT TO FILE
+        ------------------------------------------------ */
+
+        const file =
+          base64ToFile(
+            photo.base64String,
+            `${member.membershipNumber}.jpg`,
+          );
+
+        /* -----------------------------------------------
+           UPLOAD
+        ------------------------------------------------ */
+
+        await uploadProfileImage(
+          file,
+        );
+      } catch (cameraError) {
+        console.error(
+          "[PROFILE CAMERA]",
+          cameraError,
+        );
+
+        /*
+         * User cancelling the camera should not
+         * be treated as a serious application error.
+         */
+        const message =
+          cameraError instanceof
+          Error
+            ? cameraError.message
+            : String(
+                cameraError,
+              );
+
+        const normalized =
+          message.toLowerCase();
+
+        if (
+          normalized.includes(
+            "cancel",
+          ) ||
+          normalized.includes(
+            "dismiss",
+          ) ||
+          normalized.includes(
+            "user cancelled",
+          )
+        ) {
+          return;
+        }
+
+        setError(
+          message ||
+            "Unable to open the camera.",
+        );
+      }
+    };
+
+  /* =======================================================
+     OPEN GALLERY
+  ======================================================= */
+
+  const handleSelectFromGallery =
+    () => {
+      if (uploading) {
+        return;
+      }
+
+      setError(null);
+      setUploaded(false);
+
+      inputRef.current?.click();
+    };
 
   /* =======================================================
      IMAGE SELECTION
   ======================================================= */
 
-  const handleImageChange = async (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file =
-      event.target.files?.[0];
-
-    /*
-     * Reset the input so selecting the same
-     * photo again is possible.
-     */
-    event.target.value = "";
-
-    if (!file) {
-      return;
-    }
-
-    setError(null);
-    setUploaded(false);
-    setUploading(true);
-
-    let temporaryPreview:
-      | string
-      | null = null;
-
-    try {
-      /* ---------------------------------------------------
-         IMMEDIATE LOCAL PREVIEW
-      --------------------------------------------------- */
-
-      temporaryPreview =
-        URL.createObjectURL(file);
-
-      setPreview(temporaryPreview);
-
-      /* ---------------------------------------------------
-         NORMALIZE IMAGE
-      --------------------------------------------------- */
-
-      const compressed =
-        await compressProfileImage(file);
-
-      /* ---------------------------------------------------
-         UPLOAD JPEG DIRECTLY
-         
-         IMPORTANT:
-         No FormData.
-      --------------------------------------------------- */
-
-      const response =
-        await fetch(
-          `/api/members/photos/${encodeURIComponent(
-            member.membershipNumber,
-          )}`,
-          {
-            method: "POST",
-
-            headers: {
-              "Content-Type":
-                "image/jpeg",
-            },
-
-            body: compressed,
-          },
-        );
-
-      /* ---------------------------------------------------
-         SERVER RESPONSE
-      --------------------------------------------------- */
-
-      let result: {
-        success?: boolean;
-        error?: string;
-        profileImage?: string;
-        profileImageUrl?: string;
-      };
-
-      try {
-        result =
-          await response.json();
-      } catch {
-        throw new Error(
-          "The server returned an invalid response.",
-        );
-      }
-
-      if (
-        !response.ok ||
-        !result.success
-      ) {
-        throw new Error(
-          result.error ||
-            "Failed to upload profile image.",
-        );
-      }
-
-      /* ---------------------------------------------------
-         NEW IMAGE URL
-         
-         Cache busting ensures the browser does not
-         display the previous photo.
-      --------------------------------------------------- */
-
-      const uploadedUrl =
-        result.profileImageUrl ||
-        getProfileImageUrl(
-          member.membershipNumber,
-          Date.now(),
-        );
-
-      setPreview(uploadedUrl);
-
-      setUploaded(true);
-
-      /* ---------------------------------------------------
-         CLEAN TEMPORARY PREVIEW
-      --------------------------------------------------- */
-
-      if (temporaryPreview) {
-        URL.revokeObjectURL(
-          temporaryPreview,
-        );
-
-        temporaryPreview = null;
-      }
-
-      /* ---------------------------------------------------
-         SUCCESS INDICATOR
-      --------------------------------------------------- */
-
-      window.setTimeout(() => {
-        setUploaded(false);
-      }, 1800);
-    } catch (uploadError) {
-      console.error(
-        "[PROFILE IMAGE UPLOAD]",
-        uploadError,
-      );
+  const handleImageChange =
+    async (
+      event: ChangeEvent<HTMLInputElement>,
+    ): Promise<void> => {
+      const file =
+        event.target.files?.[0];
 
       /*
-       * Restore previous image if upload fails.
+       * Reset the input so selecting the same
+       * photo again is possible.
        */
-      setPreview(initialImageUrl);
+      event.target.value =
+        "";
 
-      setError(
-        uploadError instanceof Error
-          ? uploadError.message
-          : "Failed to upload image.",
-      );
-
-      if (temporaryPreview) {
-        URL.revokeObjectURL(
-          temporaryPreview,
-        );
-
-        temporaryPreview = null;
+      if (!file) {
+        return;
       }
-    } finally {
-      setUploading(false);
-    }
-  };
+
+      await uploadProfileImage(
+        file,
+      );
+    };
 
   /* =======================================================
      RENDER
@@ -486,22 +866,34 @@ function ProfileImage({
 
   return (
     <div className="relative shrink-0">
+      {/* =================================================
+          HIDDEN GALLERY INPUT
+      ================================================= */}
+
       <input
         ref={inputRef}
         type="file"
         accept="image/*"
-        onChange={handleImageChange}
+        onChange={
+          handleImageChange
+        }
         className="hidden"
       />
 
+      {/* =================================================
+          PROFILE PHOTO
+      ================================================= */}
+
       <button
         type="button"
-        onClick={handleSelectImage}
+        onClick={
+          handleOpenCamera
+        }
         disabled={uploading}
         aria-label={
           uploading
             ? "Uploading profile photo"
-            : `Change profile photo for ${fullName}`
+            : `Take profile photo for ${fullName}`
         }
         className="
           group
@@ -533,7 +925,9 @@ function ProfileImage({
               object-cover
             "
             onError={() => {
-              setPreview(null);
+              setPreview(
+                null,
+              );
             }}
           />
         ) : (
@@ -553,11 +947,15 @@ function ProfileImage({
               dark:text-slate-200
             "
           >
-            {getInitials(member)}
+            {getInitials(
+              member,
+            )}
           </div>
         )}
 
-        {/* UPLOADING */}
+        {/* =================================================
+            UPLOADING
+        ================================================= */}
 
         {uploading && (
           <div
@@ -582,70 +980,96 @@ function ProfileImage({
           </div>
         )}
 
-        {/* SUCCESS */}
+        {/* =================================================
+            SUCCESS
+        ================================================= */}
 
-        {!uploading && uploaded && (
-          <div
-            className="
-              absolute
-              inset-0
-              flex
-              items-center
-              justify-center
-              bg-emerald-600/75
-            "
-          >
-            <Check
+        {!uploading &&
+          uploaded && (
+            <div
               className="
+                absolute
+                inset-0
+                flex
+                items-center
+                justify-center
+                bg-emerald-600/75
+              "
+            >
+              <Check
+                className="
+                  h-7
+                  w-7
+                  text-white
+                "
+              />
+            </div>
+          )}
+
+        {/* =================================================
+            CAMERA INDICATOR
+        ================================================= */}
+
+        {!uploading &&
+          !uploaded && (
+            <span
+              className="
+                absolute
+                bottom-1
+                right-1
+                flex
                 h-7
                 w-7
+                items-center
+                justify-center
+                rounded-full
+                border
+                border-white/30
+                bg-black/65
                 text-white
+                shadow-lg
               "
-            />
-          </div>
-        )}
-
-        {/* CAMERA INDICATOR */}
-
-        {!uploading && !uploaded && (
-          <span
-            className="
-              absolute
-              bottom-1
-              right-1
-              flex
-              h-7
-              w-7
-              items-center
-              justify-center
-              rounded-full
-              border
-              border-white/30
-              bg-black/65
-              text-white
-              shadow-lg
-            "
-          >
-            <Camera
-              className="
-                h-3.5
-                w-3.5
-              "
-            />
-          </span>
-        )}
+            >
+              <CameraIcon
+                className="
+                  h-3.5
+                  w-3.5
+                "
+              />
+            </span>
+          )}
       </button>
 
-      {/* ERROR */}
+      {/* =================================================
+          OPTIONAL GALLERY ACTION
+
+          Kept available internally, but the visible
+          interaction remains camera-first.
+      ================================================= */}
+
+      {/*
+      <button
+        type="button"
+        onClick={
+          handleSelectFromGallery
+        }
+      >
+        Choose from gallery
+      </button>
+      */}
+
+      {/* =================================================
+          ERROR
+      ================================================= */}
 
       {error && (
-        <p
+        <div
           className="
             absolute
             left-0
             top-[calc(100%+6px)]
             z-20
-            w-52
+            w-60
             rounded-lg
             bg-red-500/10
             px-2
@@ -658,7 +1082,7 @@ function ProfileImage({
           "
         >
           {error}
-        </p>
+        </div>
       )}
     </div>
   );
@@ -757,17 +1181,20 @@ function MemberCard({
 
   const savingsBalance =
     Number(
-      financial?.savingsBalance ?? 0,
+      financial?.savingsBalance ??
+        0,
     );
 
   const totalDeposits =
     Number(
-      financial?.totalDeposits ?? 0,
+      financial?.totalDeposits ??
+        0,
     );
 
   const totalWithdrawals =
     Number(
-      financial?.totalWithdrawals ?? 0,
+      financial?.totalWithdrawals ??
+        0,
     );
 
   const loan =
@@ -775,7 +1202,8 @@ function MemberCard({
 
   const loanOutstanding =
     Number(
-      loan?.outstandingBalance ?? 0,
+      loan?.outstandingBalance ??
+        0,
     );
 
   return (
@@ -848,12 +1276,16 @@ function MemberCard({
                 dark:text-slate-400
               "
             >
-              {member.membershipNumber}
+              {
+                member.membershipNumber
+              }
             </p>
 
             <div className="mt-1.5">
               <StatusBadge
-                status={member.status}
+                status={
+                  member.status
+                }
               />
             </div>
           </div>
@@ -959,6 +1391,8 @@ function MemberCard({
           gap-2
         "
       >
+        {/* DEPOSITS */}
+
         <div
           className="
             rounded-2xl
@@ -993,6 +1427,8 @@ function MemberCard({
             )}
           </p>
         </div>
+
+        {/* WITHDRAWALS */}
 
         <div
           className="
@@ -1041,6 +1477,8 @@ function MemberCard({
           space-y-3
         "
       >
+        {/* PHONE */}
+
         <div
           className="
             flex
@@ -1069,9 +1507,12 @@ function MemberCard({
               dark:text-white
             "
           >
-            {member.phone || "—"}
+            {member.phone ||
+              "—"}
           </span>
         </div>
+
+        {/* GENDER */}
 
         <div
           className="
@@ -1100,9 +1541,12 @@ function MemberCard({
               dark:text-white
             "
           >
-            {member.gender || "—"}
+            {member.gender ||
+              "—"}
           </span>
         </div>
+
+        {/* JOINED */}
 
         <div
           className="
@@ -1172,7 +1616,9 @@ function MemberCard({
                 dark:text-white
               "
             >
-              {loan.loanNumber}
+              {
+                loan.loanNumber
+              }
               {" · "}
               {loan.status}
             </span>
@@ -1194,7 +1640,9 @@ function MemberCard({
       >
         <button
           type="button"
-          onClick={onView}
+          onClick={
+            onView
+          }
           className="
             flex
             h-10
@@ -1218,7 +1666,9 @@ function MemberCard({
 
         <button
           type="button"
-          onClick={onEdit}
+          onClick={
+            onEdit
+          }
           className="
             flex
             h-10
@@ -1241,7 +1691,9 @@ function MemberCard({
 
         <button
           type="button"
-          onClick={onDelete}
+          onClick={
+            onDelete
+          }
           className="
             flex
             h-10
@@ -1276,7 +1728,9 @@ export default function MemberList({
   onEdit,
   onDelete,
 }: MemberListProps) {
-  if (!members.length) {
+  if (
+    !members.length
+  ) {
     return (
       <div
         className="
@@ -1336,8 +1790,9 @@ export default function MemberList({
               dark:text-slate-400
             "
           >
-            Members will appear here once
-            they are registered.
+            Members will appear
+            here once they are
+            registered.
           </p>
         </div>
       </div>
@@ -1366,24 +1821,34 @@ export default function MemberList({
           lg:hidden
         "
       >
-        {members.map((member) => (
-          <MemberCard
-            key={
-              member.membershipNumber ||
-              member._id
-            }
-            member={member}
-            onView={() =>
-              onView?.(member)
-            }
-            onEdit={() =>
-              onEdit?.(member)
-            }
-            onDelete={() =>
-              onDelete?.(member)
-            }
-          />
-        ))}
+        {members.map(
+          (member) => (
+            <MemberCard
+              key={
+                member.membershipNumber ||
+                member._id
+              }
+              member={
+                member
+              }
+              onView={() =>
+                onView?.(
+                  member,
+                )
+              }
+              onEdit={() =>
+                onEdit?.(
+                  member,
+                )
+              }
+              onDelete={() =>
+                onDelete?.(
+                  member,
+                )
+              }
+            />
+          ),
+        )}
       </div>
     </>
   );
