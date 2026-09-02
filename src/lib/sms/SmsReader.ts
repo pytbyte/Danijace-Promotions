@@ -1,18 +1,30 @@
-import { registerPlugin } from '@capacitor/core';
+import { registerPlugin } from "@capacitor/core";
 
 export interface SmsMessage {
+  id?: string | null;
   address: string | null;
   body: string;
   date: number;
 }
 
-export interface SmsReaderPlugin {
-  readInbox(): Promise<{
-    messages: SmsMessage[];
-    diagnostic?: Record<string, unknown>;
-  }>;
+export interface SmsReaderDiagnostic {
+  stage?: string;
+  permission?: string;
+  count?: number;
+  error?: string;
+  [key: string]: unknown;
 }
 
-const SmsReader = registerPlugin<SmsReaderPlugin>('SmsReader');
+export interface SmsReaderResult {
+  messages: SmsMessage[];
+  diagnostic?: SmsReaderDiagnostic;
+}
+
+export interface SmsReaderPlugin {
+  readInbox(): Promise<SmsReaderResult>;
+}
+
+const SmsReader =
+  registerPlugin<SmsReaderPlugin>("SmsReader");
 
 export default SmsReader;

@@ -16,6 +16,9 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
+ 
+
+import SmsInboxMonitor from "@/components/sms/SmsInboxMonitor";
 
 import TopBar from "@/components/dashboard/TopBar";
 
@@ -1446,6 +1449,7 @@ export default function DashboardPage() {
                     }
                   />
                 </section>
+                <SmsInboxMonitor />
 
                 {/* =================================================
                     FOOTER
