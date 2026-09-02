@@ -139,6 +139,17 @@
 
 
         <!-- =================================================
+             BACKGROUND SMS DELIVERY
+        ================================================== -->
+
+        <service
+            android:name=".SmsBackgroundJobService"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+
+        <!-- =================================================
              FILE PROVIDER
         ================================================== -->
 
