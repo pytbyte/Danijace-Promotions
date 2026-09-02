@@ -3,6 +3,9 @@ package com.pytbyte.geoshua;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.provider.Telephony;
 import android.telephony.SmsMessage;
 import android.util.Log;
@@ -22,81 +25,34 @@ import java.security.MessageDigest;
  * REAL-TIME SMS RECEIVER
  * =========================================================
  *
- * PURPOSE
- * ---------------------------------------------------------
+ * SMS_RECEIVED
+ *      ↓
+ * local filter
+ *      ↓
+ * fingerprint
+ *      ↓
+ * internet?
+ *      ├── YES → API → MongoDB
+ *      └── NO  → local queue
  *
- * Primary path for processing incoming bank SMS messages.
- *
- *     Bank SMS
- *        ↓
- *     SMS_RECEIVED
- *        ↓
- *     SmsReceiver
- *        ↓
- *     lightweight local filter
- *        ↓
- *     /api/sms/process
- *        ↓
- *     server parser
- *        ↓
- *     member resolution
- *        ↓
- *     savings / loan classification
- *        ↓
- *     financial transaction
- *
- * =========================================================
- *
- * IMPORTANT
- * ---------------------------------------------------------
- *
- * This class does NOT:
- *
- * - identify members
- * - classify savings vs loan
- * - calculate balances
- * - write MongoDB
- * - create financial records
- *
- * The server remains authoritative.
- *
- * =========================================================
+ * The application UI does NOT need to be open.
  */
 public class SmsReceiver extends BroadcastReceiver {
 
     private static final String TAG =
         "GeoShuaSmsReceiver";
 
-    /**
-     * Production SMS processing endpoint.
-     */
     private static final String PROCESS_URL =
         "https://geoshua.vercel.app/api/sms/process";
 
-    /**
-     * HTTP connection timeout.
-     */
     private static final int CONNECT_TIMEOUT_MS =
         10_000;
 
-    /**
-     * HTTP response timeout.
-     */
     private static final int READ_TIMEOUT_MS =
         15_000;
 
-    /**
-     * Maximum response body retained for logging.
-     *
-     * The response itself is not required for financial
-     * processing on the Android side.
-     */
     private static final int MAX_RESPONSE_LENGTH =
         2_000;
-
-    /* =====================================================
-       RECEIVE
-    ===================================================== */
 
     @Override
     public void onReceive(
@@ -107,9 +63,6 @@ public class SmsReceiver extends BroadcastReceiver {
             return;
         }
 
-        /*
-         * Only process the Android SMS_RECEIVED broadcast.
-         */
         if (
             intent == null ||
             !Telephony.Sms.Intents.SMS_RECEIVED_ACTION
@@ -118,12 +71,6 @@ public class SmsReceiver extends BroadcastReceiver {
             return;
         }
 
-        /*
-         * BroadcastReceiver has a limited execution window.
-         *
-         * goAsync() allows the HTTP operation to continue
-         * briefly without blocking the main receiver thread.
-         */
         final PendingResult pendingResult =
             goAsync();
 
@@ -134,12 +81,14 @@ public class SmsReceiver extends BroadcastReceiver {
             new Thread(
                 () -> {
                     try {
+
                         processIncomingSms(
                             applicationContext,
                             intent
                         );
 
                     } catch (Exception e) {
+
                         Log.e(
                             TAG,
                             "Unexpected SMS processing error.",
@@ -166,15 +115,13 @@ public class SmsReceiver extends BroadcastReceiver {
     ) {
         SmsMessage[] messages =
             Telephony.Sms.Intents
-                .getMessagesFromIntent(
-                    intent
-                );
+                .getMessagesFromIntent(intent);
 
         if (
             messages == null ||
             messages.length == 0
         ) {
-            Log.d(
+            Log.w(
                 TAG,
                 "SMS broadcast contained no messages."
             );
@@ -182,10 +129,6 @@ public class SmsReceiver extends BroadcastReceiver {
             return;
         }
 
-        /*
-         * Multipart SMS messages can arrive as multiple
-         * SmsMessage objects.
-         */
         StringBuilder bodyBuilder =
             new StringBuilder();
 
@@ -202,10 +145,6 @@ public class SmsReceiver extends BroadcastReceiver {
                 continue;
             }
 
-            /*
-             * Use the originating address from the first
-             * valid SMS part.
-             */
             if (address == null) {
                 address =
                     sms.getDisplayOriginatingAddress();
@@ -218,22 +157,16 @@ public class SmsReceiver extends BroadcastReceiver {
                 part != null &&
                 !part.isEmpty()
             ) {
-                bodyBuilder.append(
-                    part
-                );
+                bodyBuilder.append(part);
             }
 
-            /*
-             * Use the most recent valid timestamp.
-             */
             long timestamp =
                 sms.getTimestampMillis();
 
             if (
                 timestamp > smsDate
             ) {
-                smsDate =
-                    timestamp;
+                smsDate = timestamp;
             }
         }
 
@@ -243,31 +176,16 @@ public class SmsReceiver extends BroadcastReceiver {
                 .trim();
 
         if (body.isEmpty()) {
-            Log.d(
-                TAG,
-                "Ignoring SMS with empty body."
-            );
-
             return;
         }
 
-        /*
-         * Extremely unlikely fallback.
-         *
-         * Normally SmsMessage supplies a timestamp.
-         */
         if (smsDate <= 0L) {
             smsDate =
                 System.currentTimeMillis();
         }
 
-        /*
-         * Do not send ordinary SMS messages to the server.
-         */
         if (
-            !looksLikeBankTransaction(
-                body
-            )
+            !looksLikeBankTransaction(body)
         ) {
             Log.d(
                 TAG,
@@ -277,18 +195,6 @@ public class SmsReceiver extends BroadcastReceiver {
             return;
         }
 
-        /*
-         * Generate a deterministic identifier.
-         *
-         * This is important because the same SMS can be seen
-         * by:
-         *
-         * 1. real-time SmsReceiver
-         * 2. hourly SmsSweepReceiver
-         *
-         * Both must ultimately resolve to the same server-side
-         * idempotency key.
-         */
         String smsId =
             createSmsFingerprint(
                 address,
@@ -304,6 +210,29 @@ public class SmsReceiver extends BroadcastReceiver {
                 smsDate
             );
 
+        /*
+         * Do not waste the HTTP timeout when the device
+         * obviously has no usable network.
+         */
+        if (!hasInternet(context)) {
+
+            SmsQueue.enqueue(
+                context,
+                smsId,
+                address,
+                body,
+                smsDate
+            );
+
+            Log.w(
+                TAG,
+                "No internet. SMS queued locally. smsId="
+                    + smsId
+            );
+
+            return;
+        }
+
         boolean success =
             postJson(
                 PROCESS_URL,
@@ -311,40 +240,96 @@ public class SmsReceiver extends BroadcastReceiver {
             );
 
         if (success) {
+
             Log.d(
                 TAG,
-                "Incoming bank SMS submitted successfully. "
-                    + "smsId="
+                "Incoming bank SMS submitted successfully. smsId="
                     + smsId
             );
-        } else {
+
+            return;
+        }
+
+        /*
+         * Server acceptance was not confirmed.
+         *
+         * Keep the SMS locally for recovery.
+         */
+        SmsQueue.enqueue(
+            context,
+            smsId,
+            address,
+            body,
+            smsDate
+        );
+
+        Log.w(
+            TAG,
+            "SMS submission failed. Queued for recovery. smsId="
+                + smsId
+        );
+    }
+
+    /* =====================================================
+       NETWORK
+    ===================================================== */
+
+    private boolean hasInternet(
+        Context context
+    ) {
+        try {
+
+            ConnectivityManager manager =
+                (ConnectivityManager)
+                    context.getSystemService(
+                        Context.CONNECTIVITY_SERVICE
+                    );
+
+            if (manager == null) {
+                return false;
+            }
+
+            Network network =
+                manager.getActiveNetwork();
+
+            if (network == null) {
+                return false;
+            }
+
+            NetworkCapabilities capabilities =
+                manager.getNetworkCapabilities(
+                    network
+                );
+
+            if (capabilities == null) {
+                return false;
+            }
+
+            return
+                capabilities.hasCapability(
+                    NetworkCapabilities.NET_CAPABILITY_INTERNET
+                )
+                &&
+                capabilities.hasCapability(
+                    NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                );
+
+        } catch (Exception e) {
+
             Log.w(
                 TAG,
-                "Incoming bank SMS submission failed. "
-                    + "Recovery sweep may retry it. "
-                    + "smsId="
-                    + smsId
+                "Unable to determine network state.",
+                e
             );
+
+            return false;
         }
     }
 
     /* =====================================================
-       LOCAL BANK FILTER
+       BANK FILTER
     ===================================================== */
 
-    /**
-     * Lightweight filter only.
-     *
-     * This method must NOT attempt to determine:
-     *
-     * - member
-     * - savings
-     * - loan
-     * - amount
-     * - account ownership
-     *
-     * Those decisions belong to the server.
-     */
     private boolean looksLikeBankTransaction(
         String body
     ) {
@@ -362,43 +347,19 @@ public class SmsReceiver extends BroadcastReceiver {
                 .toLowerCase();
 
         return
-            normalized.contains(
-                "confirmed"
-            )
+            normalized.contains("confirmed")
             &&
-            normalized.contains(
-                "kes"
-            )
+            normalized.contains("kes")
             &&
-            normalized.contains(
-                "received from"
-            )
+            normalized.contains("received from")
             &&
-            normalized.contains(
-                "for account"
-            );
+            normalized.contains("for account");
     }
 
     /* =====================================================
-       SMS FINGERPRINT
+       FINGERPRINT
     ===================================================== */
 
-    /**
-     * Create a deterministic SHA-256 fingerprint.
-     *
-     * The fingerprint allows the server to recognize the
-     * same SMS when it arrives through both:
-     *
-     *     SmsReceiver
-     *
-     * and:
-     *
-     *     SmsSweepReceiver
-     *
-     * This is NOT the financial transaction ID.
-     *
-     * It is the source-message idempotency key.
-     */
     private String createSmsFingerprint(
         String address,
         String body,
@@ -412,6 +373,7 @@ public class SmsReceiver extends BroadcastReceiver {
                 + date;
 
         try {
+
             MessageDigest digest =
                 MessageDigest.getInstance(
                     "SHA-256"
@@ -430,6 +392,7 @@ public class SmsReceiver extends BroadcastReceiver {
                 );
 
             for (byte value : hash) {
+
                 result.append(
                     String.format(
                         "%02x",
@@ -441,22 +404,16 @@ public class SmsReceiver extends BroadcastReceiver {
             return result.toString();
 
         } catch (Exception e) {
-            /*
-             * SHA-256 is guaranteed by Android/Java.
-             *
-             * This fallback should therefore practically
-             * never execute.
-             */
+
             Log.e(
                 TAG,
                 "Unable to create SMS fingerprint.",
                 e
             );
 
-            return
-                String.valueOf(
-                    source.hashCode()
-                );
+            return String.valueOf(
+                source.hashCode()
+            );
         }
     }
 
@@ -472,11 +429,6 @@ public class SmsReceiver extends BroadcastReceiver {
        JSON
     ===================================================== */
 
-    /**
-     * Build the minimal server payload.
-     *
-     * smsId is included specifically for idempotency.
-     */
     private String buildJson(
         String smsId,
         String address,
@@ -498,10 +450,6 @@ public class SmsReceiver extends BroadcastReceiver {
             + "}";
     }
 
-    /* =====================================================
-       JSON ESCAPING
-    ===================================================== */
-
     private String quote(
         String value
     ) {
@@ -511,38 +459,20 @@ public class SmsReceiver extends BroadcastReceiver {
 
         return "\""
             + value
-                .replace(
-                    "\\",
-                    "\\\\"
-                )
-                .replace(
-                    "\"",
-                    "\\\""
-                )
-                .replace(
-                    "\n",
-                    "\\n"
-                )
-                .replace(
-                    "\r",
-                    "\\r"
-                )
-                .replace(
-                    "\t",
-                    "\\t"
-                )
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t")
+                .replace("\b", "\\b")
+                .replace("\f", "\\f")
             + "\"";
     }
 
     /* =====================================================
-       HTTP POST
+       HTTP
     ===================================================== */
 
-    /**
-     * Submit SMS to the server.
-     *
-     * Returns true only for a successful HTTP 2xx response.
-     */
     private boolean postJson(
         String endpoint,
         String json
@@ -551,6 +481,7 @@ public class SmsReceiver extends BroadcastReceiver {
             null;
 
         try {
+
             URL url =
                 new URL(endpoint);
 
@@ -601,24 +532,21 @@ public class SmsReceiver extends BroadcastReceiver {
                 OutputStream output =
                     connection.getOutputStream()
             ) {
-                output.write(
-                    payload
-                );
+                output.write(payload);
+                output.flush();
             }
 
             int responseCode =
                 connection.getResponseCode();
 
             InputStream stream =
-                responseCode >= 200
-                    && responseCode < 400
+                responseCode >= 200 &&
+                responseCode < 400
                     ? connection.getInputStream()
                     : connection.getErrorStream();
 
             String response =
-                readResponse(
-                    stream
-                );
+                readResponse(stream);
 
             Log.d(
                 TAG,
@@ -629,11 +557,11 @@ public class SmsReceiver extends BroadcastReceiver {
             );
 
             return
-                responseCode >= 200
-                &&
+                responseCode >= 200 &&
                 responseCode < 300;
 
         } catch (Exception e) {
+
             Log.e(
                 TAG,
                 "Failed POSTing SMS to GEO-SHUA.",
@@ -643,6 +571,7 @@ public class SmsReceiver extends BroadcastReceiver {
             return false;
 
         } finally {
+
             if (connection != null) {
                 connection.disconnect();
             }
@@ -653,12 +582,6 @@ public class SmsReceiver extends BroadcastReceiver {
        RESPONSE
     ===================================================== */
 
-    /**
-     * Read only a small diagnostic response.
-     *
-     * Financial processing does not depend on the response
-     * body inside Android.
-     */
     private String readResponse(
         InputStream stream
     ) {
@@ -683,6 +606,7 @@ public class SmsReceiver extends BroadcastReceiver {
             while (
                 (line = reader.readLine()) != null
             ) {
+
                 if (
                     result.length()
                         >= MAX_RESPONSE_LENGTH
@@ -694,12 +618,11 @@ public class SmsReceiver extends BroadcastReceiver {
                     break;
                 }
 
-                result.append(
-                    line
-                );
+                result.append(line);
             }
 
         } catch (Exception e) {
+
             Log.e(
                 TAG,
                 "Unable to read SMS API response.",
@@ -710,3 +633,4 @@ public class SmsReceiver extends BroadcastReceiver {
         return result.toString();
     }
 }
+

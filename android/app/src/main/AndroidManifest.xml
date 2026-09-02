@@ -1,8 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.READ_SMS" />
+    <!-- =================================================
+         NETWORK
+    ================================================== -->
+
+    <uses-permission
+        android:name="android.permission.INTERNET" />
+
+    <uses-permission
+        android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+
+    <!-- =================================================
+         SMS
+    ================================================== -->
+
+    <uses-permission
+        android:name="android.permission.READ_SMS" />
+
+    <uses-permission
+        android:name="android.permission.RECEIVE_SMS" />
+
+
+    <!-- =================================================
+         BOOT RECOVERY
+    ================================================== -->
+
+    <uses-permission
+        android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
 
     <application
         android:allowBackup="true"
@@ -11,6 +38,11 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+
+
+        <!-- =================================================
+             MAIN ACTIVITY
+        ================================================== -->
 
         <activity
             android:name=".MainActivity"
@@ -21,24 +53,94 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density">
 
             <!-- Normal Android launcher -->
+
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
+
+                <action
+                    android:name="android.intent.action.MAIN" />
+
+                <category
+                    android:name="android.intent.category.LAUNCHER" />
+
             </intent-filter>
 
-            <!-- GEO-SHUA OAuth deep link -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
 
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
+            <!-- GEO-SHUA OAuth deep link -->
+
+            <intent-filter>
+
+                <action
+                    android:name="android.intent.action.VIEW" />
+
+                <category
+                    android:name="android.intent.category.DEFAULT" />
+
+                <category
+                    android:name="android.intent.category.BROWSABLE" />
 
                 <data
                     android:scheme="geoshua"
                     android:host="auth" />
+
             </intent-filter>
 
         </activity>
+
+
+        <!-- =================================================
+             REAL-TIME SMS RECEIVER
+        ================================================== -->
+
+        <receiver
+            android:name=".SmsReceiver"
+            android:enabled="true"
+            android:exported="true">
+
+            <intent-filter>
+
+                <action
+                    android:name="android.provider.Telephony.SMS_RECEIVED" />
+
+            </intent-filter>
+
+        </receiver>
+
+
+        <!-- =================================================
+             HOURLY RECOVERY SWEEP
+        ================================================== -->
+
+        <receiver
+            android:name=".SmsSweepReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+
+        <!-- =================================================
+             BOOT / APP UPDATE RECOVERY
+        ================================================== -->
+
+        <receiver
+            android:name=".SmsBootReceiver"
+            android:enabled="true"
+            android:exported="true">
+
+            <intent-filter>
+
+                <action
+                    android:name="android.intent.action.BOOT_COMPLETED" />
+
+                <action
+                    android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+
+            </intent-filter>
+
+        </receiver>
+
+
+        <!-- =================================================
+             FILE PROVIDER
+        ================================================== -->
 
         <provider
             android:name="androidx.core.content.FileProvider"

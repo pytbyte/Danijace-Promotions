@@ -25,6 +25,8 @@ export interface SmsReaderPlugin {
 }
 
 const SmsReader =
-  registerPlugin<SmsReaderPlugin>("SmsReader");
+  registerPlugin<SmsReaderPlugin>(
+    "SmsReader",
+  );
 
 export default SmsReader;

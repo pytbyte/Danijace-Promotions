@@ -24,41 +24,62 @@ import com.getcapacitor.annotation.Permission;
         @Permission(
             alias = "sms",
             strings = {
-                Manifest.permission.READ_SMS
+                Manifest.permission.READ_SMS,
+                Manifest.permission.RECEIVE_SMS
             }
         )
     }
 )
 public class SmsReaderPlugin extends Plugin {
 
-    private static final String TAG = "GeoShuaSmsReader";
+    private static final String TAG =
+        "GeoShuaSmsReader";
 
     /* =====================================================
        READ INBOX
     ===================================================== */
 
     @PluginMethod
-    public void readInbox(PluginCall call) {
+    public void readInbox(
+        PluginCall call
+    ) {
 
-        Context context = getContext();
+        Context context =
+            getContext();
 
         if (context == null) {
+
             call.reject(
                 "Android context unavailable."
             );
+
             return;
         }
 
-        /*
-         * Check READ_SMS permission before querying
-         * the Android SMS provider.
-         */
-        if (
+        boolean readGranted =
             ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.READ_SMS
-            ) != PackageManager.PERMISSION_GRANTED
+            ) == PackageManager.PERMISSION_GRANTED;
+
+        boolean receiveGranted =
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECEIVE_SMS
+            ) == PackageManager.PERMISSION_GRANTED;
+
+        /*
+         * The dashboard requires READ_SMS.
+         *
+         * RECEIVE_SMS is requested at the same time so the
+         * background listener can operate after the user grants
+         * the SMS permission set.
+         */
+        if (
+            !readGranted ||
+            !receiveGranted
         ) {
+
             requestPermissionForAlias(
                 "sms",
                 call,
@@ -76,7 +97,9 @@ public class SmsReaderPlugin extends Plugin {
     ===================================================== */
 
     @SuppressWarnings("unused")
-    private void smsPermissionCallback(PluginCall call) {
+    private void smsPermissionCallback(
+        PluginCall call
+    ) {
 
         PermissionState state =
             getPermissionState("sms");
@@ -84,9 +107,11 @@ public class SmsReaderPlugin extends Plugin {
         if (
             state != PermissionState.GRANTED
         ) {
+
             call.reject(
-                "READ_SMS permission was not granted."
+                "READ_SMS and RECEIVE_SMS permissions were not granted."
             );
+
             return;
         }
 
@@ -97,14 +122,19 @@ public class SmsReaderPlugin extends Plugin {
        READ SMS
     ===================================================== */
 
-    private void readSms(PluginCall call) {
+    private void readSms(
+        PluginCall call
+    ) {
 
-        Context context = getContext();
+        Context context =
+            getContext();
 
         if (context == null) {
+
             call.reject(
                 "Android context unavailable."
             );
+
             return;
         }
 
@@ -121,7 +151,8 @@ public class SmsReaderPlugin extends Plugin {
             "granted"
         );
 
-        Cursor cursor = null;
+        Cursor cursor =
+            null;
 
         try {
 
@@ -130,12 +161,6 @@ public class SmsReaderPlugin extends Plugin {
                     "content://sms/inbox"
                 );
 
-            /*
-             * Include Android's native SMS _id.
-             *
-             * This is useful for tracing a message through
-             * the diagnostic pipeline.
-             */
             String[] projection =
                 new String[] {
                     "_id",
@@ -144,13 +169,6 @@ public class SmsReaderPlugin extends Plugin {
                     "date"
                 };
 
-            /*
-             * Read the complete inbox.
-             *
-             * This is intentional for the diagnostic dashboard.
-             * The dashboard itself will decide which messages
-             * are candidates for submission.
-             */
             cursor =
                 context
                     .getContentResolver()
@@ -174,17 +192,6 @@ public class SmsReaderPlugin extends Plugin {
                     "SMS inbox query returned null."
                 );
 
-                /*
-                 * Explicitly cast null to String.
-                 *
-                 * Capacitor 8 has both:
-                 *
-                 * reject(String, Exception, JSObject)
-                 * reject(String, String, JSObject)
-                 *
-                 * Without the cast Java cannot determine
-                 * which overload should be used.
-                 */
                 call.reject(
                     "Unable to query SMS inbox.",
                     (String) null,
@@ -195,23 +202,25 @@ public class SmsReaderPlugin extends Plugin {
             }
 
             int idIndex =
-                cursor.getColumnIndex("_id");
+                cursor.getColumnIndex(
+                    "_id"
+                );
 
             int addressIndex =
-                cursor.getColumnIndex("address");
+                cursor.getColumnIndex(
+                    "address"
+                );
 
             int bodyIndex =
-                cursor.getColumnIndex("body");
+                cursor.getColumnIndex(
+                    "body"
+                );
 
             int dateIndex =
-                cursor.getColumnIndex("date");
+                cursor.getColumnIndex(
+                    "date"
+                );
 
-            /*
-             * Body and date are required.
-             *
-             * _id and address are optional because some SMS
-             * providers/devices may expose them differently.
-             */
             if (
                 bodyIndex < 0 ||
                 dateIndex < 0
@@ -239,27 +248,34 @@ public class SmsReaderPlugin extends Plugin {
             JSArray messages =
                 new JSArray();
 
-            while (cursor.moveToNext()) {
+            while (
+                cursor.moveToNext()
+            ) {
 
                 String id =
                     idIndex >= 0
-                        ? cursor.getString(idIndex)
+                        ? cursor.getString(
+                            idIndex
+                        )
                         : null;
 
                 String address =
                     addressIndex >= 0
-                        ? cursor.getString(addressIndex)
+                        ? cursor.getString(
+                            addressIndex
+                        )
                         : null;
 
                 String body =
-                    cursor.getString(bodyIndex);
+                    cursor.getString(
+                        bodyIndex
+                    );
 
                 long date =
-                    cursor.getLong(dateIndex);
+                    cursor.getLong(
+                        dateIndex
+                    );
 
-                /*
-                 * Ignore malformed SMS rows.
-                 */
                 if (
                     body == null ||
                     body.trim().isEmpty()
@@ -322,13 +338,15 @@ public class SmsReaderPlugin extends Plugin {
                 diagnostic
             );
 
-            call.resolve(result);
+            call.resolve(
+                result
+            );
 
         } catch (SecurityException e) {
 
             Log.e(
                 TAG,
-                "READ_SMS permission/security failure.",
+                "SMS permission/security failure.",
                 e
             );
 
@@ -345,7 +363,7 @@ public class SmsReaderPlugin extends Plugin {
             );
 
             call.reject(
-                "READ_SMS permission is unavailable.",
+                "SMS permission is unavailable.",
                 (String) null,
                 diagnostic
             );

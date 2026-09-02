@@ -1,21 +1,25 @@
 "use client";
 
 import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Clock3,
+  Inbox,
+  Loader2,
+  RefreshCw,
+  ShieldCheck,
+  Smartphone,
+  TriangleAlert,
+  XCircle,
+} from "lucide-react";
+import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
-
-import {
-  AlertCircle,
-  CheckCircle2,
-  Clock3,
-  Inbox,
-  RefreshCw,
-  Smartphone,
-  XCircle,
-} from "lucide-react";
 
 import { Capacitor } from "@capacitor/core";
 
@@ -24,112 +28,138 @@ import SmsReader, {
 } from "@/lib/sms/SmsReader";
 
 /* =========================================================
-   TYPES
+   CONFIG
 ========================================================= */
 
-type ApiResult = {
-  success?: boolean;
-  status?: string;
-  stage?: string;
-
-  processed?: boolean;
-  duplicate?: boolean;
-  ignored?: boolean;
-  financialChange?: boolean;
-
-  type?: string;
-
-  error?: string;
-
-  parser?: unknown;
-  classifier?: unknown;
-  processor?: unknown;
-  result?: unknown;
-
-  [key: string]: unknown;
-};
-
-type ProcessedSms = {
-  sms: SmsMessage;
-  httpStatus: number | null;
-  response: ApiResult | null;
-  error: string | null;
-};
-
-type SweepResult = {
-  startedAt: number;
-  completedAt: number;
-
-  scanned: number;
-  candidates: number;
-  submitted: number;
-
-  processed: number;
-  duplicates: number;
-  ignored: number;
-  failed: number;
-
-  results: ProcessedSms[];
-};
-
-/* =========================================================
-   CONFIGURATION
-========================================================= */
-
-const PROCESS_URL =
-  "/api/sms/process";
+const PROCESS_URL = "/api/sms/process";
 
 const SWEEP_INTERVAL_MS =
   5 * 60 * 1000;
 
 /*
- * Keep this filter broad.
+ * Keep the local filter broad.
  *
- * The Android dashboard monitor should NOT make the final
- * financial classification.
- *
- * The server parser remains authoritative.
+ * This is only noise reduction. The server remains
+ * responsible for parsing and deciding whether an SMS
+ * represents a financial transaction.
  */
-function looksLikeTransaction(
-  body: string,
+const FINANCIAL_TERMS = [
+  "kes",
+  "ksh",
+  "mpesa",
+  "m-pesa",
+  "confirmed",
+  "paybill",
+  "received",
+  "transaction",
+  "account",
+  "deposit",
+  "payment",
+  "repayment",
+];
+
+/* =========================================================
+   TYPES
+========================================================= */
+
+type MonitorStatus =
+  | "idle"
+  | "scanning"
+  | "synced"
+  | "attention"
+  | "error";
+
+type ProcessResult = {
+  sms: SmsMessage;
+  httpStatus?: number;
+  status?: string;
+  type?: string;
+  financialChange?: boolean;
+  duplicate?: boolean;
+  ignored?: boolean;
+  processed?: boolean;
+  error?: string;
+  response?: unknown;
+};
+
+type SweepStats = {
+  inbox: number;
+  candidates: number;
+  submitted: number;
+  processed: number;
+  duplicate: number;
+  ignored: number;
+  failed: number;
+};
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function isFinancialCandidate(
+  sms: SmsMessage,
 ): boolean {
-  const normalized =
-    body
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
+  const text =
+    `${sms.address ?? ""} ${sms.body}`.toLowerCase();
 
-  if (!normalized) {
-    return false;
-  }
-
-  return (
-    normalized.includes("kes") ||
-    normalized.includes("ksh") ||
-    normalized.includes("mpesa") ||
-    normalized.includes("m-pesa") ||
-    normalized.includes("confirmed") ||
-    normalized.includes("paybill") ||
-    normalized.includes("received") ||
-    normalized.includes("transaction") ||
-    normalized.includes("account")
+  return FINANCIAL_TERMS.some((term) =>
+    text.includes(term),
   );
 }
 
-/* =========================================================
-   FORMATTERS
-========================================================= */
+function formatTime(
+  timestamp: number,
+): string {
+  if (!timestamp) {
+    return "Unknown time";
+  }
+
+  try {
+    return new Intl.DateTimeFormat(
+      "en-KE",
+      {
+        hour: "2-digit",
+        minute: "2-digit",
+      },
+    ).format(
+      new Date(timestamp),
+    );
+  } catch {
+    return "Unknown time";
+  }
+}
 
 function formatDate(
   timestamp: number,
 ): string {
   if (!timestamp) {
-    return "Unknown";
+    return "";
   }
 
-  return new Date(
-    timestamp,
-  ).toLocaleString();
+  try {
+    return new Intl.DateTimeFormat(
+      "en-KE",
+      {
+        day: "2-digit",
+        month: "short",
+      },
+    ).format(
+      new Date(timestamp),
+    );
+  } catch {
+    return "";
+  }
+}
+
+function truncate(
+  value: string,
+  length = 100,
+): string {
+  if (value.length <= length) {
+    return value;
+  }
+
+  return `${value.slice(0, length)}…`;
 }
 
 /* =========================================================
@@ -137,733 +167,762 @@ function formatDate(
 ========================================================= */
 
 export default function SmsInboxMonitor() {
-  const [mounted, setMounted] =
+  const [status, setStatus] =
+    useState<MonitorStatus>("idle");
+
+  const [stats, setStats] =
+    useState<SweepStats>({
+      inbox: 0,
+      candidates: 0,
+      submitted: 0,
+      processed: 0,
+      duplicate: 0,
+      ignored: 0,
+      failed: 0,
+    });
+
+  const [results, setResults] =
+    useState<ProcessResult[]>([]);
+
+  const [lastSync, setLastSync] =
+    useState<number | null>(null);
+
+  const [expanded, setExpanded] =
     useState(false);
-
-  const [running, setRunning] =
-    useState(false);
-
-  const [lastSweep, setLastSweep] =
-    useState<SweepResult | null>(
-      null,
-    );
-
-  const [error, setError] =
-    useState<string | null>(
-      null,
-    );
 
   const runningRef =
     useRef(false);
 
   /* =======================================================
-     MOUNT
-  ======================================================= */
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  /* =======================================================
      SWEEP
   ======================================================= */
 
-  const sweep = useCallback(
-    async () => {
+  const sweepInbox =
+    useCallback(async () => {
       if (
-        runningRef.current
+        runningRef.current ||
+        !Capacitor.isNativePlatform()
       ) {
         return;
       }
 
       runningRef.current = true;
 
-      setRunning(true);
-      setError(null);
-
-      const startedAt =
-        Date.now();
-
-      const result: SweepResult = {
-        startedAt,
-        completedAt: startedAt,
-
-        scanned: 0,
-        candidates: 0,
-        submitted: 0,
-
-        processed: 0,
-        duplicates: 0,
-        ignored: 0,
-        failed: 0,
-
-        results: [],
-      };
+      setStatus("scanning");
 
       try {
-        console.log(
-          "[GEO-SHUA SMS] Starting inbox sweep...",
-        );
-
-        /* =================================================
-           READ ANDROID INBOX
-        ================================================= */
-
-        const inbox =
+        const inboxResult =
           await SmsReader.readInbox();
 
         const messages =
           Array.isArray(
-            inbox?.messages,
+            inboxResult?.messages,
           )
-            ? inbox.messages
+            ? inboxResult.messages
             : [];
-
-        result.scanned =
-          messages.length;
-
-        console.log(
-          "[GEO-SHUA SMS] Inbox messages:",
-          messages.length,
-        );
-
-        /* =================================================
-           FILTER CANDIDATES
-        ================================================= */
 
         const candidates =
           messages.filter(
-            (sms) =>
-              typeof sms?.body ===
-                "string" &&
-              sms.body.trim()
-                .length > 0 &&
-              looksLikeTransaction(
-                sms.body,
-              ),
+            isFinancialCandidate,
           );
 
-        result.candidates =
-          candidates.length;
+        const nextResults: ProcessResult[] =
+          [];
 
-        console.log(
-          "[GEO-SHUA SMS] Candidates:",
-          candidates.length,
-        );
+        let processed = 0;
+        let duplicate = 0;
+        let ignored = 0;
+        let failed = 0;
+        let submitted = 0;
 
-        /* =================================================
-           SEND TO API
-        ================================================= */
-
+        /*
+         * Process sequentially.
+         *
+         * This deliberately avoids flooding the API if
+         * a device has a large SMS inbox.
+         */
         for (
           const sms of candidates
         ) {
-          try {
-            console.log(
-              "[GEO-SHUA SMS] Processing SMS:",
-              {
-                id: sms.id,
-                address:
-                  sms.address,
-                date: sms.date,
-              },
-            );
+          submitted += 1;
 
+          try {
             const response =
               await fetch(
                 PROCESS_URL,
                 {
                   method: "POST",
-
                   headers: {
                     "Content-Type":
                       "application/json",
-
-                    Accept:
-                      "application/json",
                   },
-
                   body: JSON.stringify({
-                    /*
-                     * Keep the Android provider ID available
-                     * to the server.
-                     */
-                    smsId:
-                      sms.id,
-
+                    smsId: sms.id,
                     address:
                       sms.address,
-
-                    body:
-                      sms.body,
-
-                    date:
-                      sms.date,
+                    body: sms.body,
+                    date: sms.date,
                   }),
                 },
               );
 
-            let data:
-              ApiResult | null =
+            let data: unknown =
               null;
 
-            const contentType =
-              response.headers.get(
-                "content-type",
-              ) ?? "";
-
-            if (
-              contentType.includes(
-                "application/json",
-              )
-            ) {
-              try {
-                data =
-                  (await response.json()) as ApiResult;
-              } catch {
-                data = null;
-              }
-            } else {
-              const text =
-                await response.text();
-
-              data = {
-                success: false,
-                error:
-                  text ||
-                  "Server returned a non-JSON response.",
-              };
+            try {
+              data =
+                await response.json();
+            } catch {
+              data = null;
             }
 
-            result.submitted++;
+            const payload =
+              data &&
+              typeof data === "object"
+                ? (data as Record<
+                    string,
+                    unknown
+                  >)
+                : {};
 
-            /* =============================================
-               RESULT CLASSIFICATION
-            ============================================= */
+            const wasDuplicate =
+              payload.duplicate === true;
 
-            if (
+            const wasIgnored =
+              payload.ignored === true;
+
+            const wasProcessed =
+              payload.processed === true;
+
+            if (wasDuplicate) {
+              duplicate += 1;
+            } else if (wasIgnored) {
+              ignored += 1;
+            } else if (
+              wasProcessed &&
               response.ok
             ) {
-              if (
-                data?.duplicate
-              ) {
-                result.duplicates++;
-
-              } else if (
-                data?.ignored
-              ) {
-                result.ignored++;
-
-              } else if (
-                data?.processed
-              ) {
-                result.processed++;
-              }
-            } else {
-              result.failed++;
+              processed += 1;
+            } else if (
+              !response.ok
+            ) {
+              failed += 1;
             }
 
-            result.results.push({
+            nextResults.push({
               sms,
-
               httpStatus:
                 response.status,
-
-              response: data,
-
-              error: null,
-            });
-
-            console.log(
-              "[GEO-SHUA SMS] API result:",
-              {
-                smsId: sms.id,
-                httpStatus:
-                  response.status,
-                data,
-              },
-            );
-          } catch (
-            requestError
-          ) {
-            result.failed++;
-
-            const message =
-              requestError instanceof
-              Error
-                ? requestError.message
-                : "Request failed.";
-
-            result.results.push({
-              sms,
-
-              httpStatus:
-                null,
-
-              response:
-                null,
-
+              status:
+                typeof payload.status ===
+                "string"
+                  ? payload.status
+                  : undefined,
+              type:
+                typeof payload.type ===
+                "string"
+                  ? payload.type
+                  : undefined,
+              financialChange:
+                payload.financialChange ===
+                true,
+              duplicate:
+                wasDuplicate,
+              ignored:
+                wasIgnored,
+              processed:
+                wasProcessed,
               error:
-                message,
+                typeof payload.error ===
+                "string"
+                  ? payload.error
+                  : !response.ok
+                    ? `Request failed (${response.status})`
+                    : undefined,
+              response: data,
             });
+          } catch (error) {
+            failed += 1;
 
-            console.error(
-              "[GEO-SHUA SMS] API request failed:",
-              requestError,
-            );
+            nextResults.push({
+              sms,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Unable to reach GEO-SHUA.",
+            });
           }
         }
 
-        result.completedAt =
-          Date.now();
+        const nextStats: SweepStats = {
+          inbox: messages.length,
+          candidates:
+            candidates.length,
+          submitted,
+          processed,
+          duplicate,
+          ignored,
+          failed,
+        };
 
-        setLastSweep(
-          result,
-        );
+        setStats(nextStats);
+        setResults(nextResults);
+        setLastSync(Date.now());
 
-        console.log(
-          "[GEO-SHUA SMS] Sweep complete:",
-          result,
-        );
-      } catch (
-        sweepError
-      ) {
-        const message =
-          sweepError instanceof
-          Error
-            ? sweepError.message
-            : "Unable to read Android SMS inbox.";
-
-        setError(
-          message,
-        );
-
+        /*
+         * Determine the user-facing state.
+         *
+         * Failed submissions deserve attention.
+         * Otherwise the system is considered synced,
+         * including when there were simply no new
+         * financial messages.
+         */
+        if (failed > 0) {
+          setStatus("attention");
+        } else {
+          setStatus("synced");
+        }
+      } catch (error) {
         console.error(
-          "[GEO-SHUA SMS] Sweep failed:",
-          sweepError,
+          "GEO-SHUA SMS sweep failed:",
+          error,
         );
-      } finally {
-        runningRef.current =
-          false;
 
-        setRunning(false);
+        setStatus("error");
+
+        setStats((current) => ({
+          ...current,
+          failed:
+            current.failed + 1,
+        }));
+      } finally {
+        runningRef.current = false;
       }
-    },
-    [],
-  );
+    }, []);
 
   /* =======================================================
-     AUTOMATIC 5-MINUTE SWEEP
+     NATIVE CHECK + INITIAL SWEEP
   ======================================================= */
 
   useEffect(() => {
-    if (!mounted) {
-      return;
-    }
-
-    /*
-     * Do not run the SMS reader on normal web browsers.
-     */
     if (
       !Capacitor.isNativePlatform()
     ) {
       return;
     }
 
-    /*
-     * Run immediately when dashboard loads.
-     */
-    void sweep();
+    void sweepInbox();
 
-    /*
-     * Then every five minutes.
-     */
     const interval =
       window.setInterval(
         () => {
-          void sweep();
+          void sweepInbox();
         },
         SWEEP_INTERVAL_MS,
       );
 
-    return () => {
-      window.clearInterval(
-        interval,
-      );
-    };
-  }, [
-    mounted,
-    sweep,
-  ]);
+    return () =>
+      window.clearInterval(interval);
+  }, [sweepInbox]);
 
   /* =======================================================
-     SSR
+     PRESENTATION
   ======================================================= */
 
-  if (!mounted) {
-    return null;
-  }
+  const hasAttention =
+    status === "attention" ||
+    status === "error";
 
-  /*
-   * Don't show the monitor on desktop/web.
-   */
+  const isScanning =
+    status === "scanning";
+
+  const statusLabel =
+    isScanning
+      ? "Checking messages…"
+      : hasAttention
+        ? "Needs attention"
+        : status === "synced"
+          ? "Up to date"
+          : "Ready";
+
+  const statusDescription =
+    isScanning
+      ? "Checking for recent payments"
+      : hasAttention
+        ? "Some payment messages could not be processed"
+        : status === "synced"
+          ? stats.processed > 0
+            ? `${stats.processed} payment${stats.processed === 1 ? "" : "s"} checked`
+            : stats.duplicate > 0
+              ? "Payments already synced"
+              : "Payment messages checked"
+          : "Payment messages are monitored automatically";
+
+  const successfulCount =
+    stats.processed +
+    stats.duplicate;
+
+  const latestResults =
+    useMemo(
+      () =>
+        [...results]
+          .sort(
+            (a, b) =>
+              b.sms.date -
+              a.sms.date,
+          )
+          .slice(0, 5),
+      [results],
+    );
+
+  /* =======================================================
+     NON-NATIVE
+  ======================================================= */
+
   if (
+    typeof window !== "undefined" &&
     !Capacitor.isNativePlatform()
   ) {
     return null;
   }
 
   /* =======================================================
-     RENDER
+     UI
   ======================================================= */
 
   return (
-    <section className="rounded-3xl border bg-card p-4 shadow-sm">
-      {/* HEADER */}
+    <section
+      className="
+        relative
+        overflow-hidden
+        rounded-[28px]
+        border
+        border-slate-800/80
+        bg-[#0b1118]
+        px-4
+        py-4
+        shadow-[0_12px_40px_rgba(0,0,0,0.18)]
+      "
+    >
+      {/* ===================================================
+          HEADER
+      =================================================== */}
 
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-500/10">
-            <Smartphone className="h-5 w-5 text-blue-600" />
+          <div
+            className="
+              flex
+              h-11
+              w-11
+              shrink-0
+              items-center
+              justify-center
+              rounded-2xl
+              bg-blue-500/10
+              text-blue-400
+              ring-1
+              ring-blue-400/10
+            "
+          >
+            {isScanning ? (
+              <Loader2
+                size={21}
+                className="animate-spin"
+              />
+            ) : (
+              <Smartphone
+                size={21}
+                strokeWidth={1.8}
+              />
+            )}
           </div>
 
           <div className="min-w-0">
-            <h2 className="font-semibold">
-              SMS Inbox Monitor
-            </h2>
+            <div className="flex items-center gap-2">
+              <h3 className="truncate text-[15px] font-semibold tracking-tight text-white">
+                SMS Payments
+              </h3>
 
-            <p className="text-xs text-muted-foreground">
-              Automatic sweep every 5 minutes
+              <span
+                className={`
+                  h-1.5
+                  w-1.5
+                  rounded-full
+                  ${
+                    hasAttention
+                      ? "bg-amber-400"
+                      : isScanning
+                        ? "bg-blue-400"
+                        : "bg-emerald-400"
+                  }
+                `}
+              />
+            </div>
+
+            <p className="mt-0.5 text-[12px] text-slate-500">
+              Automatic payment monitoring
             </p>
           </div>
         </div>
 
         <button
           type="button"
-          onClick={() => void sweep()}
-          disabled={running}
-          className="inline-flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+          onClick={() =>
+            void sweepInbox()
+          }
+          disabled={isScanning}
+          aria-label="Refresh SMS payments"
+          className="
+            flex
+            h-9
+            w-9
+            shrink-0
+            items-center
+            justify-center
+            rounded-xl
+            border
+            border-slate-800
+            bg-slate-900/70
+            text-slate-400
+            transition
+            hover:border-slate-700
+            hover:text-white
+            active:scale-95
+            disabled:cursor-not-allowed
+            disabled:opacity-50
+          "
         >
           <RefreshCw
+            size={16}
             className={
-              running
-                ? "h-4 w-4 animate-spin"
-                : "h-4 w-4"
+              isScanning
+                ? "animate-spin"
+                : ""
             }
           />
-
-          {running
-            ? "Sweeping"
-            : "Sweep"}
         </button>
       </div>
 
-      {/* ERROR */}
+      {/* ===================================================
+          STATUS
+      =================================================== */}
 
-      {error && (
-        <div className="mt-4 flex gap-3 rounded-2xl border border-red-500/20 bg-red-500/5 p-3">
-          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
+      <div
+        className="
+          mt-4
+          flex
+          items-center
+          justify-between
+          rounded-2xl
+          border
+          border-slate-800/80
+          bg-slate-950/60
+          px-3.5
+          py-3
+        "
+      >
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div
+            className={`
+              flex
+              h-8
+              w-8
+              shrink-0
+              items-center
+              justify-center
+              rounded-xl
+              ${
+                hasAttention
+                  ? "bg-amber-400/10 text-amber-400"
+                  : "bg-emerald-400/10 text-emerald-400"
+              }
+            `}
+          >
+            {hasAttention ? (
+              <TriangleAlert size={16} />
+            ) : (
+              <ShieldCheck size={16} />
+            )}
+          </div>
 
-          <div>
-            <p className="text-sm font-semibold">
-              SMS sweep failed
+          <div className="min-w-0">
+            <p className="text-[12px] font-medium text-slate-200">
+              {statusLabel}
             </p>
 
-            <p className="mt-1 text-xs text-muted-foreground">
-              {error}
+            <p className="mt-0.5 truncate text-[11px] text-slate-500">
+              {statusDescription}
             </p>
           </div>
         </div>
-      )}
 
-      {/* SUMMARY */}
+        {lastSync && (
+          <span className="ml-2 shrink-0 text-[10px] text-slate-600">
+            {formatTime(lastSync)}
+          </span>
+        )}
+      </div>
 
-      {lastSweep && (
-        <>
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
-            <Stat
-              label="Inbox"
-              value={
-                lastSweep.scanned
-              }
-            />
+      {/* ===================================================
+          COMPACT METRICS
+      =================================================== */}
 
-            <Stat
-              label="Candidates"
-              value={
-                lastSweep.candidates
-              }
-            />
-
-            <Stat
-              label="Submitted"
-              value={
-                lastSweep.submitted
-              }
-            />
-
-            <Stat
-              label="Processed"
-              value={
-                lastSweep.processed
-              }
-            />
-
-            <Stat
-              label="Duplicate"
-              value={
-                lastSweep.duplicates
-              }
-            />
-
-            <Stat
-              label="Ignored"
-              value={
-                lastSweep.ignored
-              }
-            />
-
-            <Stat
-              label="Failed"
-              value={
-                lastSweep.failed
-              }
-            />
-
-            <Stat
-              label="Total"
-              value={
-                lastSweep.results.length
-              }
-            />
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <div
+          className="
+            rounded-2xl
+            bg-slate-950/45
+            px-3
+            py-2.5
+          "
+        >
+          <div className="flex items-center gap-1.5 text-slate-500">
+            <Inbox size={12} />
+            <span className="text-[10px]">
+              Inbox
+            </span>
           </div>
 
-          <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-            <Clock3 className="h-3.5 w-3.5" />
+          <p className="mt-1 text-base font-semibold tracking-tight text-white">
+            {stats.inbox}
+          </p>
+        </div>
 
-            Last sweep
-
-            {" · "}
-
-            {new Date(
-              lastSweep.completedAt,
-            ).toLocaleString()}
+        <div
+          className="
+            rounded-2xl
+            bg-slate-950/45
+            px-3
+            py-2.5
+          "
+        >
+          <div className="flex items-center gap-1.5 text-slate-500">
+            <CheckCircle2 size={12} />
+            <span className="text-[10px]">
+              Synced
+            </span>
           </div>
 
-          {/* RESULTS */}
+          <p className="mt-1 text-base font-semibold tracking-tight text-white">
+            {successfulCount}
+          </p>
+        </div>
 
-          {lastSweep.results.length >
-            0 && (
-            <div className="mt-4 max-h-[520px] space-y-2 overflow-y-auto pr-1">
-              {lastSweep.results.map(
-                (
-                  item,
-                  index,
-                ) => {
-                  const response =
-                    item.response;
+        <div
+          className="
+            rounded-2xl
+            bg-slate-950/45
+            px-3
+            py-2.5
+          "
+        >
+          <div className="flex items-center gap-1.5 text-slate-500">
+            <Clock3 size={12} />
+            <span className="text-[10px]">
+              Next
+            </span>
+          </div>
 
+          <p className="mt-1 text-[12px] font-semibold tracking-tight text-white">
+            5 min
+          </p>
+        </div>
+      </div>
+
+      {/* ===================================================
+          RECENT PAYMENT MESSAGES
+      =================================================== */}
+
+      {latestResults.length > 0 && (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() =>
+              setExpanded(
+                (value) => !value,
+              )
+            }
+            className="
+              flex
+              w-full
+              items-center
+              justify-between
+              text-left
+            "
+          >
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-600">
+                Recent activity
+              </p>
+
+              <p className="mt-1 text-[12px] text-slate-400">
+                {latestResults.length} recent
+                payment message
+                {latestResults.length ===
+                1
+                  ? ""
+                  : "s"}
+              </p>
+            </div>
+
+            <div
+              className="
+                flex
+                h-8
+                w-8
+                items-center
+                justify-center
+                rounded-xl
+                bg-slate-900
+                text-slate-500
+              "
+            >
+              {expanded ? (
+                <ChevronUp size={15} />
+              ) : (
+                <ChevronDown size={15} />
+              )}
+            </div>
+          </button>
+
+          {expanded && (
+            <div className="mt-3 space-y-2">
+              {latestResults.map(
+                (item, index) => {
                   const success =
-                    item.httpStatus !==
-                      null &&
-                    item.httpStatus >=
-                      200 &&
-                    item.httpStatus <
-                      300;
+                    item.processed ||
+                    item.duplicate;
+
+                  const failed =
+                    !!item.error;
 
                   return (
                     <div
-                      key={`${item.sms.id ?? "sms"}-${item.sms.date}-${index}`}
-                      className="rounded-2xl border p-3"
+                      key={`${item.sms.id ?? item.sms.date}-${index}`}
+                      className="
+                        rounded-2xl
+                        border
+                        border-slate-800/70
+                        bg-slate-950/50
+                        px-3
+                        py-3
+                      "
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold">
-                            {item.sms.address ??
-                              "Unknown sender"}
-                          </p>
+                      <div className="flex items-start gap-2.5">
+                        <div
+                          className={`
+                            mt-0.5
+                            flex
+                            h-7
+                            w-7
+                            shrink-0
+                            items-center
+                            justify-center
+                            rounded-lg
+                            ${
+                              failed
+                                ? "bg-amber-400/10 text-amber-400"
+                                : "bg-emerald-400/10 text-emerald-400"
+                            }
+                          `}
+                        >
+                          {failed ? (
+                            <XCircle
+                              size={14}
+                            />
+                          ) : (
+                            <CheckCircle2
+                              size={14}
+                            />
+                          )}
+                        </div>
 
-                          <p className="mt-1 text-[11px] text-muted-foreground">
-                            SMS ID:{" "}
-                            {item.sms.id ??
-                              "not available"}
-                          </p>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-[11px] font-medium text-slate-300">
+                              {item.sms.address ||
+                                "Payment message"}
+                            </p>
 
-                          <p className="text-[11px] text-muted-foreground">
-                            {formatDate(
-                              item.sms.date,
+                            <span className="shrink-0 text-[10px] text-slate-600">
+                              {formatDate(
+                                item.sms
+                                  .date,
+                              )}{" "}
+                              {formatTime(
+                                item.sms
+                                  .date,
+                              )}
+                            </span>
+                          </div>
+
+                          <p className="mt-1 text-[11px] leading-4 text-slate-500">
+                            {truncate(
+                              item.sms.body,
+                              110,
                             )}
                           </p>
-                        </div>
 
-                        {success ? (
-                          <CheckCircle2 className="h-5 w-5 shrink-0 text-green-600" />
-                        ) : (
-                          <XCircle className="h-5 w-5 shrink-0 text-red-600" />
-                        )}
-                      </div>
+                          <div className="mt-2 flex items-center gap-2">
+                            <span
+                              className={`
+                                rounded-md
+                                px-1.5
+                                py-0.5
+                                text-[9px]
+                                font-medium
+                                ${
+                                  success
+                                    ? "bg-emerald-400/10 text-emerald-400"
+                                    : "bg-amber-400/10 text-amber-400"
+                                }
+                              `}
+                            >
+                              {item.duplicate
+                                ? "Already synced"
+                                : item.processed
+                                  ? item.type ||
+                                    "Processed"
+                                  : item.ignored
+                                    ? "Not a payment"
+                                    : "Needs attention"}
+                            </span>
 
-                      <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">
-                        {item.sms.body}
-                      </p>
-
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {item.httpStatus !==
-                          null && (
-                          <Badge>
-                            HTTP{" "}
-                            {
-                              item.httpStatus
-                            }
-                          </Badge>
-                        )}
-
-                        {response?.status && (
-                          <Badge>
-                            {
-                              response.status
-                            }
-                          </Badge>
-                        )}
-
-                        {response?.stage && (
-                          <Badge>
-                            stage:{" "}
-                            {
-                              response.stage
-                            }
-                          </Badge>
-                        )}
-
-                        {response?.type && (
-                          <Badge>
-                            type:{" "}
-                            {
-                              response.type
-                            }
-                          </Badge>
-                        )}
-
-                        {response?.processed && (
-                          <Badge>
-                            processed
-                          </Badge>
-                        )}
-
-                        {response?.duplicate && (
-                          <Badge>
-                            duplicate
-                          </Badge>
-                        )}
-
-                        {response?.ignored && (
-                          <Badge>
-                            ignored
-                          </Badge>
-                        )}
-
-                        {response?.financialChange && (
-                          <Badge>
-                            DB change
-                          </Badge>
-                        )}
-                      </div>
-
-                      {item.error && (
-                        <div className="mt-3 rounded-xl bg-red-500/5 p-2 text-xs text-red-600">
-                          {item.error}
-                        </div>
-                      )}
-
-                      {response?.error && (
-                        <div className="mt-3 rounded-xl bg-red-500/5 p-2 text-xs text-red-600">
-                          {response.error}
-                        </div>
-                      )}
-
-                      {/* DEBUG RESPONSE */}
-
-                      {response && (
-                        <details className="mt-3">
-                          <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-                            View server response
-                          </summary>
-
-                          <pre className="mt-2 max-h-72 overflow-auto rounded-xl bg-muted p-3 text-[10px] leading-relaxed">
-                            {JSON.stringify(
-                              response,
-                              null,
-                              2,
+                            {item.financialChange && (
+                              <span className="text-[9px] text-blue-400">
+                                Account updated
+                              </span>
                             )}
-                          </pre>
-                        </details>
-                      )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   );
                 },
               )}
             </div>
           )}
-
-          {lastSweep.results.length ===
-            0 && (
-            <div className="mt-4 flex flex-col items-center justify-center rounded-2xl border border-dashed p-8 text-center">
-              <Inbox className="h-8 w-8 text-muted-foreground" />
-
-              <p className="mt-2 text-sm font-medium">
-                No transaction candidates found
-              </p>
-
-              <p className="mt-1 text-xs text-muted-foreground">
-                Inbox:{" "}
-                {lastSweep.scanned}
-                {" · "}
-                Candidates: 0
-              </p>
-            </div>
-          )}
-        </>
+        </div>
       )}
+
+      {/* ===================================================
+          FOOTER
+      =================================================== */}
+
+      <div className="mt-4 flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-slate-600">
+          <ShieldCheck size={11} />
+
+          <span className="text-[10px]">
+            GEO-SHUA secure sync
+          </span>
+        </div>
+
+        <span className="text-[10px] text-slate-700">
+          Automatic
+        </span>
+      </div>
     </section>
-  );
-}
-
-/* =========================================================
-   STAT
-========================================================= */
-
-function Stat({
-  label,
-  value,
-}: {
-  label: string;
-  value: number;
-}) {
-  return (
-    <div className="rounded-2xl bg-muted/50 p-3">
-      <p className="text-[11px] text-muted-foreground">
-        {label}
-      </p>
-
-      <p className="mt-1 text-lg font-semibold">
-        {value}
-      </p>
-    </div>
-  );
-}
-
-/* =========================================================
-   BADGE
-========================================================= */
-
-function Badge({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <span className="rounded-lg bg-muted px-2 py-1 text-[10px] font-medium">
-      {children}
-    </span>
   );
 }
