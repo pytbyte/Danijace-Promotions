@@ -33,15 +33,15 @@ import SmsReader, {
 
 const PROCESS_URL = "/api/sms/process";
 
-const SWEEP_INTERVAL_MS =
-  5 * 60 * 1000;
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /*
  * Keep the local filter broad.
  *
- * This is only noise reduction. The server remains
- * responsible for parsing and deciding whether an SMS
- * represents a financial transaction.
+ * This is only noise reduction.
+ * The server remains responsible for parsing and
+ * deciding whether an SMS represents a financial
+ * transaction.
  */
 const FINANCIAL_TERMS = [
   "kes",
@@ -92,6 +92,11 @@ type SweepStats = {
   failed: number;
 };
 
+type ReaderError = {
+  message: string;
+  diagnostic?: Record<string, unknown>;
+};
+
 /* =========================================================
    HELPERS
 ========================================================= */
@@ -121,9 +126,7 @@ function formatTime(
         hour: "2-digit",
         minute: "2-digit",
       },
-    ).format(
-      new Date(timestamp),
-    );
+    ).format(new Date(timestamp));
   } catch {
     return "Unknown time";
   }
@@ -143,9 +146,7 @@ function formatDate(
         day: "2-digit",
         month: "short",
       },
-    ).format(
-      new Date(timestamp),
-    );
+    ).format(new Date(timestamp));
   } catch {
     return "";
   }
@@ -160,6 +161,57 @@ function truncate(
   }
 
   return `${value.slice(0, length)}…`;
+}
+
+/*
+ * Capacitor/native errors are not always Error instances.
+ *
+ * Android plugin rejections can arrive as:
+ *
+ * { message: "...", code: "...", ... }
+ *
+ * or simply as a string.
+ */
+function getErrorMessage(
+  error: unknown,
+): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null
+  ) {
+    const value =
+      error as Record<string, unknown>;
+
+    if (
+      typeof value.message === "string" &&
+      value.message.trim()
+    ) {
+      return value.message;
+    }
+
+    if (
+      typeof value.error === "string" &&
+      value.error.trim()
+    ) {
+      return value.error;
+    }
+
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "Unknown SMS reader error.";
+    }
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown SMS reader error.";
 }
 
 /* =========================================================
@@ -190,6 +242,13 @@ export default function SmsInboxMonitor() {
   const [expanded, setExpanded] =
     useState(false);
 
+  /*
+   * Stores a native reader failure separately from
+   * financial/API processing failures.
+   */
+  const [readerError, setReaderError] =
+    useState<ReaderError | null>(null);
+
   const runningRef =
     useRef(false);
 
@@ -210,9 +269,87 @@ export default function SmsInboxMonitor() {
 
       setStatus("scanning");
 
+      /*
+       * Clear the previous native reader error at the
+       * beginning of a fresh scan.
+       */
+      setReaderError(null);
+
+      console.log(
+        "GEO-SHUA SMS: starting inbox sweep...",
+      );
+
       try {
-        const inboxResult =
-          await SmsReader.readInbox();
+        /* =================================================
+           STEP 1 — READ ANDROID SMS INBOX
+        ================================================= */
+
+        console.log(
+          "GEO-SHUA SMS: calling native readInbox...",
+        );
+
+        let inboxResult;
+
+        try {
+          inboxResult =
+            await SmsReader.readInbox();
+        } catch (error) {
+          /*
+           * This is deliberately isolated.
+           *
+           * If this block fails, NO SMS has reached
+           * /api/sms/process yet.
+           */
+          const message =
+            getErrorMessage(error);
+
+          console.error(
+            "GEO-SHUA SMS: native readInbox FAILED:",
+            error,
+          );
+
+          console.error(
+            "GEO-SHUA SMS: native readInbox FAILED message:",
+            message,
+          );
+
+          const diagnostic =
+            error &&
+            typeof error === "object"
+              ? (error as Record<
+                  string,
+                  unknown
+                >)
+              : undefined;
+
+          setReaderError({
+            message,
+            diagnostic,
+          });
+
+          setStatus("error");
+
+          setStats((current) => ({
+            ...current,
+            failed: current.failed + 1,
+          }));
+
+          return;
+        }
+
+        console.log(
+          "GEO-SHUA SMS: native readInbox returned:",
+          inboxResult,
+        );
+
+        console.log(
+          "GEO-SHUA SMS: native diagnostic:",
+          inboxResult?.diagnostic,
+        );
+
+        /* =================================================
+           STEP 2 — NORMALIZE INBOX
+        ================================================= */
 
         const messages =
           Array.isArray(
@@ -221,10 +358,20 @@ export default function SmsInboxMonitor() {
             ? inboxResult.messages
             : [];
 
+        console.log(
+          "GEO-SHUA SMS: inbox message count:",
+          messages.length,
+        );
+
         const candidates =
           messages.filter(
             isFinancialCandidate,
           );
+
+        console.log(
+          "GEO-SHUA SMS: financial candidates:",
+          candidates.length,
+        );
 
         const nextResults: ProcessResult[] =
           [];
@@ -235,16 +382,23 @@ export default function SmsInboxMonitor() {
         let failed = 0;
         let submitted = 0;
 
-        /*
-         * Process sequentially.
-         *
-         * This deliberately avoids flooding the API if
-         * a device has a large SMS inbox.
-         */
+        /* =================================================
+           STEP 3 — PROCESS CANDIDATES
+        ================================================= */
+
         for (
           const sms of candidates
         ) {
           submitted += 1;
+
+          console.log(
+            "GEO-SHUA SMS: processing candidate:",
+            {
+              id: sms.id,
+              address: sms.address,
+              date: sms.date,
+            },
+          );
 
           try {
             const response =
@@ -275,6 +429,16 @@ export default function SmsInboxMonitor() {
             } catch {
               data = null;
             }
+
+            console.log(
+              "GEO-SHUA SMS: API response:",
+              {
+                status:
+                  response.status,
+                ok: response.ok,
+                data,
+              },
+            );
 
             const payload =
               data &&
@@ -344,15 +508,28 @@ export default function SmsInboxMonitor() {
           } catch (error) {
             failed += 1;
 
+            const message =
+              getErrorMessage(error);
+
+            console.error(
+              "GEO-SHUA SMS: API request failed:",
+              {
+                smsId: sms.id,
+                error,
+                message,
+              },
+            );
+
             nextResults.push({
               sms,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Unable to reach GEO-SHUA.",
+              error: message,
             });
           }
         }
+
+        /* =================================================
+           STEP 4 — UPDATE STATE
+        ================================================= */
 
         const nextStats: SweepStats = {
           inbox: messages.length,
@@ -365,28 +542,42 @@ export default function SmsInboxMonitor() {
           failed,
         };
 
+        console.log(
+          "GEO-SHUA SMS: sweep complete:",
+          nextStats,
+        );
+
         setStats(nextStats);
         setResults(nextResults);
         setLastSync(Date.now());
 
-        /*
-         * Determine the user-facing state.
-         *
-         * Failed submissions deserve attention.
-         * Otherwise the system is considered synced,
-         * including when there were simply no new
-         * financial messages.
-         */
         if (failed > 0) {
           setStatus("attention");
         } else {
           setStatus("synced");
         }
       } catch (error) {
+        /*
+         * This catches unexpected JavaScript errors
+         * outside the native reader and individual API
+         * processing blocks.
+         */
+        const message =
+          getErrorMessage(error);
+
         console.error(
-          "GEO-SHUA SMS sweep failed:",
+          "GEO-SHUA SMS: unexpected sweep failure:",
           error,
         );
+
+        console.error(
+          "GEO-SHUA SMS: unexpected sweep failure message:",
+          message,
+        );
+
+        setReaderError({
+          message,
+        });
 
         setStatus("error");
 
@@ -397,6 +588,10 @@ export default function SmsInboxMonitor() {
         }));
       } finally {
         runningRef.current = false;
+
+        console.log(
+          "GEO-SHUA SMS: sweep finished.",
+        );
       }
     }, []);
 
@@ -429,6 +624,10 @@ export default function SmsInboxMonitor() {
      PRESENTATION
   ======================================================= */
 
+  const hasReaderError =
+    status === "error" &&
+    readerError !== null;
+
   const hasAttention =
     status === "attention" ||
     status === "error";
@@ -439,24 +638,28 @@ export default function SmsInboxMonitor() {
   const statusLabel =
     isScanning
       ? "Checking messages…"
-      : hasAttention
-        ? "Needs attention"
-        : status === "synced"
-          ? "Up to date"
-          : "Ready";
+      : hasReaderError
+        ? "SMS reader unavailable"
+        : hasAttention
+          ? "Needs attention"
+          : status === "synced"
+            ? "Up to date"
+            : "Ready";
 
   const statusDescription =
     isScanning
-      ? "Checking for recent payments"
-      : hasAttention
-        ? "Some payment messages could not be processed"
-        : status === "synced"
-          ? stats.processed > 0
-            ? `${stats.processed} payment${stats.processed === 1 ? "" : "s"} checked`
-            : stats.duplicate > 0
-              ? "Payments already synced"
-              : "Payment messages checked"
-          : "Payment messages are monitored automatically";
+      ? "Checking Android inbox"
+      : hasReaderError
+        ? "Android could not read the SMS inbox"
+        : hasAttention
+          ? "Some payment messages could not be processed"
+          : status === "synced"
+            ? stats.processed > 0
+              ? `${stats.processed} payment${stats.processed === 1 ? "" : "s"} checked`
+              : stats.duplicate > 0
+                ? "Payments already synced"
+                : "Payment messages checked"
+            : "Payment messages are monitored automatically";
 
   const successfulCount =
     stats.processed +
@@ -665,6 +868,78 @@ export default function SmsInboxMonitor() {
       </div>
 
       {/* ===================================================
+          NATIVE READER DIAGNOSTIC
+      =================================================== */}
+
+      {hasReaderError && (
+        <div
+          className="
+            mt-3
+            rounded-2xl
+            border
+            border-amber-400/20
+            bg-amber-400/[0.04]
+            px-3.5
+            py-3
+          "
+        >
+          <div className="flex items-start gap-2.5">
+            <div
+              className="
+                flex
+                h-8
+                w-8
+                shrink-0
+                items-center
+                justify-center
+                rounded-xl
+                bg-amber-400/10
+                text-amber-400
+              "
+            >
+              <XCircle size={16} />
+            </div>
+
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium text-amber-300">
+                Android SMS reader error
+              </p>
+
+              <p className="mt-1 break-words text-[11px] leading-4 text-slate-400">
+                {readerError?.message ||
+                  "Unable to read the SMS inbox."}
+              </p>
+
+              {readerError?.diagnostic &&
+                Object.keys(
+                  readerError.diagnostic,
+                ).length > 0 && (
+                  <pre
+                    className="
+                      mt-2
+                      max-h-28
+                      overflow-auto
+                      rounded-xl
+                      bg-black/30
+                      p-2
+                      text-[9px]
+                      leading-4
+                      text-slate-500
+                    "
+                  >
+                    {JSON.stringify(
+                      readerError.diagnostic,
+                      null,
+                      2,
+                    )}
+                  </pre>
+                )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================
           COMPACT METRICS
       =================================================== */}
 
@@ -679,6 +954,7 @@ export default function SmsInboxMonitor() {
         >
           <div className="flex items-center gap-1.5 text-slate-500">
             <Inbox size={12} />
+
             <span className="text-[10px]">
               Inbox
             </span>
@@ -699,6 +975,7 @@ export default function SmsInboxMonitor() {
         >
           <div className="flex items-center gap-1.5 text-slate-500">
             <CheckCircle2 size={12} />
+
             <span className="text-[10px]">
               Synced
             </span>
@@ -719,6 +996,7 @@ export default function SmsInboxMonitor() {
         >
           <div className="flex items-center gap-1.5 text-slate-500">
             <Clock3 size={12} />
+
             <span className="text-[10px]">
               Next
             </span>
@@ -828,9 +1106,7 @@ export default function SmsInboxMonitor() {
                           `}
                         >
                           {failed ? (
-                            <XCircle
-                              size={14}
-                            />
+                            <XCircle size={14} />
                           ) : (
                             <CheckCircle2
                               size={14}
@@ -847,12 +1123,10 @@ export default function SmsInboxMonitor() {
 
                             <span className="shrink-0 text-[10px] text-slate-600">
                               {formatDate(
-                                item.sms
-                                  .date,
+                                item.sms.date,
                               )}{" "}
                               {formatTime(
-                                item.sms
-                                  .date,
+                                item.sms.date,
                               )}
                             </span>
                           </div>
@@ -895,6 +1169,12 @@ export default function SmsInboxMonitor() {
                               </span>
                             )}
                           </div>
+
+                          {item.error && (
+                            <p className="mt-2 text-[10px] leading-4 text-amber-500/80">
+                              {item.error}
+                            </p>
+                          )}
                         </div>
                       </div>
                     </div>
