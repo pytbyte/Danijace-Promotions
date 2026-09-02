@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -35,14 +36,6 @@ const PROCESS_URL = "/api/sms/process";
 
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
-/*
- * Keep the local filter broad.
- *
- * This is only noise reduction.
- * The server remains responsible for parsing and
- * deciding whether an SMS represents a financial
- * transaction.
- */
 const FINANCIAL_TERMS = [
   "kes",
   "ksh",
@@ -94,7 +87,9 @@ type SweepStats = {
 
 type ReaderError = {
   message: string;
-  diagnostic?: Record<string, unknown>;
+  code?: string;
+  data?: unknown;
+  raw?: unknown;
 };
 
 /* =========================================================
@@ -163,55 +158,96 @@ function truncate(
   return `${value.slice(0, length)}…`;
 }
 
-/*
- * Capacitor/native errors are not always Error instances.
- *
- * Android plugin rejections can arrive as:
- *
- * { message: "...", code: "...", ... }
- *
- * or simply as a string.
- */
-function getErrorMessage(
+/* =========================================================
+   NATIVE ERROR EXTRACTION
+========================================================= */
+
+function extractReaderError(
   error: unknown,
-): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
+): ReaderError {
+  /*
+   * Capacitor native errors normally look approximately
+   * like:
+   *
+   * {
+   *   message: "...",
+   *   code: "...",
+   *   data: {...}
+   * }
+   */
 
   if (
-    typeof error === "object" &&
-    error !== null
+    error &&
+    typeof error === "object"
   ) {
     const value =
-      error as Record<string, unknown>;
+      error as Record<
+        string,
+        unknown
+      >;
 
-    if (
+    const message =
       typeof value.message === "string" &&
       value.message.trim()
-    ) {
-      return value.message;
-    }
+        ? value.message
+        : typeof value.error === "string" &&
+            value.error.trim()
+          ? value.error
+          : "Unknown Android SMS reader error.";
 
-    if (
-      typeof value.error === "string" &&
-      value.error.trim()
-    ) {
-      return value.error;
-    }
+    const code =
+      typeof value.code === "string"
+        ? value.code
+        : undefined;
 
-    try {
-      return JSON.stringify(error);
-    } catch {
-      return "Unknown SMS reader error.";
-    }
+    const data =
+      value.data !== undefined
+        ? value.data
+        : undefined;
+
+    return {
+      message,
+      code,
+      data,
+      raw: error,
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      message:
+        error.message ||
+        "Unknown Android SMS reader error.",
+      raw: error,
+    };
   }
 
   if (typeof error === "string") {
-    return error;
+    return {
+      message: error,
+      raw: error,
+    };
   }
 
-  return "Unknown SMS reader error.";
+  return {
+    message:
+      "Unknown Android SMS reader error.",
+    raw: error,
+  };
+}
+
+function serializeValue(
+  value: unknown,
+): string {
+  try {
+    return JSON.stringify(
+      value,
+      null,
+      2,
+    );
+  } catch {
+    return String(value);
+  }
 }
 
 /* =========================================================
@@ -242,10 +278,6 @@ export default function SmsInboxMonitor() {
   const [expanded, setExpanded] =
     useState(false);
 
-  /*
-   * Stores a native reader failure separately from
-   * financial/API processing failures.
-   */
   const [readerError, setReaderError] =
     useState<ReaderError | null>(null);
 
@@ -268,11 +300,6 @@ export default function SmsInboxMonitor() {
       runningRef.current = true;
 
       setStatus("scanning");
-
-      /*
-       * Clear the previous native reader error at the
-       * beginning of a fresh scan.
-       */
       setReaderError(null);
 
       console.log(
@@ -294,14 +321,8 @@ export default function SmsInboxMonitor() {
           inboxResult =
             await SmsReader.readInbox();
         } catch (error) {
-          /*
-           * This is deliberately isolated.
-           *
-           * If this block fails, NO SMS has reached
-           * /api/sms/process yet.
-           */
-          const message =
-            getErrorMessage(error);
+          const nativeError =
+            extractReaderError(error);
 
           console.error(
             "GEO-SHUA SMS: native readInbox FAILED:",
@@ -309,29 +330,35 @@ export default function SmsInboxMonitor() {
           );
 
           console.error(
-            "GEO-SHUA SMS: native readInbox FAILED message:",
-            message,
+            "GEO-SHUA SMS: native error message:",
+            nativeError.message,
           );
 
-          const diagnostic =
-            error &&
-            typeof error === "object"
-              ? (error as Record<
-                  string,
-                  unknown
-                >)
-              : undefined;
+          console.error(
+            "GEO-SHUA SMS: native error code:",
+            nativeError.code,
+          );
 
-          setReaderError({
-            message,
-            diagnostic,
-          });
+          console.error(
+            "GEO-SHUA SMS: native error data:",
+            nativeError.data,
+          );
+
+          console.error(
+            "GEO-SHUA SMS: native error raw:",
+            nativeError.raw,
+          );
+
+          setReaderError(
+            nativeError,
+          );
 
           setStatus("error");
 
           setStats((current) => ({
             ...current,
-            failed: current.failed + 1,
+            failed:
+              current.failed + 1,
           }));
 
           return;
@@ -509,7 +536,9 @@ export default function SmsInboxMonitor() {
             failed += 1;
 
             const message =
-              getErrorMessage(error);
+              error instanceof Error
+                ? error.message
+                : String(error);
 
             console.error(
               "GEO-SHUA SMS: API request failed:",
@@ -532,7 +561,8 @@ export default function SmsInboxMonitor() {
         ================================================= */
 
         const nextStats: SweepStats = {
-          inbox: messages.length,
+          inbox:
+            messages.length,
           candidates:
             candidates.length,
           submitted,
@@ -557,26 +587,19 @@ export default function SmsInboxMonitor() {
           setStatus("synced");
         }
       } catch (error) {
-        /*
-         * This catches unexpected JavaScript errors
-         * outside the native reader and individual API
-         * processing blocks.
-         */
         const message =
-          getErrorMessage(error);
+          error instanceof Error
+            ? error.message
+            : String(error);
 
         console.error(
           "GEO-SHUA SMS: unexpected sweep failure:",
           error,
         );
 
-        console.error(
-          "GEO-SHUA SMS: unexpected sweep failure message:",
-          message,
-        );
-
         setReaderError({
           message,
+          raw: error,
         });
 
         setStatus("error");
@@ -596,7 +619,7 @@ export default function SmsInboxMonitor() {
     }, []);
 
   /* =======================================================
-     NATIVE CHECK + INITIAL SWEEP
+     INITIAL SWEEP
   ======================================================= */
 
   useEffect(() => {
@@ -707,25 +730,18 @@ export default function SmsInboxMonitor() {
         shadow-[0_12px_40px_rgba(0,0,0,0.18)]
       "
     >
-      {/* ===================================================
-          HEADER
-      =================================================== */}
+      {/* HEADER */}
 
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <div
             className="
-              flex
-              h-11
-              w-11
-              shrink-0
-              items-center
-              justify-center
+              flex h-11 w-11 shrink-0
+              items-center justify-center
               rounded-2xl
               bg-blue-500/10
               text-blue-400
-              ring-1
-              ring-blue-400/10
+              ring-1 ring-blue-400/10
             "
           >
             {isScanning ? (
@@ -749,9 +765,7 @@ export default function SmsInboxMonitor() {
 
               <span
                 className={`
-                  h-1.5
-                  w-1.5
-                  rounded-full
+                  h-1.5 w-1.5 rounded-full
                   ${
                     hasAttention
                       ? "bg-amber-400"
@@ -777,15 +791,10 @@ export default function SmsInboxMonitor() {
           disabled={isScanning}
           aria-label="Refresh SMS payments"
           className="
-            flex
-            h-9
-            w-9
-            shrink-0
-            items-center
-            justify-center
+            flex h-9 w-9 shrink-0
+            items-center justify-center
             rounded-xl
-            border
-            border-slate-800
+            border border-slate-800
             bg-slate-900/70
             text-slate-400
             transition
@@ -807,33 +816,22 @@ export default function SmsInboxMonitor() {
         </button>
       </div>
 
-      {/* ===================================================
-          STATUS
-      =================================================== */}
+      {/* STATUS */}
 
       <div
         className="
-          mt-4
-          flex
-          items-center
-          justify-between
+          mt-4 flex items-center justify-between
           rounded-2xl
-          border
-          border-slate-800/80
+          border border-slate-800/80
           bg-slate-950/60
-          px-3.5
-          py-3
+          px-3.5 py-3
         "
       >
         <div className="flex min-w-0 items-center gap-2.5">
           <div
             className={`
-              flex
-              h-8
-              w-8
-              shrink-0
-              items-center
-              justify-center
+              flex h-8 w-8 shrink-0
+              items-center justify-center
               rounded-xl
               ${
                 hasAttention
@@ -867,31 +865,22 @@ export default function SmsInboxMonitor() {
         )}
       </div>
 
-      {/* ===================================================
-          NATIVE READER DIAGNOSTIC
-      =================================================== */}
+      {/* NATIVE ERROR */}
 
       {hasReaderError && (
         <div
           className="
-            mt-3
-            rounded-2xl
-            border
-            border-amber-400/20
+            mt-3 rounded-2xl
+            border border-amber-400/20
             bg-amber-400/[0.04]
-            px-3.5
-            py-3
+            px-3.5 py-3
           "
         >
           <div className="flex items-start gap-2.5">
             <div
               className="
-                flex
-                h-8
-                w-8
-                shrink-0
-                items-center
-                justify-center
+                flex h-8 w-8 shrink-0
+                items-center justify-center
                 rounded-xl
                 bg-amber-400/10
                 text-amber-400
@@ -900,61 +889,94 @@ export default function SmsInboxMonitor() {
               <XCircle size={16} />
             </div>
 
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-[11px] font-medium text-amber-300">
                 Android SMS reader error
               </p>
 
-              <p className="mt-1 break-words text-[11px] leading-4 text-slate-400">
-                {readerError?.message ||
-                  "Unable to read the SMS inbox."}
+              {/* MESSAGE */}
+
+              <p className="mt-1 break-words text-[11px] leading-4 text-slate-300">
+                {readerError.message}
               </p>
 
-              {readerError?.diagnostic &&
-                Object.keys(
-                  readerError.diagnostic,
-                ).length > 0 && (
+              {/* CODE */}
+
+              {readerError.code && (
+                <div className="mt-2">
+                  <p className="text-[9px] uppercase tracking-[0.12em] text-slate-600">
+                    Error code
+                  </p>
+
+                  <p className="mt-0.5 break-all font-mono text-[10px] text-amber-400">
+                    {readerError.code}
+                  </p>
+                </div>
+              )}
+
+              {/* DATA */}
+
+              {readerError.data !==
+                undefined && (
+                <div className="mt-2">
+                  <p className="text-[9px] uppercase tracking-[0.12em] text-slate-600">
+                    Native diagnostic
+                  </p>
+
                   <pre
                     className="
-                      mt-2
-                      max-h-28
-                      overflow-auto
+                      mt-1 max-h-40 overflow-auto
+                      whitespace-pre-wrap break-words
                       rounded-xl
-                      bg-black/30
+                      bg-black/40
                       p-2
                       text-[9px]
                       leading-4
                       text-slate-500
                     "
                   >
-                    {JSON.stringify(
-                      readerError.diagnostic,
-                      null,
-                      2,
+                    {serializeValue(
+                      readerError.data,
                     )}
                   </pre>
-                )}
+                </div>
+              )}
+
+              {/* RAW ERROR */}
+
+              <details className="mt-2">
+                <summary className="cursor-pointer text-[9px] text-slate-600">
+                  Show raw native error
+                </summary>
+
+                <pre
+                  className="
+                    mt-1 max-h-40 overflow-auto
+                    whitespace-pre-wrap break-words
+                    rounded-xl
+                    bg-black/40
+                    p-2
+                    text-[9px]
+                    leading-4
+                    text-slate-600
+                  "
+                >
+                  {serializeValue(
+                    readerError.raw,
+                  )}
+                </pre>
+              </details>
             </div>
           </div>
         </div>
       )}
 
-      {/* ===================================================
-          COMPACT METRICS
-      =================================================== */}
+      {/* METRICS */}
 
       <div className="mt-3 grid grid-cols-3 gap-2">
-        <div
-          className="
-            rounded-2xl
-            bg-slate-950/45
-            px-3
-            py-2.5
-          "
-        >
+        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
           <div className="flex items-center gap-1.5 text-slate-500">
             <Inbox size={12} />
-
             <span className="text-[10px]">
               Inbox
             </span>
@@ -965,17 +987,9 @@ export default function SmsInboxMonitor() {
           </p>
         </div>
 
-        <div
-          className="
-            rounded-2xl
-            bg-slate-950/45
-            px-3
-            py-2.5
-          "
-        >
+        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
           <div className="flex items-center gap-1.5 text-slate-500">
             <CheckCircle2 size={12} />
-
             <span className="text-[10px]">
               Synced
             </span>
@@ -986,17 +1000,9 @@ export default function SmsInboxMonitor() {
           </p>
         </div>
 
-        <div
-          className="
-            rounded-2xl
-            bg-slate-950/45
-            px-3
-            py-2.5
-          "
-        >
+        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
           <div className="flex items-center gap-1.5 text-slate-500">
             <Clock3 size={12} />
-
             <span className="text-[10px]">
               Next
             </span>
@@ -1008,9 +1014,7 @@ export default function SmsInboxMonitor() {
         </div>
       </div>
 
-      {/* ===================================================
-          RECENT PAYMENT MESSAGES
-      =================================================== */}
+      {/* RECENT ACTIVITY */}
 
       {latestResults.length > 0 && (
         <div className="mt-4">
@@ -1021,13 +1025,7 @@ export default function SmsInboxMonitor() {
                 (value) => !value,
               )
             }
-            className="
-              flex
-              w-full
-              items-center
-              justify-between
-              text-left
-            "
+            className="flex w-full items-center justify-between text-left"
           >
             <div>
               <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-600">
@@ -1044,18 +1042,7 @@ export default function SmsInboxMonitor() {
               </p>
             </div>
 
-            <div
-              className="
-                flex
-                h-8
-                w-8
-                items-center
-                justify-center
-                rounded-xl
-                bg-slate-900
-                text-slate-500
-              "
-            >
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-900 text-slate-500">
               {expanded ? (
                 <ChevronUp size={15} />
               ) : (
@@ -1080,23 +1067,16 @@ export default function SmsInboxMonitor() {
                       key={`${item.sms.id ?? item.sms.date}-${index}`}
                       className="
                         rounded-2xl
-                        border
-                        border-slate-800/70
+                        border border-slate-800/70
                         bg-slate-950/50
-                        px-3
-                        py-3
+                        px-3 py-3
                       "
                     >
                       <div className="flex items-start gap-2.5">
                         <div
                           className={`
-                            mt-0.5
-                            flex
-                            h-7
-                            w-7
-                            shrink-0
-                            items-center
-                            justify-center
+                            mt-0.5 flex h-7 w-7 shrink-0
+                            items-center justify-center
                             rounded-lg
                             ${
                               failed
@@ -1108,9 +1088,7 @@ export default function SmsInboxMonitor() {
                           {failed ? (
                             <XCircle size={14} />
                           ) : (
-                            <CheckCircle2
-                              size={14}
-                            />
+                            <CheckCircle2 size={14} />
                           )}
                         </div>
 
@@ -1141,11 +1119,8 @@ export default function SmsInboxMonitor() {
                           <div className="mt-2 flex items-center gap-2">
                             <span
                               className={`
-                                rounded-md
-                                px-1.5
-                                py-0.5
-                                text-[9px]
-                                font-medium
+                                rounded-md px-1.5 py-0.5
+                                text-[9px] font-medium
                                 ${
                                   success
                                     ? "bg-emerald-400/10 text-emerald-400"
@@ -1186,9 +1161,7 @@ export default function SmsInboxMonitor() {
         </div>
       )}
 
-      {/* ===================================================
-          FOOTER
-      =================================================== */}
+      {/* FOOTER */}
 
       <div className="mt-4 flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-slate-600">
