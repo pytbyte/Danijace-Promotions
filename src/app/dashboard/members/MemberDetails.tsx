@@ -4,8 +4,11 @@ import { useState } from "react";
 
 import {
   CalendarDays,
+  CheckCircle2,
   CreditCard,
+  Download,
   Landmark,
+  Loader2,
   Mail,
   MapPin,
   Pencil,
@@ -22,6 +25,8 @@ import type {
   MemberWithFinancialSummary,
 } from "@/lib/members/types";
 
+import { downloadMemberSummaryPdf } from "@/app/dashboard/members/memberSummaryPdf";
+
 /* =========================================================
    PROPS
 ========================================================= */
@@ -34,11 +39,11 @@ type MemberViewModalProps = {
   onClose: () => void;
 
   onEdit?: (
-    member: MemberWithFinancialSummary
+    member: MemberWithFinancialSummary,
   ) => void;
 
   onDelete?: (
-    member: MemberWithFinancialSummary
+    member: MemberWithFinancialSummary,
   ) => void;
 };
 
@@ -47,7 +52,7 @@ type MemberViewModalProps = {
 ========================================================= */
 
 function formatMoney(
-  value: number | null | undefined
+  value: number | null | undefined,
 ): string {
   if (
     value === null ||
@@ -57,14 +62,17 @@ function formatMoney(
     return "—";
   }
 
-  return `KSh ${value.toLocaleString("en-KE", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })}`;
+  return `KSh ${value.toLocaleString(
+    "en-KE",
+    {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    },
+  )}`;
 }
 
 function formatDate(
-  value: string | undefined
+  value: string | undefined,
 ): string {
   if (!value) {
     return "—";
@@ -76,15 +84,18 @@ function formatDate(
     return "—";
   }
 
-  return date.toLocaleDateString("en-KE", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  return date.toLocaleDateString(
+    "en-KE",
+    {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    },
+  );
 }
 
 function getFullName(
-  member: MemberWithFinancialSummary
+  member: MemberWithFinancialSummary,
 ): string {
   return [
     member.firstName,
@@ -96,18 +107,20 @@ function getFullName(
 }
 
 function getInitials(
-  member: MemberWithFinancialSummary
+  member: MemberWithFinancialSummary,
 ): string {
-  return `${member.firstName?.charAt(0) ?? ""}${
-    member.lastName?.charAt(0) ?? ""
-  }`.toUpperCase();
+  return (
+    `${member.firstName?.charAt(0) ?? ""}${
+      member.lastName?.charAt(0) ?? ""
+    }`.toUpperCase() || "M"
+  );
 }
 
 function getProfileImageUrl(
-  membershipNumber: string
+  membershipNumber: string,
 ): string {
   return `/api/members/photos/${encodeURIComponent(
-    membershipNumber
+    membershipNumber,
   )}`;
 }
 
@@ -122,14 +135,33 @@ export default function MemberViewModal({
   onEdit,
   onDelete,
 }: MemberViewModalProps) {
+  const [downloading, setDownloading] =
+    useState(false);
+
+  const [
+    imageFailed,
+    setImageFailed,
+  ] = useState(false);
+
+  /* =======================================================
+     CLOSED STATE
+  ======================================================= */
+
   if (!open || !member) {
     return null;
   }
 
+  /* =======================================================
+     DERIVED DATA
+  ======================================================= */
+
   const fullName = getFullName(member);
+
   const initials = getInitials(member);
 
-  const summary = member.financialSummary;
+  const summary =
+    member.financialSummary;
+
   const loan = summary?.loan;
 
   const location = [
@@ -143,9 +175,34 @@ export default function MemberViewModal({
   const profileImageUrl =
     member.profileImage
       ? getProfileImageUrl(
-          member.membershipNumber
+          member.membershipNumber,
         )
       : null;
+
+  /* =======================================================
+     DOWNLOAD MEMBER SUMMARY
+  ======================================================= */
+
+async function handleDownloadSummary() {
+  if (!member) {
+    return;
+  }
+
+  try {
+    setDownloading(true);
+
+    if (member) {
+    await downloadMemberSummaryPdf(member);
+  }
+  } catch (error) {
+    console.error(
+      "[MEMBER SUMMARY DOWNLOAD]",
+      error,
+    );
+  } finally {
+    setDownloading(false);
+  }
+}
 
   return (
     <div
@@ -183,7 +240,19 @@ export default function MemberViewModal({
             HEADER
         ================================================= */}
 
-        <div className="flex shrink-0 items-center justify-between border-b border-white/[0.06] px-5 py-4 sm:px-6">
+        <div
+          className="
+            flex
+            shrink-0
+            items-center
+            justify-between
+            border-b
+            border-white/[0.06]
+            px-5
+            py-4
+            sm:px-6
+          "
+        >
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-300/60">
               Member Profile
@@ -211,6 +280,7 @@ export default function MemberViewModal({
               transition
               hover:bg-white/[0.06]
               hover:text-white
+              active:scale-[0.97]
             "
             aria-label="Close member profile"
           >
@@ -224,27 +294,57 @@ export default function MemberViewModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-6 p-5 sm:p-6">
-
             {/* =================================================
                 PROFILE
             ================================================= */}
 
-            <section className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5">
+            <section
+              className="
+                rounded-2xl
+                border
+                border-white/[0.06]
+                bg-white/[0.02]
+                p-5
+              "
+            >
               <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+                {/* PROFILE IMAGE */}
 
                 <div className="shrink-0">
-                  {profileImageUrl ? (
-                    <ProfileImage
-                      src={profileImageUrl}
-                      alt={fullName}
-                      initials={initials}
-                    />
+                  {profileImageUrl &&
+                  !imageFailed ? (
+                    <div
+                      className="
+                        h-24
+                        w-24
+                        overflow-hidden
+                        rounded-2xl
+                        bg-white/[0.03]
+                        ring-1
+                        ring-white/10
+                      "
+                    >
+                      <img
+                        src={profileImageUrl}
+                        alt={fullName}
+                        onError={() =>
+                          setImageFailed(true)
+                        }
+                        className="
+                          h-full
+                          w-full
+                          object-cover
+                        "
+                      />
+                    </div>
                   ) : (
                     <InitialsAvatar
                       initials={initials}
                     />
                   )}
                 </div>
+
+                {/* MEMBER IDENTITY */}
 
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -262,7 +362,8 @@ export default function MemberViewModal({
                         uppercase
                         tracking-[0.12em]
                         ${
-                          member.status === "active"
+                          member.status ===
+                          "active"
                             ? "bg-emerald-400/10 text-emerald-300"
                             : member.status ===
                                 "suspended"
@@ -275,7 +376,7 @@ export default function MemberViewModal({
                     </span>
                   </div>
 
-                  <p className="mt-1 text-sm text-sky-300/70">
+                  <p className="mt-1 text-sm font-medium text-sky-300/70">
                     {member.membershipNumber}
                   </p>
 
@@ -288,20 +389,30 @@ export default function MemberViewModal({
                   <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2">
                     <div className="flex items-center gap-2 text-xs text-white/40">
                       <Phone className="h-3.5 w-3.5 text-sky-300/60" />
-                      {member.phone || "—"}
+
+                      <span>
+                        {member.phone ||
+                          "—"}
+                      </span>
                     </div>
 
                     {member.email && (
                       <div className="flex items-center gap-2 text-xs text-white/40">
                         <Mail className="h-3.5 w-3.5 text-sky-300/60" />
-                        {member.email}
+
+                        <span className="break-all">
+                          {member.email}
+                        </span>
                       </div>
                     )}
 
                     {location && (
                       <div className="flex items-center gap-2 text-xs text-white/40">
                         <MapPin className="h-3.5 w-3.5 text-sky-300/60" />
-                        {location}
+
+                        <span>
+                          {location}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -325,7 +436,7 @@ export default function MemberViewModal({
                 <SummaryCard
                   label="Savings"
                   value={formatMoney(
-                    summary?.savingsBalance
+                    summary?.savingsBalance,
                   )}
                   primary
                 />
@@ -335,7 +446,7 @@ export default function MemberViewModal({
                   value={
                     loan
                       ? formatMoney(
-                          loan.outstandingBalance
+                          loan.outstandingBalance,
                         )
                       : "—"
                   }
@@ -344,7 +455,7 @@ export default function MemberViewModal({
                 <SummaryCard
                   label="Deposits"
                   value={formatMoney(
-                    summary?.totalDeposits
+                    summary?.totalDeposits,
                   )}
                 />
 
@@ -353,7 +464,7 @@ export default function MemberViewModal({
                   value={
                     loan
                       ? formatMoney(
-                          loan.amountPaid
+                          loan.amountPaid,
                         )
                       : "—"
                   }
@@ -364,7 +475,7 @@ export default function MemberViewModal({
                   value={
                     loan
                       ? formatMoney(
-                          loan.totalFines
+                          loan.totalFines,
                         )
                       : "—"
                   }
@@ -403,7 +514,8 @@ export default function MemberViewModal({
                       </span>
 
                       <span className="rounded-full bg-white/[0.05] px-2.5 py-1 text-[9px] font-medium text-white/40">
-                        Fine: {loan.fineStatus}
+                        Fine:{" "}
+                        {loan.fineStatus}
                       </span>
                     </div>
                   </div>
@@ -412,28 +524,28 @@ export default function MemberViewModal({
                     <DetailValue
                       label="Principal"
                       value={formatMoney(
-                        loan.principal
+                        loan.principal,
                       )}
                     />
 
                     <DetailValue
                       label="Total Due"
                       value={formatMoney(
-                        loan.totalDue
+                        loan.totalDue,
                       )}
                     />
 
                     <DetailValue
                       label="Amount Paid"
                       value={formatMoney(
-                        loan.amountPaid
+                        loan.amountPaid,
                       )}
                     />
 
                     <DetailValue
                       label="Outstanding"
                       value={formatMoney(
-                        loan.outstandingBalance
+                        loan.outstandingBalance,
                       )}
                     />
                   </div>
@@ -442,9 +554,59 @@ export default function MemberViewModal({
                     <DetailValue
                       label="First Due Date"
                       value={formatDate(
-                        loan.firstDueDate
+                        loan.firstDueDate,
                       )}
                     />
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {/* =================================================
+                NO LOAN
+            ================================================= */}
+
+            {summary && !loan && (
+              <section>
+                <div
+                  className="
+                    flex
+                    items-center
+                    gap-3
+                    rounded-2xl
+                    border
+                    border-emerald-400/10
+                    bg-emerald-400/[0.035]
+                    p-4
+                  "
+                >
+                  <div
+                    className="
+                      flex
+                      h-10
+                      w-10
+                      shrink-0
+                      items-center
+                      justify-center
+                      rounded-xl
+                      bg-emerald-400/10
+                      text-emerald-300
+                    "
+                  >
+                    <CheckCircle2
+                      className="h-5 w-5"
+                    />
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold text-emerald-300/80">
+                      No Active Loan
+                    </p>
+
+                    <p className="mt-1 text-[11px] text-white/25">
+                      No current loan position is
+                      recorded for this member.
+                    </p>
                   </div>
                 </div>
               </section>
@@ -478,7 +640,7 @@ export default function MemberViewModal({
               <DetailValue
                 label="Date of Birth"
                 value={formatDate(
-                  member.dateOfBirth
+                  member.dateOfBirth,
                 )}
               />
 
@@ -551,7 +713,7 @@ export default function MemberViewModal({
               <DetailValue
                 label="Join Date"
                 value={formatDate(
-                  member.joinDate
+                  member.joinDate,
                 )}
                 icon={
                   <CalendarDays className="h-3.5 w-3.5" />
@@ -609,7 +771,7 @@ export default function MemberViewModal({
               <DetailValue
                 label="Created At"
                 value={formatDate(
-                  member.createdAt
+                  member.createdAt,
                 )}
               />
 
@@ -623,7 +785,7 @@ export default function MemberViewModal({
               <DetailValue
                 label="Updated At"
                 value={formatDate(
-                  member.updatedAt
+                  member.updatedAt,
                 )}
               />
             </InfoSection>
@@ -655,76 +817,172 @@ export default function MemberViewModal({
             FOOTER
         ================================================= */}
 
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] px-5 py-4 sm:px-6">
-          <button
-            type="button"
-            onClick={onClose}
+        <div
+          className="
+            shrink-0
+            border-t
+            border-white/[0.06]
+            bg-[#0a0c0e]
+            px-5
+            py-4
+            sm:px-6
+          "
+        >
+          <div
             className="
-              rounded-xl
-              border
-              border-white/[0.07]
-              bg-white/[0.025]
-              px-4
-              py-2.5
-              text-xs
-              font-medium
-              text-white/55
-              transition
-              hover:bg-white/[0.05]
-              hover:text-white
+              flex
+              flex-col
+              gap-3
+              sm:flex-row
+              sm:items-center
+              sm:justify-between
             "
           >
-            Close
-          </button>
+            {/* =================================================
+                LEFT ACTIONS
+            ================================================= */}
 
-          <div className="flex items-center gap-2">
-            {onEdit && (
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => onEdit(member)}
+                onClick={onClose}
                 className="
-                  flex
+                  inline-flex
+                  min-h-10
                   items-center
-                  gap-2
+                  justify-center
                   rounded-xl
-                  bg-sky-400/10
+                  border
+                  border-white/[0.07]
+                  bg-white/[0.025]
                   px-4
-                  py-2.5
                   text-xs
                   font-medium
-                  text-sky-300
+                  text-white/55
                   transition
-                  hover:bg-sky-400/15
+                  hover:bg-white/[0.05]
+                  hover:text-white
+                  active:scale-[0.98]
                 "
               >
-                <Pencil className="h-3.5 w-3.5" />
-                Edit
+                Close
               </button>
-            )}
 
-            {onDelete && (
-              <button
-                type="button"
-                onClick={() => onDelete(member)}
-                className="
-                  flex
-                  items-center
-                  gap-2
-                  rounded-xl
-                  bg-rose-400/[0.07]
-                  px-4
-                  py-2.5
-                  text-xs
-                  font-medium
-                  text-rose-300
-                  transition
-                  hover:bg-rose-400/10
-                "
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete
-              </button>
-            )}
+              {onEdit && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onEdit(member)
+                  }
+                  className="
+                    inline-flex
+                    min-h-10
+                    items-center
+                    justify-center
+                    gap-2
+                    rounded-xl
+                    bg-sky-400/10
+                    px-4
+                    text-xs
+                    font-medium
+                    text-sky-300
+                    transition
+                    hover:bg-sky-400/15
+                    active:scale-[0.98]
+                  "
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+
+                  <span>Edit</span>
+                </button>
+              )}
+
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onDelete(member)
+                  }
+                  className="
+                    inline-flex
+                    min-h-10
+                    items-center
+                    justify-center
+                    gap-2
+                    rounded-xl
+                    bg-rose-400/[0.07]
+                    px-4
+                    text-xs
+                    font-medium
+                    text-rose-300
+                    transition
+                    hover:bg-rose-400/10
+                    active:scale-[0.98]
+                  "
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+
+                  <span>Delete</span>
+                </button>
+              )}
+            </div>
+
+            {/* =================================================
+                DOWNLOAD SUMMARY
+            ================================================= */}
+
+            <button
+  type="button"
+  onClick={handleDownloadSummary}
+  disabled={!member || downloading}
+  aria-label={`Download PDF summary for ${fullName}`}
+  className="
+    group
+    inline-flex
+    h-9
+    w-full
+    items-center
+    justify-center
+    gap-1.5
+    rounded-lg
+    border
+    border-sky-300/15
+    bg-sky-400/[0.08]
+    px-3
+    text-[11px]
+    font-semibold
+    text-sky-300
+    transition-all
+    duration-200
+    hover:border-sky-300/25
+    hover:bg-sky-400/[0.13]
+    hover:text-sky-200
+    active:scale-[0.98]
+    disabled:cursor-not-allowed
+    disabled:opacity-50
+    sm:w-auto
+  "
+>
+  {downloading ? (
+    <Loader2
+      size={13}
+      strokeWidth={1.8}
+      className="animate-spin"
+    />
+  ) : (
+    <Download
+      size={13}
+      strokeWidth={1.8}
+      className="transition-transform duration-200 group-hover:translate-y-px"
+    />
+  )}
+
+  <span className="whitespace-nowrap">
+    {downloading
+      ? "Preparing..."
+      : "Download PDF"}
+  </span>
+            </button>
           </div>
         </div>
       </div>
@@ -733,48 +991,7 @@ export default function MemberViewModal({
 }
 
 /* =========================================================
-   PROFILE IMAGE
-========================================================= */
-
-function ProfileImage({
-  src,
-  alt,
-  initials,
-}: {
-  src: string;
-  alt: string;
-  initials: string;
-}) {
-  const [failed, setFailed] =
-    useState(false);
-
-  if (failed) {
-    return (
-      <InitialsAvatar
-        initials={initials}
-      />
-    );
-  }
-
-  return (
-    <img
-      src={src}
-      alt={alt}
-      onError={() => setFailed(true)}
-      className="
-        h-24
-        w-24
-        rounded-2xl
-        object-cover
-        ring-1
-        ring-white/10
-      "
-    />
-  );
-}
-
-/* =========================================================
-   INITIALS AVATAR
+   PROFILE FALLBACK
 ========================================================= */
 
 function InitialsAvatar({
@@ -895,7 +1112,21 @@ function InfoSection({
         {title}
       </h3>
 
-      <div className="grid grid-cols-1 gap-x-6 gap-y-4 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5 sm:grid-cols-2 lg:grid-cols-3">
+      <div
+        className="
+          grid
+          grid-cols-1
+          gap-x-6
+          gap-y-4
+          rounded-2xl
+          border
+          border-white/[0.06]
+          bg-white/[0.02]
+          p-5
+          sm:grid-cols-2
+          lg:grid-cols-3
+        "
+      >
         {children}
       </div>
     </section>
@@ -935,3 +1166,4 @@ function DetailValue({
     </div>
   );
 }
+

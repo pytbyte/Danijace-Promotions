@@ -1,6 +1,5 @@
+import { del, get, put } from "@vercel/blob";
 import { NextRequest, NextResponse } from "next/server";
-
-import { get, put } from "@vercel/blob";
 
 import clientPromise from "@/lib/mongodb";
 
@@ -11,9 +10,22 @@ import clientPromise from "@/lib/mongodb";
 const DB_NAME =
   process.env.MONGODB_DB || "geo-shua";
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const MAX_FILE_SIZE =
+  5 * 1024 * 1024;
 
-const MEMBERSHIP_REGEX = /^GEO-\d{3,}$/i;
+const MEMBERSHIP_REGEX =
+  /^GEO-\d{3,}$/i;
+
+/*
+ * The client always normalizes images into JPEG
+ * before uploading.
+ *
+ * Therefore the server stores one canonical format:
+ *
+ * members/GEO-001.jpg
+ */
+const PROFILE_IMAGE_CONTENT_TYPE =
+  "image/jpeg";
 
 /* =========================================================
    HELPERS
@@ -21,17 +33,31 @@ const MEMBERSHIP_REGEX = /^GEO-\d{3,}$/i;
 
 function normalizeMembershipNumber(
   value: string,
-): string {
-  return decodeURIComponent(value)
-    .trim()
-    .toUpperCase();
+) {
+  try {
+    return decodeURIComponent(value)
+      .trim()
+      .toUpperCase();
+  } catch {
+    return value
+      .trim()
+      .toUpperCase();
+  }
 }
+
+/* ---------------------------------------------------------
+   BLOB PATH
+--------------------------------------------------------- */
 
 function getBlobPath(
   membershipNumber: string,
-): string {
-  return `members/${membershipNumber}.webp`;
+) {
+  return `members/${membershipNumber}.jpg`;
 }
+
+/* ---------------------------------------------------------
+   STORED IMAGE VALUE
+--------------------------------------------------------- */
 
 function getStoredImageValue(
   value: unknown,
@@ -45,8 +71,59 @@ function getStoredImageValue(
   return trimmed || null;
 }
 
+/* ---------------------------------------------------------
+   RESOLVE STORED BLOB PATH
+---------------------------------------------------------
+
+   Supports both:
+
+   1. New pathname:
+      members/GEO-001.jpg
+
+   2. Legacy stored URL:
+      https://xxxxx.public.blob.vercel-storage.com/...
+
+   This makes migration safer.
+--------------------------------------------------------- */
+
+function resolveBlobPath(value: string): string | null {
+  if (
+    value.startsWith("https://") ||
+    value.startsWith("http://")
+  ) {
+    try {
+      const url = new URL(value);
+
+      return url.pathname.replace(
+        /^\/+/,
+        "",
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  return value.replace(
+    /^\/+/,
+    "",
+  );
+}
+
+/* ---------------------------------------------------------
+   CONTENT TYPE
+--------------------------------------------------------- */
+
+function normalizeContentType(
+  value: string,
+) {
+  return value
+    .toLowerCase()
+    .split(";")[0]
+    .trim();
+}
+
 /* =========================================================
-   GET — SERVE PRIVATE MEMBER PHOTO
+   GET
 ========================================================= */
 
 export async function GET(
@@ -60,18 +137,21 @@ export async function GET(
   },
 ) {
   try {
-    /* -------------------------------------------------------
-       MEMBERSHIP NUMBER
-    ------------------------------------------------------- */
+    /* -----------------------------------------------------
+       PARAMETER
+    ----------------------------------------------------- */
 
-    const {
-      membershipNumber: rawMembershipNumber,
-    } = await params;
+    const { membershipNumber: rawMembershipNumber } =
+      await params;
 
     const membershipNumber =
       normalizeMembershipNumber(
         rawMembershipNumber,
       );
+
+    /* -----------------------------------------------------
+       VALIDATE MEMBERSHIP NUMBER
+    ----------------------------------------------------- */
 
     if (
       !MEMBERSHIP_REGEX.test(
@@ -81,7 +161,8 @@ export async function GET(
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid membership number",
+          error:
+            "Invalid membership number.",
         },
         {
           status: 400,
@@ -89,15 +170,14 @@ export async function GET(
       );
     }
 
-    /* -------------------------------------------------------
+    /* -----------------------------------------------------
        DATABASE
-    ------------------------------------------------------- */
+    ----------------------------------------------------- */
 
     const client =
       await clientPromise;
 
-    const db =
-      client.db(DB_NAME);
+    const db = client.db(DB_NAME);
 
     const member =
       await db
@@ -117,7 +197,7 @@ export async function GET(
       return NextResponse.json(
         {
           success: false,
-          error: "Member not found",
+          error: "Member not found.",
         },
         {
           status: 404,
@@ -125,9 +205,9 @@ export async function GET(
       );
     }
 
-    /* -------------------------------------------------------
-       STORED PROFILE IMAGE
-    ------------------------------------------------------- */
+    /* -----------------------------------------------------
+       PROFILE IMAGE
+    ----------------------------------------------------- */
 
     const storedImage =
       getStoredImageValue(
@@ -135,154 +215,109 @@ export async function GET(
       );
 
     if (!storedImage) {
+      return new NextResponse(null, {
+        status: 404,
+      });
+    }
+
+    const pathname =
+      resolveBlobPath(
+        storedImage,
+      );
+
+    if (!pathname) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "Profile image not found",
+            "Invalid stored profile image.",
         },
         {
-          status: 404,
+          status: 500,
         },
       );
     }
 
-    /* -------------------------------------------------------
-       RESOLVE BLOB PATH
-
-       Supports both:
-
-       members/GEO-000003.webp
-
-       and older records containing:
-
-       https://....private.blob.vercel-storage.com/
-       members/GEO-000003.webp
-    ------------------------------------------------------- */
-
-    let pathname: string;
-
-    if (
-      storedImage.startsWith(
-        "https://",
-      ) ||
-      storedImage.startsWith(
-        "http://",
-      )
-    ) {
-      try {
-        const url =
-          new URL(storedImage);
-
-        pathname =
-          url.pathname.replace(
-            /^\/+/,
-            "",
-          );
-      } catch {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Invalid profile image URL",
-          },
-          {
-            status: 500,
-          },
-        );
-      }
-    } else {
-      pathname = storedImage;
-    }
-
-    /* -------------------------------------------------------
-       CONDITIONAL REQUEST
-    ------------------------------------------------------- */
+    /* -----------------------------------------------------
+       ETAG / CONDITIONAL REQUEST
+    ----------------------------------------------------- */
 
     const ifNoneMatch =
       request.headers.get(
         "if-none-match",
-      ) || undefined;
+      );
 
-    /* -------------------------------------------------------
+    /* -----------------------------------------------------
        GET PRIVATE BLOB
-    ------------------------------------------------------- */
+    ----------------------------------------------------- */
 
-    const result =
-      await get(
-        pathname,
-        {
-          access: "private",
-          ifNoneMatch,
-        },
-      );
+    const blob =
+      await get(pathname, {
+        access: "private",
+        ifNoneMatch:
+          ifNoneMatch || undefined,
+      });
 
-    if (!result) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Profile image not found in Blob storage",
-        },
-        {
-          status: 404,
-        },
-      );
+    /*
+     * Vercel Blob may return null when the object
+     * has not changed / conditional request matched.
+     */
+    if (!blob) {
+      return new NextResponse(null, {
+        status: 304,
+      });
     }
 
-    /* -------------------------------------------------------
-       NOT MODIFIED
-    ------------------------------------------------------- */
-
-    if (
-      result.statusCode === 304
-    ) {
-      return new NextResponse(
-        null,
-        {
-          status: 304,
-        },
-      );
-    }
-
-    /* -------------------------------------------------------
+    /* -----------------------------------------------------
        RESPONSE HEADERS
-    ------------------------------------------------------- */
+    ----------------------------------------------------- */
 
     const headers =
       new Headers();
 
     headers.set(
       "Content-Type",
-      result.blob.contentType ||
-        "image/webp",
+      blob.blob.contentType ||
+        PROFILE_IMAGE_CONTENT_TYPE,
     );
 
-    headers.set(
-      "Content-Length",
-      String(
-        result.blob.size,
-      ),
-    );
-
-    if (result.blob.etag) {
+    if (blob.blob.size) {
       headers.set(
-        "ETag",
-        result.blob.etag,
+        "Content-Length",
+        String(blob.blob.size),
       );
     }
 
+    if (blob.blob.etag) {
+      headers.set(
+        "ETag",
+        blob.blob.etag,
+      );
+    }
+
+    /*
+     * Keep the browser aware that this is a private
+     * member asset.
+     *
+     * The frontend adds ?v=timestamp after replacement
+     * to force the newly uploaded photo to display.
+     */
     headers.set(
       "Cache-Control",
-      "private, no-cache",
+      "private, no-cache, must-revalidate",
     );
 
-    /* -------------------------------------------------------
-       RETURN PRIVATE BLOB STREAM
-    ------------------------------------------------------- */
+    headers.set(
+      "X-Content-Type-Options",
+      "nosniff",
+    );
+
+    /* -----------------------------------------------------
+       STREAM IMAGE
+    ----------------------------------------------------- */
 
     return new NextResponse(
-      result.stream,
+      blob.stream,
       {
         status: 200,
         headers,
@@ -290,7 +325,7 @@ export async function GET(
     );
   } catch (error) {
     console.error(
-      "[MEMBER PHOTO GET]",
+      "[PROFILE IMAGE GET]",
       error,
     );
 
@@ -298,7 +333,7 @@ export async function GET(
       {
         success: false,
         error:
-          "Failed to load profile image",
+          "Failed to load profile image.",
       },
       {
         status: 500,
@@ -308,7 +343,7 @@ export async function GET(
 }
 
 /* =========================================================
-   POST — UPLOAD / REPLACE MEMBER PHOTO
+   POST
 ========================================================= */
 
 export async function POST(
@@ -321,19 +356,25 @@ export async function POST(
     }>;
   },
 ) {
-  try {
-    /* -------------------------------------------------------
-       MEMBERSHIP NUMBER
-    ------------------------------------------------------- */
+  let newBlobPath: string | null =
+    null;
 
-    const {
-      membershipNumber: rawMembershipNumber,
-    } = await params;
+  try {
+    /* -----------------------------------------------------
+       PARAMETER
+    ----------------------------------------------------- */
+
+    const { membershipNumber: rawMembershipNumber } =
+      await params;
 
     const membershipNumber =
       normalizeMembershipNumber(
         rawMembershipNumber,
       );
+
+    /* -----------------------------------------------------
+       VALIDATE MEMBERSHIP NUMBER
+    ----------------------------------------------------- */
 
     if (
       !MEMBERSHIP_REGEX.test(
@@ -344,7 +385,7 @@ export async function POST(
         {
           success: false,
           error:
-            "Invalid membership number",
+            "Invalid membership number.",
         },
         {
           status: 400,
@@ -352,27 +393,29 @@ export async function POST(
       );
     }
 
-    /* -------------------------------------------------------
+    /* -----------------------------------------------------
        CONTENT TYPE
-    ------------------------------------------------------- */
+       
+       The frontend has already normalized the image
+       into JPEG.
+    ----------------------------------------------------- */
 
     const contentType =
-      request.headers.get(
-        "content-type",
-      ) || "";
+      normalizeContentType(
+        request.headers.get(
+          "content-type",
+        ) || "",
+      );
 
     if (
-      !contentType
-        .toLowerCase()
-        .includes(
-          "image/webp",
-        )
+      contentType !==
+      PROFILE_IMAGE_CONTENT_TYPE
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "Only WebP images are supported",
+            "Invalid image format. The profile image must be uploaded as JPEG.",
         },
         {
           status: 400,
@@ -380,22 +423,26 @@ export async function POST(
       );
     }
 
-    /* -------------------------------------------------------
-       READ IMAGE
-    ------------------------------------------------------- */
+    /* -----------------------------------------------------
+       READ BODY
+    ----------------------------------------------------- */
 
     const arrayBuffer =
       await request.arrayBuffer();
 
-    if (
-      arrayBuffer.byteLength ===
-      0
-    ) {
+    const fileSize =
+      arrayBuffer.byteLength;
+
+    /* -----------------------------------------------------
+       EMPTY FILE
+    ----------------------------------------------------- */
+
+    if (fileSize === 0) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "Empty image",
+            "The uploaded image is empty.",
         },
         {
           status: 400,
@@ -403,31 +450,37 @@ export async function POST(
       );
     }
 
+    /* -----------------------------------------------------
+       FILE SIZE
+    ----------------------------------------------------- */
+
     if (
-      arrayBuffer.byteLength >
-      MAX_FILE_SIZE
+      fileSize > MAX_FILE_SIZE
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "Image must not exceed 5 MB",
+            "The uploaded image is too large.",
         },
         {
-          status: 400,
+          status: 413,
         },
       );
     }
 
-    /* -------------------------------------------------------
+    /* -----------------------------------------------------
        DATABASE
-    ------------------------------------------------------- */
+    ----------------------------------------------------- */
 
     const client =
       await clientPromise;
 
-    const db =
-      client.db(DB_NAME);
+    const db = client.db(DB_NAME);
+
+    /* -----------------------------------------------------
+       FIND MEMBER
+    ----------------------------------------------------- */
 
     const member =
       await db
@@ -439,6 +492,7 @@ export async function POST(
           {
             projection: {
               _id: 1,
+              profileImage: 1,
             },
           },
         );
@@ -447,8 +501,7 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Member not found",
+          error: "Member not found.",
         },
         {
           status: 404,
@@ -456,94 +509,193 @@ export async function POST(
       );
     }
 
-    /* -------------------------------------------------------
-       DETERMINISTIC BLOB PATH
-    ------------------------------------------------------- */
+    /* -----------------------------------------------------
+       OLD IMAGE
+    ----------------------------------------------------- */
 
-    const pathname =
+    const oldStoredImage =
+      getStoredImageValue(
+        member.profileImage,
+      );
+
+    const oldBlobPath =
+      oldStoredImage
+        ? resolveBlobPath(
+            oldStoredImage,
+          )
+        : null;
+
+    /* -----------------------------------------------------
+       NEW DETERMINISTIC PATH
+       
+       Every member gets exactly one canonical image:
+       
+       members/GEO-001.jpg
+       
+       allowOverwrite means replacing the image does
+       NOT create another permanent Blob object.
+    ----------------------------------------------------- */
+
+    newBlobPath =
       getBlobPath(
         membershipNumber,
       );
 
-    /* -------------------------------------------------------
-       UPLOAD / REPLACE
-    ------------------------------------------------------- */
+    /* -----------------------------------------------------
+       UPLOAD
+    ----------------------------------------------------- */
 
     const blob =
       await put(
-        pathname,
+        newBlobPath,
         arrayBuffer,
         {
           access: "private",
+
           contentType:
-            "image/webp",
-          addRandomSuffix:
-            false,
-          allowOverwrite:
-            true,
-          cacheControlMaxAge:
-            31536000,
+            PROFILE_IMAGE_CONTENT_TYPE,
+
+          addRandomSuffix: false,
+
+          allowOverwrite: true,
+
+          cacheControlMaxAge: 31536000,
         },
       );
 
-    /* -------------------------------------------------------
-       SAVE PATHNAME IN MONGODB
+    /* -----------------------------------------------------
+       UPDATE MEMBER
+       
+       Mongo stores the pathname rather than exposing
+       the private Blob URL.
+    ----------------------------------------------------- */
 
-       We deliberately store:
-
-       members/GEO-000003.webp
-
-       instead of the private Blob URL.
-    ------------------------------------------------------- */
-
-    await db
-      .collection("members")
-      .updateOne(
-        {
-          membershipNumber,
-        },
-        {
-          $set: {
-            profileImage:
-              blob.pathname,
-
-            profileImageUpdatedAt:
-              new Date(),
-
-            updatedAt:
-              new Date(),
+    try {
+      await db
+        .collection("members")
+        .updateOne(
+          {
+            _id: member._id,
           },
-        },
+          {
+            $set: {
+              profileImage:
+                blob.pathname,
+
+              profileImageUpdatedAt:
+                new Date(),
+
+              updatedAt:
+                new Date(),
+            },
+          },
+        );
+    } catch (databaseError) {
+      /*
+       * Mongo update failed after Blob upload.
+       *
+       * Clean up the newly uploaded object so we do not
+       * leave an orphaned Blob.
+       */
+      console.error(
+        "[PROFILE IMAGE DB UPDATE]",
+        databaseError,
       );
 
-    /* -------------------------------------------------------
+      try {
+        await del(newBlobPath);
+      } catch (cleanupError) {
+        console.error(
+          "[PROFILE IMAGE CLEANUP AFTER DB FAILURE]",
+          cleanupError,
+        );
+      }
+
+      newBlobPath = null;
+
+      throw databaseError;
+    }
+
+    /* -----------------------------------------------------
+       DELETE LEGACY IMAGE
+       
+       Only delete when the old object is different from
+       the new canonical path.
+       
+       This is particularly useful for members whose
+       previous implementation stored a random/private
+       Blob pathname or a full Blob URL.
+    ----------------------------------------------------- */
+
+    if (
+      oldBlobPath &&
+      oldBlobPath !== newBlobPath
+    ) {
+      try {
+        await del(oldBlobPath);
+      } catch (cleanupError) {
+        /*
+         * Do not fail the successful upload because an
+         * old orphaned image could not be removed.
+         *
+         * Log it so it can be investigated.
+         */
+        console.error(
+          "[PROFILE IMAGE OLD BLOB CLEANUP]",
+          {
+            membershipNumber,
+            oldBlobPath,
+            cleanupError,
+          },
+        );
+      }
+    }
+
+    /* -----------------------------------------------------
        RESPONSE
-    ------------------------------------------------------- */
+    ----------------------------------------------------- */
 
-    return NextResponse.json({
-      success: true,
+    return NextResponse.json(
+      {
+        success: true,
 
-      membershipNumber,
+        profileImage:
+          blob.pathname,
 
-      profileImage:
-        blob.pathname,
-
-      profileImageUrl:
-        `/api/members/photos/${encodeURIComponent(
-          membershipNumber,
-        )}`,
-    });
-  } catch (error) {
-    console.error(
-      "[MEMBER PHOTO BLOB UPLOAD]",
-      error,
+        /*
+         * The actual image is still served through our
+         * private GET route.
+         */
+        profileImageUrl:
+          `/api/members/photos/${encodeURIComponent(
+            membershipNumber,
+          )}?v=${Date.now()}`,
+      },
+      {
+        status: 200,
+      },
     );
+    } catch (error) {
+    console.error("[PROFILE IMAGE POST]", {
+      error,
+      name: error instanceof Error ? error.name : typeof error,
+      message:
+        error instanceof Error
+          ? error.message
+          : String(error),
+      stack:
+        error instanceof Error
+          ? error.stack
+          : undefined,
+    });
 
     return NextResponse.json(
       {
         success: false,
         error:
-          "Failed to upload profile image",
+          error instanceof Error
+            ? error.message
+            : "Failed to upload profile image.",
       },
       {
         status: 500,
