@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from "next/server";
 import { put } from "@vercel/blob";
 
@@ -47,7 +46,6 @@ export async function POST(
     ===================================================== */
 
     const formData = await request.formData();
-
     const image = formData.get("image");
 
     if (!(image instanceof File)) {
@@ -100,7 +98,6 @@ export async function POST(
 
     const client = await clientPromise;
     const db = client.db(DB_NAME);
-
     const members = db.collection("members");
 
     const member = await members.findOne({
@@ -118,18 +115,61 @@ export async function POST(
     }
 
     /* =====================================================
+       VERIFY VERCEL BLOB CONFIGURATION
+    ===================================================== */
+
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      console.error(
+        "[MEMBER PHOTO UPLOAD] BLOB_READ_WRITE_TOKEN is missing",
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Member photo storage is not configured",
+          details:
+            "BLOB_READ_WRITE_TOKEN is missing from the server environment",
+        },
+        { status: 500 },
+      );
+    }
+
+    /* =====================================================
        UPLOAD TO VERCEL BLOB
     ===================================================== */
 
     const blobPath = `members/${membershipNumber}.webp`;
 
-    const blob = await put(blobPath, image, {
-      access: "public",
-      contentType: "image/webp",
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      cacheControlMaxAge: 31536000,
-    });
+    let blob;
+
+    try {
+      blob = await put(blobPath, image, {
+        access: "public",
+        contentType: "image/webp",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        cacheControlMaxAge: 31536000,
+      });
+    } catch (error) {
+      console.error(
+        "[MEMBER PHOTO BLOB UPLOAD]",
+        error,
+      );
+
+      const details =
+        error instanceof Error
+          ? error.message
+          : "Unknown Vercel Blob upload error";
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Failed to upload image to storage",
+          details,
+        },
+        { status: 500 },
+      );
+    }
 
     /* =====================================================
        UPDATE MEMBER
@@ -137,17 +177,58 @@ export async function POST(
 
     const updatedAt = new Date();
 
-    await members.updateOne(
-      {
-        membershipNumber,
-      },
-      {
-        $set: {
-          profileImage: blob.url,
-          profileImageUpdatedAt: updatedAt,
+    try {
+      const updateResult = await members.updateOne(
+        {
+          membershipNumber,
         },
-      },
-    );
+        {
+          $set: {
+            profileImage: blob.url,
+            profileImageUpdatedAt: updatedAt,
+          },
+        },
+      );
+
+      if (updateResult.matchedCount === 0) {
+        console.error(
+          "[MEMBER PHOTO UPLOAD] Member disappeared before update",
+          {
+            membershipNumber,
+          },
+        );
+
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Member could not be updated",
+            details:
+              "The member was found before upload but could not be updated afterward",
+          },
+          { status: 404 },
+        );
+      }
+    } catch (error) {
+      console.error(
+        "[MEMBER PHOTO DATABASE UPDATE]",
+        error,
+      );
+
+      const details =
+        error instanceof Error
+          ? error.message
+          : "Unknown database update error";
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Image uploaded but member record could not be updated",
+          details,
+        },
+        { status: 500 },
+      );
+    }
 
     /* =====================================================
        RESPONSE
@@ -165,10 +246,16 @@ export async function POST(
       error,
     );
 
+    const details =
+      error instanceof Error
+        ? error.message
+        : "Unknown server error";
+
     return NextResponse.json(
       {
         success: false,
         error: "Failed to upload member photo",
+        details,
       },
       { status: 500 },
     );
