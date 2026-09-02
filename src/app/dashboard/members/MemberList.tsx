@@ -1,39 +1,40 @@
 "use client";
 
 import {
+  Camera,
+  Check,
   Eye,
-  Landmark,
-  MapPin,
+  Loader2,
   Pencil,
-  Phone,
-  ShieldCheck,
   Trash2,
   UserRound,
-  UsersRound,
-  WalletCards,
 } from "lucide-react";
 
+import {
+  type ChangeEvent,
+  useRef,
+  useState,
+} from "react";
+
 import type {
+  Member,
   MemberWithFinancialSummary,
 } from "@/lib/members/types";
 
 /* =========================================================
-   PROPS
+   TYPES
 ========================================================= */
 
 type MemberListProps = {
   members: MemberWithFinancialSummary[];
-
   onView?: (
-    member: MemberWithFinancialSummary
+    member: MemberWithFinancialSummary,
   ) => void;
-
   onEdit?: (
-    member: MemberWithFinancialSummary
+    member: MemberWithFinancialSummary,
   ) => void;
-
   onDelete?: (
-    member: MemberWithFinancialSummary
+    member: MemberWithFinancialSummary,
   ) => void;
 };
 
@@ -41,26 +42,27 @@ type MemberListProps = {
    HELPERS
 ========================================================= */
 
-function formatMoney(
-  value: number | null | undefined
-) {
-  if (
-    value === null ||
-    value === undefined ||
-    !Number.isFinite(value)
-  ) {
-    return "—";
-  }
-
-  return `KSh ${value.toLocaleString("en-KE", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })}`;
+function getFullName(member: Member) {
+  return [
+    member.firstName,
+    member.middleName,
+    member.lastName,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
-function formatDate(
-  value: string | undefined
-) {
+function getInitials(member: Member) {
+  const first =
+    member.firstName?.charAt(0).toUpperCase() ?? "";
+
+  const last =
+    member.lastName?.charAt(0).toUpperCase() ?? "";
+
+  return `${first}${last}` || "M";
+}
+
+function formatDate(value?: string) {
   if (!value) {
     return "—";
   }
@@ -71,39 +73,424 @@ function formatDate(
     return "—";
   }
 
-  return date.toLocaleDateString("en-KE", {
+  return new Intl.DateTimeFormat("en-KE", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  });
-}
-
-function getFullName(
-  member: MemberWithFinancialSummary
-) {
-  return [
-    member.firstName,
-    member.middleName,
-    member.lastName,
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function getInitials(
-  member: MemberWithFinancialSummary
-) {
-  const first =
-    member.firstName?.charAt(0) ?? "";
-
-  const last =
-    member.lastName?.charAt(0) ?? "";
-
-  return `${first}${last}`.toUpperCase();
+  }).format(date);
 }
 
 /* =========================================================
-   COMPONENT
+   IMAGE COMPRESSION
+========================================================= */
+
+async function compressProfileImage(
+  file: File,
+): Promise<Blob> {
+  const MAX_INPUT_SIZE = 5 * 1024 * 1024;
+  const SIZE = 512;
+  const QUALITY = 0.78;
+
+  if (file.size > MAX_INPUT_SIZE) {
+    throw new Error(
+      "Image must be smaller than 5 MB.",
+    );
+  }
+
+  if (!file.type.startsWith("image/")) {
+    throw new Error(
+      "Please select a valid image.",
+    );
+  }
+
+  if (
+    typeof createImageBitmap !== "function"
+  ) {
+    throw new Error(
+      "Your browser cannot process this image.",
+    );
+  }
+
+  const bitmap = await createImageBitmap(file);
+
+  try {
+    const canvas =
+      document.createElement("canvas");
+
+    canvas.width = SIZE;
+    canvas.height = SIZE;
+
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      throw new Error(
+        "Could not process the image.",
+      );
+    }
+
+    const sourceWidth = bitmap.width;
+    const sourceHeight = bitmap.height;
+
+    const sourceSize = Math.min(
+      sourceWidth,
+      sourceHeight,
+    );
+
+    const sourceX =
+      (sourceWidth - sourceSize) / 2;
+
+    const sourceY =
+      (sourceHeight - sourceSize) / 2;
+
+    context.drawImage(
+      bitmap,
+      sourceX,
+      sourceY,
+      sourceSize,
+      sourceSize,
+      0,
+      0,
+      SIZE,
+      SIZE,
+    );
+
+    const blob = await new Promise<Blob | null>(
+      (resolve) => {
+        canvas.toBlob(
+          resolve,
+          "image/webp",
+          QUALITY,
+        );
+      },
+    );
+
+    if (!blob) {
+      throw new Error(
+        "Could not create the compressed image.",
+      );
+    }
+
+    return blob;
+  } finally {
+    bitmap.close();
+  }
+}
+
+/* =========================================================
+   PROFILE IMAGE
+========================================================= */
+
+function ProfileImage({
+  member,
+  fullName,
+}: {
+  member: Member;
+  fullName: string;
+}) {
+  const inputRef =
+    useRef<HTMLInputElement>(null);
+
+  const [preview, setPreview] =
+    useState<string | null>(
+      member.profileImage ?? null,
+    );
+
+  const [uploading, setUploading] =
+    useState(false);
+
+  const [uploaded, setUploaded] =
+    useState(false);
+
+  const [error, setError] =
+    useState<string | null>(null);
+
+  const handleSelectImage = () => {
+    if (uploading) {
+      return;
+    }
+
+    setError(null);
+    setUploaded(false);
+
+    inputRef.current?.click();
+  };
+
+  const handleImageChange = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file =
+      event.target.files?.[0];
+
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    setError(null);
+    setUploaded(false);
+    setUploading(true);
+
+    let temporaryPreview: string | null =
+      null;
+
+    try {
+      temporaryPreview =
+        URL.createObjectURL(file);
+
+      setPreview(temporaryPreview);
+
+      const compressed =
+        await compressProfileImage(file);
+
+      const formData = new FormData();
+
+      formData.append(
+        "image",
+        compressed,
+        `${member.membershipNumber}.webp`,
+      );
+
+      const response = await fetch(
+        `/api/members/photos/${encodeURIComponent(
+          member.membershipNumber,
+        )}`,
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+
+      let result: {
+        success?: boolean;
+        error?: string;
+        profileImage?: string;
+        profileImageUrl?: string;
+      };
+
+      try {
+        result = await response.json();
+      } catch {
+        throw new Error(
+          "The server returned an invalid response.",
+        );
+      }
+
+      if (
+        !response.ok ||
+        !result.success
+      ) {
+        throw new Error(
+          result.error ||
+            "Failed to upload profile image.",
+        );
+      }
+
+      const uploadedUrl =
+        result.profileImageUrl ||
+        result.profileImage;
+
+      if (uploadedUrl) {
+        setPreview(uploadedUrl);
+      }
+
+      setUploaded(true);
+
+      if (temporaryPreview) {
+        URL.revokeObjectURL(
+          temporaryPreview,
+        );
+
+        temporaryPreview = null;
+      }
+
+      window.setTimeout(() => {
+        setUploaded(false);
+      }, 1800);
+    } catch (uploadError) {
+      console.error(
+        "[PROFILE IMAGE UPLOAD]",
+        uploadError,
+      );
+
+      setPreview(
+        member.profileImage ?? null,
+      );
+
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Failed to upload image.",
+      );
+
+      if (temporaryPreview) {
+        URL.revokeObjectURL(
+          temporaryPreview,
+        );
+      }
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="relative shrink-0">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleImageChange}
+        className="hidden"
+      />
+
+      <button
+        type="button"
+        onClick={handleSelectImage}
+        disabled={uploading}
+        aria-label={`Change profile photo for ${fullName}`}
+        title="Change profile photo"
+        className="
+          group
+          relative
+          h-14
+          w-14
+          overflow-hidden
+          rounded-2xl
+          border
+          border-white/[0.10]
+          bg-white/[0.04]
+          shadow-lg
+          transition
+          duration-200
+          hover:border-white/[0.18]
+          hover:bg-white/[0.07]
+          active:scale-95
+          disabled:cursor-wait
+        "
+      >
+        {preview ? (
+          <img
+            src={preview}
+            alt={fullName}
+            className="
+              h-full
+              w-full
+              object-cover
+            "
+            onError={() => {
+              setPreview(null);
+            }}
+          />
+        ) : (
+          <div
+            className="
+              flex
+              h-full
+              w-full
+              items-center
+              justify-center
+              bg-yellow-500/[0.08]
+              text-sm
+              font-semibold
+              tracking-wide
+              text-yellow-400
+            "
+          >
+            {getInitials(member)}
+          </div>
+        )}
+
+        {!uploading && !uploaded && (
+          <div
+            className="
+              absolute
+              inset-0
+              flex
+              items-center
+              justify-center
+              bg-black/50
+              opacity-0
+              transition
+              duration-200
+              group-hover:opacity-100
+            "
+          >
+            <Camera
+              size={18}
+              strokeWidth={1.8}
+              className="text-white"
+            />
+          </div>
+        )}
+
+        {uploading && (
+          <div
+            className="
+              absolute
+              inset-0
+              flex
+              items-center
+              justify-center
+              bg-black/65
+              backdrop-blur-[2px]
+            "
+          >
+            <Loader2
+              size={20}
+              className="animate-spin text-white"
+            />
+          </div>
+        )}
+
+        {uploaded && !uploading && (
+          <div
+            className="
+              absolute
+              inset-0
+              flex
+              items-center
+              justify-center
+              bg-emerald-500/75
+            "
+          >
+            <Check
+              size={22}
+              strokeWidth={3}
+              className="text-white"
+            />
+          </div>
+        )}
+      </button>
+
+      {error && (
+        <div
+          className="
+            absolute
+            left-0
+            top-[calc(100%+0.5rem)]
+            z-50
+            w-56
+            rounded-xl
+            border
+            border-red-400/20
+            bg-red-950/95
+            px-3
+            py-2
+            text-[11px]
+            leading-relaxed
+            text-red-100
+            shadow-xl
+          "
+        >
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =========================================================
+   MAIN MEMBER LIST
 ========================================================= */
 
 export default function MemberList({
@@ -114,68 +501,131 @@ export default function MemberList({
 }: MemberListProps) {
   if (members.length === 0) {
     return (
-      <div className="lg:hidden rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-12 text-center">
-        <UsersRound className="mx-auto mb-3 h-8 w-8 text-white/20" />
+      <div
+        className="
+          flex
+          min-h-[280px]
+          items-center
+          justify-center
+          rounded-2xl
+          border
+          border-white/[0.08]
+          bg-white/[0.025]
+          p-6
+          lg:hidden
+        "
+      >
+        <div className="text-center">
+          <div
+            className="
+              mx-auto
+              flex
+              h-12
+              w-12
+              items-center
+              justify-center
+              rounded-2xl
+              border
+              border-white/[0.08]
+              bg-white/[0.03]
+              text-white/25
+            "
+          >
+            <UserRound
+              size={21}
+              strokeWidth={1.5}
+            />
+          </div>
 
-        <p className="text-sm font-medium text-white/60">
-          No members found
-        </p>
+          <p className="mt-4 text-sm font-medium text-white/50">
+            No members found
+          </p>
 
-        <p className="mt-1 text-xs text-white/30">
-          Try changing your search or status filter.
-        </p>
+          <p className="mx-auto mt-2 max-w-xs text-xs leading-5 text-white/25">
+            Members matching your search
+            will appear here.
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="lg:hidden w-full min-w-0 overflow-hidden">
+    <div className="space-y-3 lg:hidden">
+      {/* =====================================================
+          HEADER
+      ===================================================== */}
+
+      <div className="flex items-center justify-between px-1">
+        <div>
+          <h2 className="text-sm font-semibold text-white">
+            Members
+          </h2>
+
+          <p className="mt-1 text-xs text-white/30">
+            {members.length.toLocaleString()}{" "}
+            {members.length === 1
+              ? "member"
+              : "members"}
+          </p>
+        </div>
+
+        {members.length > 1 && (
+          <div className="flex items-center gap-1.5 text-[10px] text-white/25">
+            <span>Swipe</span>
+            <span className="text-white/40">
+              →
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* =====================================================
+          MOBILE CAROUSEL
+      ===================================================== */}
+
       <div
         className="
-          flex
-          w-full
-          min-w-0
-          snap-x
-          snap-mandatory
-          gap-4
+          -mx-1
           overflow-x-auto
-          overscroll-x-contain
-          pb-3
+          overflow-y-hidden
+          px-1
+          pb-2
           [scrollbar-width:none]
+          [-ms-overflow-style:none]
           [&::-webkit-scrollbar]:hidden
         "
       >
-        {members.map((member) => (
-          <div
-            key={
-              member._id ??
-              member.membershipNumber
-            }
-            className="
-              w-full
-              min-w-full
-              shrink-0
-              snap-center
-            "
-          >
-            <MemberCard
-              member={member}
-              onView={onView}
-              onEdit={onEdit}
-              onDelete={onDelete}
-            />
-          </div>
-        ))}
-      </div>
+        <div className="flex w-max snap-x snap-mandatory gap-3">
+          {members.map((member) => {
+            const fullName =
+              getFullName(member);
 
-      {members.length > 1 && (
-        <div className="mt-1 flex items-center justify-center gap-1.5">
-          <div className="h-1 w-5 rounded-full bg-sky-400/60" />
-          <p className="ml-1 text-[9px] uppercase tracking-[0.16em] text-white/20">
-            Swipe for more
-          </p>
+            return (
+              <div
+                key={
+                  member._id ||
+                  member.membershipNumber
+                }
+                className="
+                  w-[calc(100vw-56px)]
+                  max-w-[390px]
+                  shrink-0
+                  snap-center
+                "
+              >
+                <MemberCard
+                  member={member}
+                  fullName={fullName}
+                  onView={onView}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                />
+              </div>
+            );
+          })}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -186,424 +636,226 @@ export default function MemberList({
 
 function MemberCard({
   member,
+  fullName,
   onView,
   onEdit,
   onDelete,
 }: {
   member: MemberWithFinancialSummary;
-
+  fullName: string;
   onView?: (
-    member: MemberWithFinancialSummary
+    member: MemberWithFinancialSummary,
   ) => void;
-
   onEdit?: (
-    member: MemberWithFinancialSummary
+    member: MemberWithFinancialSummary,
   ) => void;
-
   onDelete?: (
-    member: MemberWithFinancialSummary
+    member: MemberWithFinancialSummary,
   ) => void;
 }) {
-  const summary = member.financialSummary;
-  const loan = summary?.loan;
-
-  const fullName = getFullName(member);
-  const initials = getInitials(member);
-
-  const location = [
-    member.city,
-    member.county,
-  ]
-    .filter(Boolean)
-    .join(", ");
-
-  const hasActiveLoan =
-    loan &&
-    (loan.status === "active" ||
-      loan.status === "pending");
-
   return (
     <article
       className="
-        w-full
-        overflow-hidden
-        rounded-[1.5rem]
+        flex
+        h-[300px]
+        flex-col
+        overflow-visible
+        rounded-2xl
         border
-        border-white/[0.07]
-        bg-[#0b0d0f]
-        shadow-[0_18px_50px_rgba(0,0,0,0.28)]
+        border-white/[0.08]
+        bg-[#101716]
+        text-white
+        shadow-xl
       "
     >
-      {/* =================================================
-          HEADER
-      ================================================= */}
+      {/* =====================================================
+          MEMBER HEADER
+      ===================================================== */}
 
-      <div className="border-b border-white/[0.06] px-5 pb-5 pt-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-3">
-            {/* PROFILE */}
-            <div className="relative shrink-0">
-              {member.profileImage ? (
-                <img
-                  src={member.profileImage}
-                  alt={fullName}
-                  className="
-                    h-14
-                    w-14
-                    rounded-2xl
-                    object-cover
-                    ring-1
-                    ring-white/10
-                  "
-                />
-              ) : (
-                <div
-                  className="
-                    flex
-                    h-14
-                    w-14
-                    items-center
-                    justify-center
-                    rounded-2xl
-                    bg-sky-400/10
-                    text-sm
-                    font-bold
-                    text-sky-300
-                    ring-1
-                    ring-sky-400/15
-                  "
-                >
-                  {initials || (
-                    <UserRound className="h-6 w-6" />
-                  )}
-                </div>
-              )}
+      <div className="flex items-center gap-3.5 p-4">
+        <ProfileImage
+          member={member}
+          fullName={
+            fullName || "Unnamed member"
+          }
+        />
 
-              <span
-                className={`
-                  absolute
-                  -bottom-1
-                  -right-1
-                  h-3
-                  w-3
-                  rounded-full
-                  border-2
-                  border-[#0b0d0f]
-                  ${
-                    member.status === "active"
-                      ? "bg-emerald-400"
-                      : member.status ===
-                          "suspended"
-                        ? "bg-rose-400"
-                        : "bg-white/30"
-                  }
-                `}
-              />
-            </div>
-
-            {/* NAME */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="truncate text-base font-semibold text-white">
-                {fullName}
+              <h3 className="truncate text-sm font-semibold text-white">
+                {fullName ||
+                  "Unnamed member"}
               </h3>
 
-              <p className="mt-0.5 truncate text-xs text-sky-300/70">
-                {member.membershipNumber}
+              <p className="mt-1 truncate text-[11px] font-medium tracking-wide text-white/30">
+                {member.membershipNumber ||
+                  "—"}
               </p>
-
-              {member.occupation && (
-                <p className="mt-1 truncate text-[11px] text-white/35">
-                  {member.occupation}
-                </p>
-              )}
             </div>
-          </div>
 
-          {/* STATUS */}
-          <span
-            className={`
-              shrink-0
-              rounded-full
-              px-2.5
-              py-1
-              text-[9px]
-              font-semibold
-              uppercase
-              tracking-[0.12em]
-              ${
-                member.status === "active"
-                  ? "bg-emerald-400/10 text-emerald-300"
-                  : member.status === "suspended"
-                    ? "bg-rose-400/10 text-rose-300"
-                    : "bg-white/[0.06] text-white/40"
-              }
-            `}
-          >
-            {member.status}
-          </span>
+            <StatusBadge
+              status={member.status}
+            />
+          </div>
         </div>
+      </div>
 
-        {/* CONTACT */}
-        <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2">
-          <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-white/40">
-            <Phone className="h-3.5 w-3.5 shrink-0 text-sky-300/60" />
-            <span className="truncate">
-              {member.phone || "No phone"}
-            </span>
-          </div>
+      {/* =====================================================
+          MEMBER DETAILS
+      ===================================================== */}
 
-          {location && (
-            <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-white/40">
-              <MapPin className="h-3.5 w-3.5 shrink-0 text-sky-300/60" />
-              <span className="truncate">
-                {location}
-              </span>
-            </div>
+      <div
+        className="
+          grid
+          flex-1
+          grid-cols-2
+          gap-px
+          border-t
+          border-white/[0.07]
+          bg-white/[0.05]
+        "
+      >
+        <MemberDetail
+          label="Phone"
+          value={member.phone}
+        />
+
+        <MemberDetail
+          label="Email"
+          value={member.email}
+        />
+
+        <MemberDetail
+          label="Joined"
+          value={formatDate(
+            member.joinDate,
           )}
-        </div>
+        />
+
+        <MemberDetail
+          label="County"
+          value={member.county}
+        />
       </div>
 
-      {/* =================================================
-          FINANCIAL SUMMARY
-      ================================================= */}
-
-      <div className="px-5 py-5">
-        <div className="mb-3 flex items-center gap-2">
-          <WalletCards className="h-4 w-4 text-sky-300/70" />
-
-          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
-            Financial Overview
-          </p>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2.5">
-          {/* SAVINGS */}
-          <FinancialItem
-            icon={
-              <WalletCards className="h-4 w-4" />
-            }
-            label="Savings"
-            value={formatMoney(
-              summary?.savingsBalance
-            )}
-            highlight
-          />
-
-          {/* LOAN */}
-          <FinancialItem
-            icon={
-              <Landmark className="h-4 w-4" />
-            }
-            label="Loan"
-            value={
-              loan
-                ? formatMoney(
-                    loan.outstandingBalance
-                  )
-                : "—"
-            }
-          />
-
-          {/* DEPOSITS */}
-          <FinancialItem
-            label="Deposits"
-            value={formatMoney(
-              summary?.totalDeposits
-            )}
-          />
-
-          {/* PAID */}
-          <FinancialItem
-            label="Loan Paid"
-            value={
-              loan
-                ? formatMoney(loan.amountPaid)
-                : "—"
-            }
-          />
-
-          {/* FINES */}
-          <FinancialItem
-            label="Fines"
-            value={
-              loan
-                ? formatMoney(loan.totalFines)
-                : "—"
-            }
-          />
-
-          {/* TOTAL DUE */}
-          <FinancialItem
-            label="Total Due"
-            value={
-              loan
-                ? formatMoney(loan.totalDue)
-                : "—"
-            }
-          />
-        </div>
-
-        {/* =================================================
-            LOAN DETAILS
-        ================================================= */}
-
-        {hasActiveLoan && loan && (
-          <div className="mt-4 rounded-2xl border border-sky-400/10 bg-sky-400/[0.035] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Landmark className="h-4 w-4 text-sky-300" />
-
-                <p className="text-xs font-semibold text-white/70">
-                  {loan.loanNumber}
-                </p>
-              </div>
-
-              <span className="rounded-full bg-sky-400/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-sky-300">
-                {loan.status}
-              </span>
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <LoanDetail
-                label="Principal"
-                value={formatMoney(
-                  loan.principal
-                )}
-              />
-
-              <LoanDetail
-                label="Total Due"
-                value={formatMoney(
-                  loan.totalDue
-                )}
-              />
-
-              <LoanDetail
-                label="Outstanding"
-                value={formatMoney(
-                  loan.outstandingBalance
-                )}
-              />
-
-              <LoanDetail
-                label="Due Date"
-                value={formatDate(
-                  loan.firstDueDate
-                )}
-              />
-            </div>
-
-            <div className="mt-3 flex items-center gap-2 border-t border-white/[0.05] pt-3">
-              <ShieldCheck className="h-3.5 w-3.5 text-white/30" />
-
-              <span className="text-[10px] text-white/35">
-                Fine status:
-              </span>
-
-              <span className="text-[10px] font-medium text-white/60">
-                {loan.fineStatus}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* =================================================
-            QUICK DETAILS
-        ================================================= */}
-
-        <div className="mt-4 grid grid-cols-2 gap-3 border-t border-white/[0.05] pt-4">
-          <div>
-            <p className="text-[9px] uppercase tracking-[0.12em] text-white/25">
-              Joined
-            </p>
-
-            <p className="mt-1 text-xs text-white/55">
-              {formatDate(member.joinDate)}
-            </p>
-          </div>
-
-          <div className="min-w-0">
-            <p className="text-[9px] uppercase tracking-[0.12em] text-white/25">
-              Email
-            </p>
-
-            <p className="mt-1 truncate text-xs text-white/55">
-              {member.email || "—"}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* =================================================
+      {/* =====================================================
           ACTIONS
-      ================================================= */}
+      ===================================================== */}
 
-      <div className="grid grid-cols-[1fr_auto_auto] gap-2 border-t border-white/[0.06] px-5 py-4">
+      <div
+        className="
+          flex
+          items-center
+          gap-2
+          border-t
+          border-white/[0.07]
+          p-3
+        "
+      >
         <button
           type="button"
-          onClick={() => onView?.(member)}
+          onClick={() =>
+            onView?.(member)
+          }
+          disabled={!onView}
           className="
             flex
-            min-h-10
+            h-10
+            flex-1
             items-center
             justify-center
             gap-2
             rounded-xl
-            bg-sky-400/10
-            px-3
+            bg-white/[0.04]
             text-xs
             font-medium
-            text-sky-300
+            text-white/50
             transition
+            hover:bg-white/[0.08]
+            hover:text-white
             active:scale-[0.98]
+            disabled:cursor-default
+            disabled:hover:bg-white/[0.04]
+            disabled:hover:text-white/50
           "
         >
-          <Eye className="h-4 w-4" />
-          View Profile
+          <Eye
+            size={16}
+            strokeWidth={1.8}
+          />
+
+          <span>View</span>
         </button>
 
         <button
           type="button"
-          onClick={() => onEdit?.(member)}
+          onClick={() =>
+            onEdit?.(member)
+          }
+          disabled={!onEdit}
           className="
             flex
             h-10
-            w-10
+            flex-1
             items-center
             justify-center
+            gap-2
             rounded-xl
-            border
-            border-white/[0.06]
-            bg-white/[0.025]
-            text-white/45
+            bg-yellow-500/[0.06]
+            text-xs
+            font-medium
+            text-yellow-400/70
             transition
-            active:scale-[0.96]
+            hover:bg-yellow-500/10
+            hover:text-yellow-400
+            active:scale-[0.98]
+            disabled:cursor-default
+            disabled:hover:bg-yellow-500/[0.06]
+            disabled:hover:text-yellow-400/70
           "
-          aria-label={`Edit ${getFullName(member)}`}
         >
-          <Pencil className="h-4 w-4" />
+          <Pencil
+            size={16}
+            strokeWidth={1.8}
+          />
+
+          <span>Edit</span>
         </button>
 
         <button
           type="button"
-          onClick={() => onDelete?.(member)}
+          onClick={() =>
+            onDelete?.(member)
+          }
+          disabled={!onDelete}
+          aria-label={`Delete ${
+            fullName || "member"
+          }`}
+          title="Delete member"
           className="
             flex
             h-10
             w-10
+            shrink-0
             items-center
             justify-center
             rounded-xl
-            border
-            border-rose-400/10
-            bg-rose-400/[0.035]
-            text-rose-300/70
+            bg-red-500/[0.05]
+            text-red-400/60
             transition
+            hover:bg-red-500/10
+            hover:text-red-400
             active:scale-[0.96]
+            disabled:cursor-default
+            disabled:hover:bg-red-500/[0.05]
+            disabled:hover:text-red-400/60
           "
-          aria-label={`Delete ${getFullName(member)}`}
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2
+            size={16}
+            strokeWidth={1.8}
+          />
         </button>
       </div>
     </article>
@@ -611,85 +863,96 @@ function MemberCard({
 }
 
 /* =========================================================
-   FINANCIAL ITEM
+   MEMBER DETAIL
 ========================================================= */
 
-function FinancialItem({
+function MemberDetail({
   label,
   value,
-  icon,
-  highlight = false,
 }: {
   label: string;
-  value: string;
-  icon?: React.ReactNode;
-  highlight?: boolean;
+  value?: string;
 }) {
   return (
-    <div
-      className={`
-        rounded-2xl
-        border
-        px-3.5
-        py-3
-        ${
-          highlight
-            ? "border-sky-400/10 bg-sky-400/[0.045]"
-            : "border-white/[0.05] bg-white/[0.02]"
-        }
-      `}
-    >
-      <div className="flex items-center gap-1.5">
-        {icon && (
-          <span className="text-sky-300/60">
-            {icon}
-          </span>
-        )}
+    <div className="bg-[#0b0b0b] px-4 py-3">
+      <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-white/25">
+        {label}
+      </p>
 
-        <p className="text-[9px] uppercase tracking-[0.12em] text-white/30">
-          {label}
-        </p>
-      </div>
-
-      <p
-        className={`
-          mt-1.5
-          truncate
-          text-sm
-          font-semibold
-          ${
-            highlight
-              ? "text-sky-200"
-              : "text-white/75"
-          }
-        `}
-      >
-        {value}
+      <p className="mt-1.5 truncate text-xs text-white/60">
+        {value || "—"}
       </p>
     </div>
   );
 }
 
 /* =========================================================
-   LOAN DETAIL
+   STATUS BADGE
 ========================================================= */
 
-function LoanDetail({
-  label,
-  value,
+function StatusBadge({
+  status,
 }: {
-  label: string;
-  value: string;
+  status: Member["status"];
 }) {
-  return (
-    <div>
-      <p className="text-[9px] uppercase tracking-[0.1em] text-white/25">
-        {label}
-      </p>
+  const styles: Record<
+    Member["status"],
+    string
+  > = {
+    active:
+      "bg-emerald-500/10 text-emerald-400 ring-emerald-500/10",
 
-      <p className="mt-1 text-xs font-medium text-white/65">
-        {value}
-      </p>
-    </div>
+    inactive:
+      "bg-white/[0.06] text-white/45 ring-white/[0.06]",
+
+    suspended:
+      "bg-red-500/10 text-red-400 ring-red-500/10",
+  };
+
+  const labels: Record<
+    Member["status"],
+    string
+  > = {
+    active: "Active",
+    inactive: "Inactive",
+    suspended: "Suspended",
+  };
+
+  const dots: Record<
+    Member["status"],
+    string
+  > = {
+    active: "bg-emerald-400",
+    inactive: "bg-white/30",
+    suspended: "bg-red-400",
+  };
+
+  return (
+    <span
+      className={`
+        inline-flex
+        shrink-0
+        items-center
+        rounded-lg
+        px-2
+        py-1
+        text-[9px]
+        font-medium
+        ring-1
+        ${styles[status]}
+      `}
+    >
+      <span
+        className={`
+          mr-1.5
+          h-1.5
+          w-1.5
+          rounded-full
+          ${dots[status]}
+        `}
+      />
+
+      {labels[status]}
+    </span>
   );
 }
