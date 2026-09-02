@@ -10,16 +10,16 @@ import {
 import {
   ArrowRight,
   Bell,
+  Eye,
+  EyeOff,
   FileText,
   HandCoins,
   RefreshCw,
   Users,
   Wallet,
 } from "lucide-react";
- 
 
 import SmsInboxMonitor from "@/components/sms/SmsInboxMonitor";
-
 import TopBar from "@/components/dashboard/TopBar";
 
 /* =========================================================
@@ -151,21 +151,15 @@ const DEFAULT_STATS: DashboardStats = {
    SAFE HELPERS
 ========================================================= */
 
-function safeNumber(
-  value: unknown,
-): number {
+function safeNumber(value: unknown): number {
   if (typeof value === "number") {
-    return Number.isFinite(value)
-      ? value
-      : 0;
+    return Number.isFinite(value) ? value : 0;
   }
 
   if (typeof value === "string") {
     const parsed = Number(value);
 
-    return Number.isFinite(parsed)
-      ? parsed
-      : 0;
+    return Number.isFinite(parsed) ? parsed : 0;
   }
 
   return 0;
@@ -178,11 +172,7 @@ function getId(
   },
   fallback: string,
 ): string {
-  return (
-    item.id ||
-    item._id ||
-    fallback
-  );
+  return item.id || item._id || fallback;
 }
 
 function getDate(
@@ -191,29 +181,15 @@ function getDate(
     updatedAt?: string;
   },
 ): string {
-  return (
-    item.createdAt ||
-    item.updatedAt ||
-    ""
-  );
+  return item.createdAt || item.updatedAt || "";
 }
 
-/*
- * IMPORTANT:
- * This function uses Date.now() and locale formatting.
- *
- * It is only called after the component has mounted,
- * so it cannot produce a server/client hydration mismatch.
- */
-function formatRelativeTime(
-  value: string,
-): string {
+function formatRelativeTime(value: string): string {
   if (!value) {
     return "";
   }
 
-  const timestamp =
-    new Date(value).getTime();
+  const timestamp = new Date(value).getTime();
 
   if (!Number.isFinite(timestamp)) {
     return "";
@@ -224,37 +200,39 @@ function formatRelativeTime(
     Date.now() - timestamp,
   );
 
-  const seconds =
-    Math.floor(difference / 1000);
+  const seconds = Math.floor(
+    difference / 1000,
+  );
 
   if (seconds < 60) {
     return "Just now";
   }
 
-  const minutes =
-    Math.floor(seconds / 60);
+  const minutes = Math.floor(
+    seconds / 60,
+  );
 
   if (minutes < 60) {
     return `${minutes}m ago`;
   }
 
-  const hours =
-    Math.floor(minutes / 60);
+  const hours = Math.floor(
+    minutes / 60,
+  );
 
   if (hours < 24) {
     return `${hours}h ago`;
   }
 
-  const days =
-    Math.floor(hours / 24);
+  const days = Math.floor(
+    hours / 24,
+  );
 
   if (days < 7) {
     return `${days}d ago`;
   }
 
-  return new Date(
-    timestamp,
-  ).toLocaleDateString(
+  return new Date(timestamp).toLocaleDateString(
     "en-KE",
     {
       day: "numeric",
@@ -264,12 +242,8 @@ function formatRelativeTime(
   );
 }
 
-function formatCurrency(
-  value: number,
-): string {
-  return `KES ${safeNumber(
-    value,
-  ).toLocaleString(
+function formatCurrency(value: number): string {
+  return `KES ${safeNumber(value).toLocaleString(
     "en-KE",
     {
       minimumFractionDigits: 0,
@@ -292,10 +266,7 @@ function extractRecords<T>(
     typeof data === "object"
   ) {
     const recordData =
-      data as Record<
-        string,
-        unknown
-      >;
+      data as Record<string, unknown>;
 
     const candidates = [
       recordData.members,
@@ -307,12 +278,8 @@ function extractRecords<T>(
       recordData.data,
     ];
 
-    for (
-      const candidate of candidates
-    ) {
-      if (
-        Array.isArray(candidate)
-      ) {
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) {
         return candidate as T[];
       }
     }
@@ -332,9 +299,7 @@ export default function DashboardPage() {
     );
 
   const [activities, setActivities] =
-    useState<
-      DashboardActivity[]
-    >([]);
+    useState<DashboardActivity[]>([]);
 
   const [loading, setLoading] =
     useState(true);
@@ -342,20 +307,6 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] =
     useState(false);
 
-  /*
-   * Hydration guard.
-   *
-   * Server:
-   *   mounted = false
-   *
-   * First client render:
-   *   mounted = false
-   *
-   * Therefore both render the exact same tree.
-   *
-   * Only after hydration do we switch to the
-   * real dashboard.
-   */
   const [mounted, setMounted] =
     useState(false);
 
@@ -365,9 +316,7 @@ export default function DashboardPage() {
 
   const loadDashboard =
     useCallback(
-      async (
-        isRefresh = false,
-      ) => {
+      async (isRefresh = false) => {
         if (isRefresh) {
           setRefreshing(true);
         } else {
@@ -380,73 +329,60 @@ export default function DashboardPage() {
             membersResponse,
             loansResponse,
             notificationsResponse,
-          ] =
-            await Promise.allSettled(
-              [
-                fetch(
-                  "/api/savings/summary",
-                  {
-                    method: "GET",
-                    cache: "no-store",
-                    credentials:
-                      "same-origin",
-                    headers: {
-                      Accept:
-                        "application/json",
-                    },
-                  },
-                ),
+          ] = await Promise.allSettled([
+            fetch(
+              "/api/savings/summary",
+              {
+                method: "GET",
+                cache: "no-store",
+                credentials: "same-origin",
+                headers: {
+                  Accept:
+                    "application/json",
+                },
+              },
+            ),
 
-                fetch(
-                  "/api/members",
-                  {
-                    method: "GET",
-                    cache: "no-store",
-                    credentials:
-                      "same-origin",
-                    headers: {
-                      Accept:
-                        "application/json",
-                    },
-                  },
-                ),
+            fetch("/api/members", {
+              method: "GET",
+              cache: "no-store",
+              credentials: "same-origin",
+              headers: {
+                Accept:
+                  "application/json",
+              },
+            }),
 
-                fetch(
-                  "/api/loans",
-                  {
-                    method: "GET",
-                    cache: "no-store",
-                    credentials:
-                      "same-origin",
-                    headers: {
-                      Accept:
-                        "application/json",
-                    },
-                  },
-                ),
+            fetch("/api/loans", {
+              method: "GET",
+              cache: "no-store",
+              credentials: "same-origin",
+              headers: {
+                Accept:
+                  "application/json",
+              },
+            }),
 
-                fetch(
-                  "/api/notifications",
-                  {
-                    method: "GET",
-                    cache: "no-store",
-                    credentials:
-                      "same-origin",
-                    headers: {
-                      Accept:
-                        "application/json",
-                    },
-                  },
-                ),
-              ],
-            );
+            fetch(
+              "/api/notifications",
+              {
+                method: "GET",
+                cache: "no-store",
+                credentials:
+                  "same-origin",
+                headers: {
+                  Accept:
+                    "application/json",
+                },
+              },
+            ),
+          ]);
 
           /* =================================================
              SAVINGS
           ================================================= */
 
-          let savings:
-            SavingsSummary = {};
+          let savings: SavingsSummary = {};
 
           if (
             savingsResponse.status ===
@@ -475,8 +411,7 @@ export default function DashboardPage() {
              MEMBERS
           ================================================= */
 
-          let members:
-            MemberRecord[] = [];
+          let members: MemberRecord[] = [];
 
           if (
             membersResponse.status ===
@@ -507,8 +442,7 @@ export default function DashboardPage() {
              LOANS
           ================================================= */
 
-          let loans:
-            LoanRecord[] = [];
+          let loans: LoanRecord[] = [];
 
           if (
             loansResponse.status ===
@@ -584,9 +518,7 @@ export default function DashboardPage() {
           const activeMembers =
             members.length > 0
               ? members.filter(
-                  (
-                    member,
-                  ) => {
+                  (member) => {
                     if (
                       member.isActive ===
                       true
@@ -613,15 +545,10 @@ export default function DashboardPage() {
           const loanCount =
             loans.length;
 
-          let outstandingLoans =
-            0;
+          let outstandingLoans = 0;
+          let defaulters = 0;
 
-          let defaulters =
-            0;
-
-          for (
-            const loan of loans
-          ) {
+          for (const loan of loans) {
             const outstanding =
               safeNumber(
                 loan.outstandingBalance ??
@@ -661,9 +588,7 @@ export default function DashboardPage() {
 
           const notificationCount =
             notifications.filter(
-              (
-                notification,
-              ) => {
+              (notification) => {
                 if (
                   notification.read ===
                   true
@@ -694,14 +619,6 @@ export default function DashboardPage() {
               savings.totalDeposits,
             );
 
-          /*
-           * Backend still calls this "adjustments".
-           *
-           * The dashboard calls it "withdrawals".
-           *
-           * Math.abs() protects the UI from legacy signed
-           * adjustment records.
-           */
           const savingsWithdrawals =
             Math.abs(
               safeNumber(
@@ -721,30 +638,17 @@ export default function DashboardPage() {
           ================================================= */
 
           setStats({
-            members:
-              totalMembers,
-
+            members: totalMembers,
             activeMembers,
-
-            savings:
-              savingsBalance,
-
-            deposits:
-              savingsDeposits,
-
+            savings: savingsBalance,
+            deposits: savingsDeposits,
             withdrawals:
               savingsWithdrawals,
-
             reversals:
               savingsReversals,
-
-            loans:
-              loanCount,
-
+            loans: loanCount,
             outstandingLoans,
-
             defaulters,
-
             notifications:
               notificationCount,
           });
@@ -753,12 +657,11 @@ export default function DashboardPage() {
              RECENT ACTIVITY
           ================================================= */
 
-          const nextActivities:
-            Array<
-              DashboardActivity & {
-                sortTimestamp: number;
-              }
-            > = [];
+          const nextActivities: Array<
+            DashboardActivity & {
+              sortTimestamp: number;
+            }
+          > = [];
 
           members
             .slice()
@@ -773,10 +676,7 @@ export default function DashboardPage() {
             )
             .slice(0, 5)
             .forEach(
-              (
-                member,
-                index,
-              ) => {
+              (member, index) => {
                 const name =
                   member.name ||
                   member.fullName ||
@@ -785,43 +685,37 @@ export default function DashboardPage() {
                     member.middleName,
                     member.lastName,
                   ]
-                    .filter(
-                      Boolean,
-                    )
+                    .filter(Boolean)
                     .join(" ") ||
                   "Member";
 
                 const date =
                   getDate(member);
 
-                nextActivities.push(
-                  {
-                    id: `member-${getId(
-                      member,
-                      String(index),
-                    )}`,
+                nextActivities.push({
+                  id: `member-${getId(
+                    member,
+                    String(index),
+                  )}`,
 
-                    title:
-                      "Member activity",
+                  title:
+                    "Member activity",
 
-                    description:
-                      `${name} was recently recorded.`,
+                  description:
+                    `${name} was recently recorded.`,
 
-                    time:
-                      formatRelativeTime(
-                        date,
-                      ),
+                  time:
+                    formatRelativeTime(
+                      date,
+                    ),
 
-                    type:
-                      "member",
+                  type: "member",
 
-                    sortTimestamp:
-                      new Date(
-                        date,
-                      ).getTime() ||
-                      0,
-                  },
-                );
+                  sortTimestamp:
+                    new Date(
+                      date,
+                    ).getTime() || 0,
+                });
               },
             );
 
@@ -838,43 +732,36 @@ export default function DashboardPage() {
             )
             .slice(0, 5)
             .forEach(
-              (
-                loan,
-                index,
-              ) => {
+              (loan, index) => {
                 const date =
                   getDate(loan);
 
-                nextActivities.push(
-                  {
-                    id: `loan-${getId(
-                      loan,
-                      String(index),
-                    )}`,
+                nextActivities.push({
+                  id: `loan-${getId(
+                    loan,
+                    String(index),
+                  )}`,
 
-                    title:
-                      "Loan activity",
+                  title:
+                    "Loan activity",
 
-                    description:
-                      loan.memberName
-                        ? `${loan.memberName} has loan activity.`
-                        : "A loan record was recently updated.",
+                  description:
+                    loan.memberName
+                      ? `${loan.memberName} has loan activity.`
+                      : "A loan record was recently updated.",
 
-                    time:
-                      formatRelativeTime(
-                        date,
-                      ),
+                  time:
+                    formatRelativeTime(
+                      date,
+                    ),
 
-                    type:
-                      "loan",
+                  type: "loan",
 
-                    sortTimestamp:
-                      new Date(
-                        date,
-                      ).getTime() ||
-                      0,
-                  },
-                );
+                  sortTimestamp:
+                    new Date(
+                      date,
+                    ).getTime() || 0,
+                });
               },
             );
 
@@ -900,37 +787,34 @@ export default function DashboardPage() {
                     notification,
                   );
 
-                nextActivities.push(
-                  {
-                    id: `notification-${getId(
-                      notification,
-                      String(index),
-                    )}`,
+                nextActivities.push({
+                  id: `notification-${getId(
+                    notification,
+                    String(index),
+                  )}`,
 
-                    title:
-                      notification.title ||
-                      "Notification",
+                  title:
+                    notification.title ||
+                    "Notification",
 
-                    description:
-                      notification.message ||
-                      notification.description ||
-                      "New notification.",
+                  description:
+                    notification.message ||
+                    notification.description ||
+                    "New notification.",
 
-                    time:
-                      formatRelativeTime(
-                        date,
-                      ),
+                  time:
+                    formatRelativeTime(
+                      date,
+                    ),
 
-                    type:
-                      "notification",
+                  type:
+                    "notification",
 
-                    sortTimestamp:
-                      new Date(
-                        date,
-                      ).getTime() ||
-                      0,
-                  },
-                );
+                  sortTimestamp:
+                    new Date(
+                      date,
+                    ).getTime() || 0,
+                });
               },
             );
 
@@ -947,8 +831,7 @@ export default function DashboardPage() {
                   sortTimestamp:
                     _sortTimestamp,
                   ...activity
-                }) =>
-                  activity,
+                }) => activity,
               ),
           );
         } catch (error) {
@@ -970,11 +853,8 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setMounted(true);
-
     void loadDashboard();
-  }, [
-    loadDashboard,
-  ]);
+  }, [loadDashboard]);
 
   /* =======================================================
      REFRESH
@@ -1051,11 +931,6 @@ export default function DashboardPage() {
           ================================================= */}
 
           <div className="hidden lg:block">
-
-            {/* =================================================
-                HEADER
-            ================================================= */}
-
             <section className="mb-6">
               <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                 <div className="min-w-0">
@@ -1077,8 +952,9 @@ export default function DashboardPage() {
                   </h1>
 
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-white/35">
-                    A clean view of GEO-SHUA
-                    members, savings, loans and
+                    A clean view of
+                    GEO-SHUA members,
+                    savings, loans and
                     account activity.
                   </p>
                 </div>
@@ -1109,14 +985,14 @@ export default function DashboardPage() {
               </div>
             </section>
 
-            {/* =================================================
-                STATS
-            ================================================= */}
-
             {loading === true ? (
               <DashboardLoading />
             ) : (
               <>
+                {/* =================================================
+                    STATS
+                ================================================= */}
+
                 <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
                   <StatCard
                     title="Members"
@@ -1220,7 +1096,6 @@ export default function DashboardPage() {
                 ================================================= */}
 
                 <section className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
-
                   {/* RECENT ACTIVITY */}
 
                   <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
@@ -1231,7 +1106,8 @@ export default function DashboardPage() {
                         </h2>
 
                         <p className="mt-1 text-xs text-white/30">
-                          Latest recorded activity
+                          Latest recorded
+                          activity
                         </p>
                       </div>
 
@@ -1252,12 +1128,15 @@ export default function DashboardPage() {
                           </div>
 
                           <p className="mt-4 text-sm font-medium text-white/45">
-                            No recent activity
+                            No recent
+                            activity
                           </p>
 
                           <p className="mt-2 text-xs text-white/25">
-                            New records will appear
-                            here automatically.
+                            New records
+                            will appear
+                            here
+                            automatically.
                           </p>
                         </div>
                       </div>
@@ -1292,7 +1171,8 @@ export default function DashboardPage() {
                       </h2>
 
                       <p className="mt-1 text-xs text-white/30">
-                        Core GEO-SHUA modules
+                        Core GEO-SHUA
+                        modules
                       </p>
                     </div>
 
@@ -1449,7 +1329,6 @@ export default function DashboardPage() {
                     }
                   />
                 </section>
-                
 
                 {/* =================================================
                     FOOTER
@@ -1457,12 +1336,14 @@ export default function DashboardPage() {
 
                 <div className="mt-5 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-[10px] text-white/20">
-                    GEO-SHUA SACCO Management
+                    GEO-SHUA SACCO
+                    Management
                   </p>
 
-
                   <p className="text-[10px] text-white/20">
-                    Financial data sourced from domain APIs
+                    Financial data
+                    sourced from
+                    domain APIs
                   </p>
                 </div>
               </>
@@ -1489,24 +1370,27 @@ function MobileDashboard({
   onRefresh: () => void;
   refreshing: boolean;
 }) {
-  /*
-   * This calculation is presentation-only.
-   *
-   * The API remains authoritative through stats.savings.
-   * This gives the mobile user visibility into how the
-   * balance is constructed.
-   */
+  const [amountsHidden, setAmountsHidden] =
+    useState(false);
+
   const calculatedSavings =
     stats.deposits -
     stats.withdrawals -
     stats.reversals;
 
+  const displayAmount = (
+    value: number,
+  ): string => {
+    if (amountsHidden) {
+      return "KES ••••••";
+    }
+
+    return formatCurrency(value);
+  };
+
   return (
     <div className="space-y-3">
-
-      {/* =====================================================
-          HEADER
-      ===================================================== */}
+      {/* HEADER */}
 
       <section className="flex items-center justify-between px-1 pb-1">
         <div className="min-w-0">
@@ -1521,33 +1405,65 @@ function MobileDashboard({
           <h1 className="mt-1 text-lg font-semibold tracking-tight text-white">
             Dashboard
           </h1>
+        </div>
 
-          </div>
-
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={
-            refreshing === true
-          }
-          aria-label="Refresh dashboard"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-white/55 transition active:scale-95 disabled:opacity-40"
-        >
-          <RefreshCw
-            size={16}
-            strokeWidth={1.8}
-            className={
-              refreshing
-                ? "animate-spin"
-                : ""
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              setAmountsHidden(
+                (current) => !current,
+              )
             }
-          />
-        </button>
+            aria-label={
+              amountsHidden
+                ? "Show amounts"
+                : "Hide amounts"
+            }
+            aria-pressed={amountsHidden}
+            title={
+              amountsHidden
+                ? "Show amounts"
+                : "Hide amounts"
+            }
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-white/55 transition active:scale-95 hover:bg-white/[0.055] hover:text-white/75"
+          >
+            {amountsHidden ? (
+              <Eye
+                size={16}
+                strokeWidth={1.8}
+              />
+            ) : (
+              <EyeOff
+                size={16}
+                strokeWidth={1.8}
+              />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={
+              refreshing === true
+            }
+            aria-label="Refresh dashboard"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-white/55 transition active:scale-95 disabled:opacity-40"
+          >
+            <RefreshCw
+              size={16}
+              strokeWidth={1.8}
+              className={
+                refreshing
+                  ? "animate-spin"
+                  : ""
+              }
+            />
+          </button>
+        </div>
       </section>
 
-      {/* =====================================================
-          MEMBERS
-      ===================================================== */}
+      {/* MEMBERS */}
 
       <button
         type="button"
@@ -1647,9 +1563,7 @@ function MobileDashboard({
         </div>
       </button>
 
-      {/* =====================================================
-          SAVINGS
-      ===================================================== */}
+      {/* SAVINGS */}
 
       <button
         type="button"
@@ -1663,9 +1577,6 @@ function MobileDashboard({
         <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-[#1683ff]/10 blur-3xl" />
 
         <div className="relative">
-
-          {/* HEADER */}
-
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1683ff]/10 text-[#4da3ff]">
@@ -1692,24 +1603,20 @@ function MobileDashboard({
             />
           </div>
 
-          {/* BALANCE */}
-
           <div className="mt-3">
             <p className="truncate text-[25px] font-semibold leading-none tracking-tight text-white">
-              {formatCurrency(
+              {displayAmount(
                 stats.savings,
               )}
             </p>
 
             <p className="mt-1 text-[10px] text-white/30">
-              current savings balance
+              current savings
+              balance
             </p>
           </div>
 
-          {/* CALCULATION */}
-
           <div className="mt-4 border-t border-white/[0.06] pt-3">
-
             <div className="flex items-center justify-between">
               <p className="text-[8px] font-semibold uppercase tracking-[0.12em] text-white/20">
                 Balance calculation
@@ -1735,22 +1642,17 @@ function MobileDashboard({
             </div>
 
             <div className="mt-2 space-y-1.5">
-
-              {/* DEPOSITS */}
-
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[9px] text-white/30">
                   Deposits
                 </span>
 
                 <span className="text-[10px] font-medium text-white/55">
-                  {formatCurrency(
+                  {displayAmount(
                     stats.deposits,
                   )}
                 </span>
               </div>
-
-              {/* WITHDRAWALS */}
 
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[9px] text-white/30">
@@ -1758,13 +1660,11 @@ function MobileDashboard({
                 </span>
 
                 <span className="text-[10px] font-medium text-white/50">
-                  {formatCurrency(
+                  {displayAmount(
                     stats.withdrawals,
                   )}
                 </span>
               </div>
-
-              {/* REVERSALS */}
 
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[9px] text-white/30">
@@ -1772,13 +1672,11 @@ function MobileDashboard({
                 </span>
 
                 <span className="text-[10px] font-medium text-white/50">
-                  {formatCurrency(
+                  {displayAmount(
                     stats.reversals,
                   )}
                 </span>
               </div>
-
-              {/* CURRENT BALANCE */}
 
               <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/[0.06] pt-2">
                 <span className="text-[9px] font-medium text-white/40">
@@ -1786,7 +1684,7 @@ function MobileDashboard({
                 </span>
 
                 <span className="text-[10px] font-semibold text-[#4da3ff]">
-                  {formatCurrency(
+                  {displayAmount(
                     calculatedSavings,
                   )}
                 </span>
@@ -1796,9 +1694,7 @@ function MobileDashboard({
         </div>
       </button>
 
-      {/* =====================================================
-          LOANS
-      ===================================================== */}
+      {/* LOANS */}
 
       <button
         type="button"
@@ -1840,13 +1736,14 @@ function MobileDashboard({
 
           <div className="mt-3">
             <p className="truncate text-[25px] font-semibold leading-none tracking-tight text-white">
-              {formatCurrency(
+              {displayAmount(
                 stats.outstandingLoans,
               )}
             </p>
 
             <p className="mt-1 text-[10px] text-white/30">
-              outstanding balance
+              outstanding
+              balance
             </p>
           </div>
 
@@ -1879,15 +1776,12 @@ function MobileDashboard({
           </div>
         </div>
       </button>
-       {/* =====================================================
-          SMS INGESTION MONITOR
-      ===================================================== */}
+
+      {/* SMS INGESTION MONITOR */}
 
       <SmsInboxMonitor />
 
-      {/* =====================================================
-          RECENT ACTIVITY
-      ===================================================== */}
+      {/* RECENT ACTIVITY */}
 
       <section className="overflow-hidden rounded-[22px] border border-white/[0.07] bg-white/[0.025]">
         <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3.5">
@@ -1897,7 +1791,8 @@ function MobileDashboard({
             </p>
 
             <p className="mt-0.5 text-[9px] text-white/25">
-              Latest system records
+              Latest system
+              records
             </p>
           </div>
 
@@ -1938,39 +1833,14 @@ function MobileDashboard({
         )}
       </section>
 
-      {/* =====================================================
-          MOBILE FOOTER
-      ===================================================== */}
+      {/* MOBILE FOOTER */}
 
       <div className="px-1 pb-3 pt-1 text-center">
         <p className="text-[9px] text-white/15">
-          GEO-SHUA SACCO Management
+          GEO-SHUA SACCO
+          Management
         </p>
       </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   MOBILE SNAPSHOT
-========================================================= */
-
-function MobileSnapshot({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="min-w-0 rounded-xl border border-white/[0.05] bg-white/[0.025] px-3 py-2.5">
-      <p className="truncate text-[8px] uppercase tracking-[0.1em] text-white/20">
-        {label}
-      </p>
-
-      <p className="mt-1 truncate text-xs font-semibold text-white/70">
-        {value}
-      </p>
     </div>
   );
 }
@@ -2092,8 +1962,7 @@ function OverviewCard({
         </div>
       </div>
 
-      {progress !==
-        undefined && (
+      {progress !== undefined && (
         <div className="mt-5">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-[10px] text-white/25">
@@ -2126,9 +1995,7 @@ function OverviewCard({
         metrics.length > 0 && (
           <div className="mt-5 grid grid-cols-3 gap-3">
             {metrics.map(
-              (
-                metric,
-              ) => (
+              (metric) => (
                 <MiniMetric
                   key={
                     metric.label
@@ -2203,7 +2070,8 @@ function LoanOverviewCard({
             </p>
 
             <p className="mt-1 text-xs text-white/30">
-              Outstanding loan balance
+              Outstanding loan
+              balance
             </p>
           </div>
         </div>
