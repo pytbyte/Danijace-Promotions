@@ -144,7 +144,7 @@ export async function POST(
 
     try {
       blob = await put(blobPath, image, {
-        access: "public",
+        access: "private",
         contentType: "image/webp",
         addRandomSuffix: false,
         allowOverwrite: true,
