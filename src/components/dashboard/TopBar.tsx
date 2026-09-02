@@ -520,37 +520,7 @@ export default function TopBar() {
 
                 <div className="p-2.5">
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      navigateTo(
-                        "/dashboard/settings",
-                      )
-                    }
-                    className="
-                      flex
-                      w-full
-                      items-center
-                      gap-3
-                      rounded-xl
-                      px-3.5
-                      py-3
-                      text-sm
-                      text-white/60
-                      transition
-                      hover:bg-white/[0.06]
-                      hover:text-white
-                    "
-                  >
-                    <Settings
-                      size={18}
-                      strokeWidth={1.8}
-                    />
-
-                    <span>
-                      Account settings
-                    </span>
-                  </button>
+                 
 
                   <button
                     type="button"

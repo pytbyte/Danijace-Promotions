@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import {
   AlertCircle,
   Plus,
@@ -22,78 +28,87 @@ import MemberViewModal from "@/app/dashboard/members/MemberDetails";
 import MemberEditModal from "@/app/dashboard/members/MemberEditModal";
 import MemberDeleteModal from "@/app/dashboard/members/MemberDeleteModal";
 
-import type { Member } from "@/lib/members/types";
+import type {
+  Member,
+  MemberWithFinancialSummary,
+} from "@/lib/members/types";
+
+/* =========================================================
+   API RESPONSE
+========================================================= */
 
 type MembersResponse = {
   success: boolean;
-  data?: Member[];
+  data?: MemberWithFinancialSummary[];
   count?: number;
   error?: string;
 };
 
+/* =========================================================
+   PAGE
+========================================================= */
+
 export default function MembersPage() {
-  /* =========================================================
-     MEMBERS STATE
-  ========================================================= */
+  /* =======================================================
+     MEMBERS
+  ======================================================= */
 
-  const [members, setMembers] = useState<Member[]>([]);
+  const [members, setMembers] =
+    useState<MemberWithFinancialSummary[]>([]);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] =
+    useState(true);
 
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] =
+    useState(false);
 
-  const [error, setError] = useState("");
+  const [error, setError] =
+    useState("");
 
-  const [mounted, setMounted] = useState(false);
+  const [mounted, setMounted] =
+    useState(false);
 
-  /* =========================================================
-     VIEW MEMBER
-  ========================================================= */
+  /* =======================================================
+     MODAL STATE
+  ======================================================= */
 
   const [viewMember, setViewMember] =
-    useState<Member | null>(null);
-
-  /* =========================================================
-     EDIT MEMBER
-  ========================================================= */
+    useState<MemberWithFinancialSummary | null>(null);
 
   const [editMember, setEditMember] =
     useState<Member | null>(null);
 
-  /* =========================================================
-     DELETE MEMBER
-  ========================================================= */
-
   const [deleteMember, setDeleteMember] =
     useState<Member | null>(null);
 
-  /* =========================================================
-     SEARCH / FILTER
-  ========================================================= */
+  /* =======================================================
+     SEARCH
+  ======================================================= */
 
-  const [search, setSearch] = useState("");
+  const [search, setSearch] =
+    useState("");
 
   const [status, setStatus] =
     useState<MemberStatusFilter>("all");
 
-  /* =========================================================
+  /* =======================================================
      ADD MEMBER
-  ========================================================= */
+  ======================================================= */
 
   const [addMemberOpen, setAddMemberOpen] =
     useState(false);
 
-  /* =========================================================
+  /* =======================================================
      MOUNT
-  ========================================================= */
+  ======================================================= */
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  /* =========================================================
+  /* =======================================================
      LOAD MEMBERS
-  ========================================================= */
+  ======================================================= */
 
   const loadMembers = useCallback(
     async (isRefresh = false) => {
@@ -106,13 +121,16 @@ export default function MembersPage() {
 
         setError("");
 
-        const response = await fetch("/api/members", {
-          method: "GET",
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
-          },
-        });
+        const response = await fetch(
+          "/api/members",
+          {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+            },
+          }
+        );
 
         let result: MembersResponse;
 
@@ -124,7 +142,10 @@ export default function MembersPage() {
           );
         }
 
-        if (!response.ok || !result.success) {
+        if (
+          !response.ok ||
+          !result.success
+        ) {
           throw new Error(
             result.error ||
               `Unable to load members. Server returned ${response.status}.`
@@ -164,169 +185,164 @@ export default function MembersPage() {
     []
   );
 
-  /* =========================================================
+  /* =======================================================
      INITIAL LOAD
-  ========================================================= */
+  ======================================================= */
 
   useEffect(() => {
     if (!mounted) {
       return;
     }
 
-    loadMembers();
+    void loadMembers();
   }, [mounted, loadMembers]);
 
-  /* =========================================================
+  /* =======================================================
      REFRESH
-  ========================================================= */
+  ======================================================= */
 
   function handleRefresh() {
     if (loading || refreshing) {
       return;
     }
 
-    loadMembers(true);
+    void loadMembers(true);
   }
 
-  /* =========================================================
+  /* =======================================================
      ADD MEMBER
-  ========================================================= */
+  ======================================================= */
 
   function handleAddMember() {
     setAddMemberOpen(true);
   }
 
-  /* =========================================================
-     MEMBER ADDED
-  ========================================================= */
-
   function handleMemberAdded() {
     setAddMemberOpen(false);
 
-    loadMembers(true);
+    void loadMembers(true);
   }
 
-  /* =========================================================
+  /* =======================================================
      VIEW MEMBER
-  ========================================================= */
+  ======================================================= */
 
+  /**
+   * Plain Member handler.
+   *
+   * MemberTable may expose a plain Member to this callback.
+   * We therefore resolve the corresponding enriched member
+   * from the current members state before opening the view.
+   */
   function handleView(member: Member) {
-    /* ---------------------------------------------
-       Close other actions first
-    --------------------------------------------- */
-
     setEditMember(null);
     setDeleteMember(null);
 
-    /* ---------------------------------------------
-       Open view
-    --------------------------------------------- */
+    const enrichedMember =
+      members.find(
+        (item) =>
+          item._id === member._id ||
+          item.membershipNumber ===
+            member.membershipNumber
+      );
+
+    if (!enrichedMember) {
+      console.warn(
+        "Unable to find enriched member:",
+        member.membershipNumber
+      );
+
+      return;
+    }
+
+    setViewMember(enrichedMember);
+  }
+
+  /**
+   * Enriched member handler.
+   *
+   * Used by MemberList and MemberViewModal where the
+   * financial summary is already available.
+   */
+  function handleViewEnriched(
+    member: MemberWithFinancialSummary
+  ) {
+    setEditMember(null);
+    setDeleteMember(null);
 
     setViewMember(member);
   }
-
-  /* =========================================================
-     CLOSE VIEW MODAL
-  ========================================================= */
 
   function handleCloseMemberView() {
     setViewMember(null);
   }
 
-  /* =========================================================
+  /* =======================================================
      EDIT MEMBER
-  ========================================================= */
+  ======================================================= */
 
   function handleEdit(member: Member) {
-    /* ---------------------------------------------
-       Close other actions first
-    --------------------------------------------- */
-
     setViewMember(null);
     setDeleteMember(null);
-
-    /* ---------------------------------------------
-       Open edit
-    --------------------------------------------- */
 
     setEditMember(member);
   }
 
-  /* =========================================================
-     CLOSE EDIT MODAL
-  ========================================================= */
+  function handleEditEnriched(
+    member: MemberWithFinancialSummary
+  ) {
+    handleEdit(member);
+  }
 
   function handleCloseMemberEdit() {
     setEditMember(null);
   }
 
-  /* =========================================================
-     MEMBER UPDATED
-  ========================================================= */
-
   function handleMemberUpdated() {
     setEditMember(null);
 
-    /*
-     * Reload from MongoDB so the page always reflects
-     * the actual database state.
-     */
-
-    loadMembers(true);
+    void loadMembers(true);
   }
 
-  /* =========================================================
+  /* =======================================================
      DELETE MEMBER
-  ========================================================= */
+  ======================================================= */
 
   function handleDelete(member: Member) {
-    /* ---------------------------------------------
-       Close other actions first
-    --------------------------------------------- */
-
     setViewMember(null);
     setEditMember(null);
-
-    /* ---------------------------------------------
-       Open delete confirmation
-    --------------------------------------------- */
 
     setDeleteMember(member);
   }
 
-  /* =========================================================
-     CLOSE DELETE MODAL
-  ========================================================= */
+  function handleDeleteEnriched(
+    member: MemberWithFinancialSummary
+  ) {
+    handleDelete(member);
+  }
 
   function handleCloseMemberDelete() {
     setDeleteMember(null);
   }
 
-  /* =========================================================
-     MEMBER DELETED
-  ========================================================= */
-
   function handleMemberDeleted() {
     setDeleteMember(null);
 
-    /*
-     * Reload from MongoDB after deletion.
-     */
-
-    loadMembers(true);
+    void loadMembers(true);
   }
 
-  /* =========================================================
+  /* =======================================================
      FILTER MEMBERS
-  ========================================================= */
+  ======================================================= */
 
   const filteredMembers = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query =
+      search.trim().toLowerCase();
 
     return members.filter((member) => {
-      /* ---------------------------------------------
-         STATUS FILTER
-      --------------------------------------------- */
+      /* ---------------------------------------------------
+         STATUS
+      --------------------------------------------------- */
 
       if (
         status !== "all" &&
@@ -335,13 +351,17 @@ export default function MembersPage() {
         return false;
       }
 
-      /* ---------------------------------------------
-         SEARCH
-      --------------------------------------------- */
+      /* ---------------------------------------------------
+         EMPTY SEARCH
+      --------------------------------------------------- */
 
       if (!query) {
         return true;
       }
+
+      /* ---------------------------------------------------
+         FULL NAME
+      --------------------------------------------------- */
 
       const fullName = [
         member.firstName,
@@ -350,6 +370,10 @@ export default function MembersPage() {
       ]
         .filter(Boolean)
         .join(" ");
+
+      /* ---------------------------------------------------
+         SEARCHABLE FIELDS
+      --------------------------------------------------- */
 
       const searchableText = [
         fullName,
@@ -373,9 +397,9 @@ export default function MembersPage() {
     });
   }, [members, search, status]);
 
-  /* =========================================================
-     SERVER-SAFE INITIAL LOADING
-  ========================================================= */
+  /* =======================================================
+     SSR / HYDRATION GUARD
+  ======================================================= */
 
   if (!mounted) {
     return (
@@ -391,91 +415,46 @@ export default function MembersPage() {
     );
   }
 
-  /* =========================================================
+  /* =======================================================
      PAGE
-  ========================================================= */
+  ======================================================= */
 
   return (
     <main className="min-h-[100dvh] w-full max-w-full overflow-x-clip bg-[#050505] text-white">
       <TopBar />
 
-      {/* =====================================================
-          PAGE BODY
-      ===================================================== */}
-
       <div className="w-full min-w-0 pt-16">
-        <div
-          className="
-            mx-auto
-            w-full
-            min-w-0
-            max-w-[1800px]
-            px-4
-            py-6
-            sm:px-6
-            sm:py-8
-            lg:px-8
-            lg:py-10
-            xl:px-10
-            2xl:px-12
-          "
-        >
+        <div className="mx-auto w-full min-w-0 max-w-[1800px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10 xl:px-10 2xl:px-12">
           {/* =================================================
               HEADER
           ================================================= */}
 
           <section className="mb-6 w-full min-w-0 sm:mb-8">
-            <div
-              className="
-                flex
-                w-full
-                min-w-0
-                flex-col
-                gap-5
-                lg:flex-row
-                lg:items-end
-                lg:justify-between
-              "
-            >
-              {/* TITLE */}
+            <div className="flex w-full min-w-0 flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+              <div className="mb-3 flex items-end justify-between px-1">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="h-1.5 w-1.5 rounded-full bg-sky-400" />
 
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-2">
-                  <Users
-                    size={16}
-                    strokeWidth={1.8}
-                    className="shrink-0 text-yellow-400"
-                  />
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-300/60">
+                      GEO-SHUA
+                    </p>
+                  </div>
 
-                  <p className="truncate text-xs font-medium uppercase tracking-[0.22em] text-yellow-500/60">
-                    Members
-                  </p>
+                  <h2 className="mt-1 text-base font-semibold tracking-tight text-white">
+                    Members Management
+                  </h2>
                 </div>
 
-                <h1 className="mt-2 truncate text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-                  Member Management
-                </h1>
-
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-white/35">
-                  Manage registered members, view their
-                  information and maintain membership
-                  records.
+                <p className="text-xs text-white/25">
+                  {members.length.toLocaleString()}{" "}
+                  {members.length === 1
+                    ? "member"
+                    : "members"}
                 </p>
               </div>
 
-              {/* ACTIONS */}
-
-              <div
-                className="
-                  flex
-                  w-full
-                  min-w-0
-                  shrink-0
-                  items-center
-                  gap-2
-                  lg:w-auto
-                "
-              >
+              <div className="flex w-full min-w-0 shrink-0 items-center gap-2 lg:w-auto">
                 <button
                   type="button"
                   onClick={handleRefresh}
@@ -484,35 +463,36 @@ export default function MembersPage() {
                   }
                   className="
                     flex
-                    h-11
-                    w-11
-                    shrink-0
+                    h-10
                     items-center
                     justify-center
+                    gap-2
                     rounded-xl
                     border
-                    border-white/[0.08]
+                    border-white/[0.07]
                     bg-white/[0.025]
-                    text-white/45
+                    px-3
+                    text-xs
+                    font-medium
+                    text-white/55
                     transition
-                    hover:border-white/[0.12]
                     hover:bg-white/[0.05]
                     hover:text-white
                     disabled:cursor-not-allowed
                     disabled:opacity-40
                   "
-                  aria-label="Refresh members"
-                  title="Refresh members"
                 >
                   <RefreshCw
-                    size={17}
-                    strokeWidth={1.8}
-                    className={
+                    className={`h-4 w-4 ${
                       refreshing
                         ? "animate-spin"
                         : ""
-                    }
+                    }`}
                   />
+
+                  <span className="hidden sm:inline">
+                    Refresh
+                  </span>
                 </button>
 
                 <button
@@ -520,32 +500,24 @@ export default function MembersPage() {
                   onClick={handleAddMember}
                   className="
                     flex
-                    h-11
-                    min-w-0
-                    flex-1
+                    h-10
                     items-center
                     justify-center
                     gap-2
                     rounded-xl
-                    bg-yellow-500
+                    bg-sky-400
                     px-4
-                    text-sm
+                    text-xs
                     font-semibold
                     text-black
                     transition
-                    hover:bg-yellow-400
+                    hover:bg-sky-300
                     active:scale-[0.98]
-                    lg:w-auto
-                    lg:flex-none
                   "
                 >
-                  <Plus
-                    size={17}
-                    strokeWidth={2}
-                    className="shrink-0"
-                  />
+                  <Plus className="h-4 w-4" />
 
-                  <span className="truncate">
+                  <span>
                     Add Member
                   </span>
                 </button>
@@ -558,66 +530,29 @@ export default function MembersPage() {
           ================================================= */}
 
           {error && (
-            <section className="mb-6 w-full min-w-0">
-              <div
-                className="
-                  flex
-                  w-full
-                  min-w-0
-                  flex-col
-                  gap-4
-                  rounded-2xl
-                  border
-                  border-red-500/15
-                  bg-red-500/[0.05]
-                  p-4
-                  sm:flex-row
-                  sm:items-center
-                  sm:justify-between
-                  sm:px-5
-                "
-              >
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-400">
-                    <AlertCircle
-                      size={18}
-                      strokeWidth={1.8}
-                    />
-                  </div>
+            <div className="mb-6 flex items-start gap-3 rounded-2xl border border-rose-400/10 bg-rose-400/[0.05] p-4">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-rose-300" />
 
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-red-300">
-                      Unable to load members
-                    </p>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-rose-200">
+                  Unable to load members
+                </p>
 
-                    <p className="mt-1 break-words text-xs leading-5 text-red-300/50">
-                      {error}
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => loadMembers()}
-                  className="
-                    h-10
-                    shrink-0
-                    rounded-xl
-                    border
-                    border-red-400/10
-                    bg-red-400/[0.06]
-                    px-4
-                    text-xs
-                    font-medium
-                    text-red-300
-                    transition
-                    hover:bg-red-400/10
-                  "
-                >
-                  Try again
-                </button>
+                <p className="mt-1 text-xs leading-5 text-rose-200/50">
+                  {error}
+                </p>
               </div>
-            </section>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadMembers(true)
+                }
+                className="ml-auto shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-rose-200 transition hover:bg-rose-400/10"
+              >
+                Retry
+              </button>
+            </div>
           )}
 
           {/* =================================================
@@ -628,19 +563,17 @@ export default function MembersPage() {
             <MembersLoading />
           ) : (
             <>
-              {/* =================================================
-                  SUMMARY
-              ================================================= */}
+              {/* MEMBER SUMMARY */}
 
               <div className="mt-6 w-full min-w-0 overflow-hidden">
-                <MemberSummary members={members} />
+                <MemberSummary
+                  members={members}
+                />
               </div>
 
-              {/* =================================================
-                  SEARCH
-              ================================================= */}
+              {/* SEARCH */}
 
-              {!loading && !error && (
+              {!error && (
                 <MemberSearch
                   search={search}
                   status={status}
@@ -649,9 +582,7 @@ export default function MembersPage() {
                 />
               )}
 
-              {/* =================================================
-                  DIRECTORY
-              ================================================= */}
+              {/* MEMBER TABLE + MOBILE LIST */}
 
               <section className="mt-6 w-full min-w-0 overflow-hidden">
                 <MemberTable
@@ -663,204 +594,76 @@ export default function MembersPage() {
 
                 <MemberList
                   members={filteredMembers}
-                  onView={handleView}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
+                  onView={handleViewEnriched}
+                  onEdit={handleEditEnriched}
+                  onDelete={handleDeleteEnriched}
                 />
               </section>
 
-              {/* =================================================
-                  NO SEARCH RESULTS
-              ================================================= */}
+              {/* NO SEARCH RESULTS */}
 
               {members.length > 0 &&
                 filteredMembers.length === 0 && (
-                  <section className="mt-6 w-full min-w-0">
-                    <div
-                      className="
-                        flex
-                        min-h-[220px]
-                        w-full
-                        items-center
-                        justify-center
-                        rounded-2xl
-                        border
-                        border-white/[0.08]
-                        bg-white/[0.025]
-                        p-6
-                      "
-                    >
-                      <div className="max-w-md text-center">
-                        <div
-                          className="
-                            mx-auto
-                            flex
-                            h-12
-                            w-12
-                            items-center
-                            justify-center
-                            rounded-2xl
-                            border
-                            border-white/[0.08]
-                            bg-white/[0.03]
-                            text-white/25
-                          "
-                        >
-                          <Users
-                            size={21}
-                            strokeWidth={1.5}
-                          />
-                        </div>
+                  <div className="mt-6 rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-10 text-center">
+                    <Users className="mx-auto mb-3 h-8 w-8 text-white/20" />
 
-                        <h2 className="mt-4 text-sm font-semibold text-white/60">
-                          No matching members
-                        </h2>
+                    <p className="text-sm font-medium text-white/60">
+                      No matching members
+                    </p>
 
-                        <p className="mt-2 text-xs leading-5 text-white/25">
-                          No members match your current
-                          search or status filter.
-                        </p>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSearch("");
-                            setStatus("all");
-                          }}
-                          className="
-                            mt-5
-                            inline-flex
-                            min-h-10
-                            items-center
-                            justify-center
-                            rounded-xl
-                            border
-                            border-yellow-500/20
-                            bg-yellow-500/10
-                            px-4
-                            text-xs
-                            font-medium
-                            text-yellow-400
-                            transition
-                            hover:border-yellow-500/30
-                            hover:bg-yellow-500/15
-                          "
-                        >
-                          Clear filters
-                        </button>
-                      </div>
-                    </div>
-                  </section>
+                    <p className="mt-1 text-xs text-white/30">
+                      Try a different name, phone,
+                      membership number, or status.
+                    </p>
+                  </div>
                 )}
 
-              {/* =================================================
-                  EMPTY DIRECTORY
-              ================================================= */}
+              {/* EMPTY DIRECTORY */}
 
               {members.length === 0 &&
                 !error && (
-                  <section className="mt-6 w-full min-w-0">
-                    <div
-                      className="
-                        w-full
-                        overflow-hidden
-                        rounded-2xl
-                        border
-                        border-yellow-500/10
-                        bg-yellow-500/[0.025]
-                        p-5
-                        sm:p-6
-                      "
+                  <div className="mt-6 rounded-2xl border border-white/[0.06] bg-white/[0.02] px-5 py-12 text-center">
+                    <Users className="mx-auto mb-3 h-9 w-9 text-white/20" />
+
+                    <p className="text-sm font-medium text-white/60">
+                      No members yet
+                    </p>
+
+                    <p className="mt-1 text-xs text-white/30">
+                      Add your first GEO-SHUA member
+                      to get started.
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={handleAddMember}
+                      className="mt-5 inline-flex items-center gap-2 rounded-xl bg-sky-400 px-4 py-2.5 text-xs font-semibold text-black transition hover:bg-sky-300"
                     >
-                      <div
-                        className="
-                          flex
-                          min-w-0
-                          flex-col
-                          gap-4
-                          sm:flex-row
-                          sm:items-center
-                          sm:justify-between
-                        "
-                      >
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-white/70">
-                            Your member directory is
-                            empty
-                          </p>
+                      <Plus className="h-4 w-4" />
 
-                          <p className="mt-1 text-xs leading-5 text-white/30">
-                            Start by registering the
-                            first member of your SACCO.
-                          </p>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={handleAddMember}
-                          className="
-                            flex
-                            h-10
-                            w-full
-                            shrink-0
-                            items-center
-                            justify-center
-                            gap-2
-                            rounded-xl
-                            bg-yellow-500
-                            px-4
-                            text-xs
-                            font-semibold
-                            text-black
-                            transition
-                            hover:bg-yellow-400
-                            sm:w-auto
-                          "
-                        >
-                          <Plus
-                            size={16}
-                            strokeWidth={2}
-                          />
-
-                          Add First Member
-                        </button>
-                      </div>
-                    </div>
-                  </section>
+                      Add Member
+                    </button>
+                  </div>
                 )}
 
-              {/* =================================================
-                  FOOTER
-              ================================================= */}
+              {/* FOOTER */}
 
               {members.length > 0 && (
-                <div
-                  className="
-                    mt-5
-                    flex
-                    w-full
-                    min-w-0
-                    flex-col
-                    gap-1
-                    px-1
-                    sm:flex-row
-                    sm:items-center
-                    sm:justify-between
-                  "
-                >
-                  <p className="text-[10px] text-white/20">
+                <div className="mt-6 flex items-center justify-between border-t border-white/[0.05] pt-4">
+                  <p className="text-[11px] text-white/25">
                     Showing{" "}
                     {filteredMembers.length.toLocaleString()}{" "}
                     of{" "}
                     {members.length.toLocaleString()}{" "}
-                    {members.length === 1
-                      ? "member"
-                      : "members"}
+                    members
                   </p>
 
-                  <p className="text-[10px] text-white/20">
-                    Data synchronized with MongoDB
-                  </p>
+                  {filteredMembers.length !==
+                    members.length && (
+                    <p className="text-[11px] text-sky-300/40">
+                      Filter active
+                    </p>
+                  )}
                 </div>
               )}
             </>
@@ -869,28 +672,32 @@ export default function MembersPage() {
       </div>
 
       {/* =====================================================
-          ADD MEMBER MODAL
+          ADD MEMBER
       ===================================================== */}
 
       {addMemberOpen && (
         <MemberForm
-          onClose={() => setAddMemberOpen(false)}
+          onClose={() =>
+            setAddMemberOpen(false)
+          }
           onSuccess={handleMemberAdded}
         />
       )}
 
       {/* =====================================================
-          VIEW MEMBER MODAL
+          VIEW MEMBER
       ===================================================== */}
 
       <MemberViewModal
         member={viewMember}
         open={viewMember !== null}
         onClose={handleCloseMemberView}
+        onEdit={handleEditEnriched}
+        onDelete={handleDeleteEnriched}
       />
 
       {/* =====================================================
-          EDIT MEMBER MODAL
+          EDIT MEMBER
       ===================================================== */}
 
       <MemberEditModal
@@ -901,7 +708,7 @@ export default function MembersPage() {
       />
 
       {/* =====================================================
-          DELETE MEMBER MODAL
+          DELETE MEMBER
       ===================================================== */}
 
       <MemberDeleteModal
@@ -915,83 +722,56 @@ export default function MembersPage() {
 }
 
 /* =========================================================
-   LOADING
+   LOADING SKELETON
 ========================================================= */
 
 function MembersLoading() {
   return (
-    <div className="w-full min-w-0 space-y-5 overflow-hidden sm:space-y-6">
-      {/* SUMMARY */}
+    <div className="w-full min-w-0">
+      <div className="animate-pulse space-y-6">
+        {/* HEADER */}
 
-      <section className="grid w-full min-w-0 grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map(
-          (_, index) => (
-            <div
-              key={index}
-              className="
-                h-[125px]
-                min-w-0
-                overflow-hidden
-                animate-pulse
-                rounded-2xl
-                border
-                border-white/[0.06]
-                bg-white/[0.025]
-              "
-            />
-          )
-        )}
-      </section>
+        <div className="flex items-end justify-between">
+          <div>
+            <div className="h-2.5 w-16 rounded bg-white/[0.06]" />
 
-      {/* DESKTOP */}
+            <div className="mt-2 h-5 w-28 rounded bg-white/[0.06]" />
+          </div>
 
-      <div
-        className="
-          hidden
-          w-full
-          min-w-0
-          overflow-hidden
-          rounded-2xl
-          border
-          border-white/[0.08]
-          bg-white/[0.025]
-          lg:block
-        "
-      >
-        <div className="h-20 animate-pulse border-b border-white/[0.06] bg-white/[0.02]" />
+          <div className="h-3 w-20 rounded bg-white/[0.04]" />
+        </div>
 
-        <div className="space-y-1 p-3">
-          {Array.from({ length: 5 }).map(
+        {/* SUMMARY */}
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {Array.from({ length: 4 }).map(
             (_, index) => (
               <div
                 key={index}
-                className="h-16 w-full animate-pulse rounded-xl bg-white/[0.02]"
+                className="h-24 rounded-2xl border border-white/[0.05] bg-white/[0.025]"
               />
             )
           )}
         </div>
-      </div>
 
-      {/* MOBILE */}
+        {/* SEARCH */}
 
-      <div className="grid w-full min-w-0 gap-3 overflow-hidden lg:hidden">
-        {Array.from({ length: 3 }).map(
-          (_, index) => (
-            <div
-              key={index}
-              className="
-                h-[235px]
-                min-w-0
-                w-full
-                animate-pulse
-                rounded-2xl
-                border
-                border-white/[0.06]
-                bg-white/[0.025]
-              "
-            />
-          )
-        )}
+        <div className="h-12 rounded-2xl border border-white/[0.05] bg-white/[0.025]" />
+
+        {/* TABLE / CARDS */}
+
+        <div className="overflow-hidden rounded-2xl border border-white/[0.05]">
+          <div className="h-12 border-b border-white/[0.05] bg-white/[0.025]" />
+
+          {Array.from({ length: 5 }).map(
+            (_, index) => (
+              <div
+                key={index}
+                className="h-16 border-b border-white/[0.04] bg-white/[0.015]"
+              />
+            )
+          )}
+        </div>
       </div>
     </div>
   );

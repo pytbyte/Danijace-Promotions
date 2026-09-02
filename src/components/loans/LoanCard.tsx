@@ -1,145 +1,529 @@
 "use client";
 
 import {
-  ArrowRight,
+  ArrowUpRight,
+  Banknote,
   CalendarDays,
-  CircleDollarSign,
+  CheckCircle2,
+  Clock3,
+  CreditCard,
+  ShieldAlert,
   UserRound,
 } from "lucide-react";
-import { Loan } from "@/lib/loans/types";
+
+import type { Loan } from "@/lib/loans/types";
 
 interface LoanCardProps {
   loan: Loan;
-  onClick?: () => void;
+  onView?: () => void;
+  onRepay?: () => void;
 }
 
-function formatMoney(value: number): string {
-  if (!Number.isFinite(value)) {
-    return "KES 0.00";
-  }
+/* =========================================================
+   FORMATTERS
+========================================================= */
 
-  return `KES ${value.toLocaleString("en-KE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+function formatKES(value: number): string {
+  const amount = Number.isFinite(value) ? value : 0;
+
+  return new Intl.NumberFormat("en-KE", {
+    style: "currency",
+    currency: "KES",
+    maximumFractionDigits: 0,
+  }).format(amount);
 }
 
-function formatDate(value: Date): string {
-  const date = value instanceof Date ? value : new Date(value);
+function formatDate(value: Date | string | number): string {
+  const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
     return "—";
   }
 
-  return date.toLocaleDateString("en-KE", {
+  return new Intl.DateTimeFormat("en-KE", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  });
+  }).format(date);
 }
 
-function statusClass(status: Loan["status"]): string {
-  switch (status) {
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function calculateProgress(loan: Loan): number {
+  const paid = Number.isFinite(loan.amountPaid)
+    ? Math.max(0, loan.amountPaid)
+    : 0;
+
+  const outstanding = Number.isFinite(loan.outstandingBalance)
+    ? Math.max(0, loan.outstandingBalance)
+    : 0;
+
+  const liability = paid + outstanding;
+
+  if (liability <= 0) {
+    return 0;
+  }
+
+  return Math.min(
+    100,
+    Math.max(0, (paid / liability) * 100),
+  );
+}
+
+function getStatusLabel(loan: Loan): string {
+  switch (loan.status) {
     case "active":
-      return "bg-emerald-500/10 text-emerald-300 border-emerald-500/20";
-
-    case "pending":
-      return "bg-amber-500/10 text-amber-300 border-amber-500/20";
-
+      return "Active";
     case "completed":
-      return "bg-blue-500/10 text-blue-300 border-blue-500/20";
-
+      return "Completed";
+    case "pending":
+      return "Pending";
     case "cancelled":
-      return "bg-red-500/10 text-red-300 border-red-500/20";
-
+      return "Cancelled";
     default:
-      return "bg-white/5 text-white/60 border-white/10";
+      return loan.status;
   }
 }
 
+function getStatusClasses(loan: Loan): string {
+  switch (loan.status) {
+    case "active":
+      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+
+    case "completed":
+      return "bg-blue-500/10 text-blue-600 dark:text-blue-400";
+
+    case "pending":
+      return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
+
+    case "cancelled":
+      return "bg-red-500/10 text-red-600 dark:text-red-400";
+
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
+
+function getInitials(name: string): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return "?";
+  }
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return (
+    parts[0][0] +
+    parts[parts.length - 1][0]
+  ).toUpperCase();
+}
+
+/* =========================================================
+   COMPONENT
+========================================================= */
+
 export default function LoanCard({
   loan,
-  onClick,
+  onView,
+  onRepay,
 }: LoanCardProps) {
+  const progress = calculateProgress(loan);
+
+  const outstanding = Number.isFinite(
+    loan.outstandingBalance,
+  )
+    ? Math.max(0, loan.outstandingBalance)
+    : 0;
+
+  const amountPaid = Number.isFinite(loan.amountPaid)
+    ? Math.max(0, loan.amountPaid)
+    : 0;
+
+  const totalFines = Number.isFinite(loan.totalFines)
+    ? Math.max(0, loan.totalFines)
+    : 0;
+
+  const isRepayable =
+    loan.status === "active" &&
+    outstanding > 0;
+
+  const isCompleted = loan.status === "completed";
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="w-full rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-left transition hover:bg-white/[0.07] active:scale-[0.99]"
+    <article
+      className="
+        w-full
+        overflow-hidden
+        rounded-3xl
+        border
+        border-border/60
+        bg-background
+        shadow-sm
+        transition
+        dark:border-white/10
+      "
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-white/40">
-            {loan.loanNumber}
-          </p>
+      {/* =====================================================
+          HEADER
+      ====================================================== */}
 
-          <h3 className="mt-1 truncate text-base font-semibold text-white">
-            {loan.memberName}
-          </h3>
+      <div className="border-b border-border/50 px-5 pb-4 pt-5 dark:border-white/10">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div
+              className="
+                flex
+                h-11
+                w-11
+                shrink-0
+                items-center
+                justify-center
+                rounded-2xl
+                bg-sky-500/10
+                text-sm
+                font-bold
+                text-sky-600
+                dark:text-sky-400
+              "
+            >
+              {getInitials(loan.memberName)}
+            </div>
 
-          <p className="mt-1 text-xs text-white/45">
-            {loan.memberNumber}
-          </p>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-foreground">
+                {loan.memberName}
+              </p>
+
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                {loan.memberNumber}
+              </p>
+            </div>
+          </div>
+
+          <span
+            className={`
+              shrink-0
+              rounded-full
+              px-2.5
+              py-1
+              text-[11px]
+              font-semibold
+              ${getStatusClasses(loan)}
+            `}
+          >
+            {getStatusLabel(loan)}
+          </span>
         </div>
 
-        <span
-          className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-medium capitalize ${statusClass(
-            loan.status,
-          )}`}
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+              {loan.loanNumber}
+            </p>
+
+            <p className="mt-1 text-sm font-semibold capitalize text-foreground">
+              {loan.type} loan
+            </p>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <CreditCard className="h-3.5 w-3.5" />
+
+            <span>
+              {Number.isFinite(loan.interestRate)
+                ? `${loan.interestRate}%`
+                : "—"}{" "}
+              interest
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* =====================================================
+          OUTSTANDING BALANCE
+      ====================================================== */}
+
+      <div className="px-5 py-5">
+        <div
+          className="
+            rounded-2xl
+            bg-sky-500/[0.07]
+            p-4
+            dark:bg-sky-400/[0.08]
+          "
         >
-          {loan.status}
-        </span>
-      </div>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">
+                Outstanding balance
+              </p>
 
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <div className="rounded-xl bg-black/20 p-3">
-          <div className="flex items-center gap-2 text-white/40">
-            <CircleDollarSign size={14} />
+              <p className="mt-1 text-2xl font-bold tracking-tight text-foreground">
+                {formatKES(outstanding)}
+              </p>
+            </div>
 
-            <span className="text-[10px] uppercase tracking-wide">
-              Principal
-            </span>
+            <div
+              className="
+                flex
+                h-10
+                w-10
+                shrink-0
+                items-center
+                justify-center
+                rounded-xl
+                bg-sky-500/10
+                text-sky-600
+                dark:text-sky-400
+              "
+            >
+              <Banknote className="h-5 w-5" />
+            </div>
           </div>
 
-          <p className="mt-1 text-sm font-semibold text-white">
-            {formatMoney(loan.principal)}
+          {/* Progress */}
+
+          <div className="mt-4">
+            <div className="mb-1.5 flex items-center justify-between text-[11px]">
+              <span className="text-muted-foreground">
+                Repayment progress
+              </span>
+
+              <span className="font-semibold text-foreground">
+                {Math.round(progress)}%
+              </span>
+            </div>
+
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className="
+                  h-full
+                  rounded-full
+                  bg-sky-500
+                  transition-all
+                  duration-500
+                "
+                style={{
+                  width: `${progress}%`,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* =====================================================
+          FINANCIAL SUMMARY
+      ====================================================== */}
+
+      <div className="grid grid-cols-2 gap-px overflow-hidden border-y border-border/50 bg-border/50 dark:border-white/10 dark:bg-white/10">
+        <div className="bg-background px-5 py-4">
+          <p className="text-[11px] text-muted-foreground">
+            Principal
+          </p>
+
+          <p className="mt-1 text-sm font-semibold text-foreground">
+            {formatKES(loan.principal)}
           </p>
         </div>
 
-        <div className="rounded-xl bg-black/20 p-3">
-          <div className="flex items-center gap-2 text-white/40">
-            <CircleDollarSign size={14} />
+        <div className="bg-background px-5 py-4">
+          <p className="text-[11px] text-muted-foreground">
+            Amount paid
+          </p>
 
-            <span className="text-[10px] uppercase tracking-wide">
-              Balance
-            </span>
-          </div>
+          <p className="mt-1 text-sm font-semibold text-foreground">
+            {formatKES(amountPaid)}
+          </p>
+        </div>
 
-          <p className="mt-1 text-sm font-semibold text-white">
-            {formatMoney(loan.outstandingBalance)}
+        <div className="bg-background px-5 py-4">
+          <p className="text-[11px] text-muted-foreground">
+            Interest
+          </p>
+
+          <p className="mt-1 text-sm font-semibold text-foreground">
+            {formatKES(loan.interestAmount)}
+          </p>
+        </div>
+
+        <div className="bg-background px-5 py-4">
+          <p className="text-[11px] text-muted-foreground">
+            Total due
+          </p>
+
+          <p className="mt-1 text-sm font-semibold text-foreground">
+            {formatKES(loan.totalDue)}
           </p>
         </div>
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-xs">
-        <div className="flex items-center gap-1.5 text-white/45">
-          <CalendarDays size={14} />
+      {/* =====================================================
+          DATES
+      ====================================================== */}
 
-          <span>
-            Due {formatDate(loan.firstDueDate)}
-          </span>
-        </div>
+      <div className="px-5 py-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
 
-        <div className="flex items-center gap-1.5 text-white/50">
-          <UserRound size={14} />
+            <div className="min-w-0">
+              <p className="text-[11px] text-muted-foreground">
+                Disbursed
+              </p>
 
-          <span className="capitalize">
-            {loan.type}
-          </span>
+              <p className="mt-0.5 truncate text-xs font-medium text-foreground">
+                {formatDate(loan.disbursementDate)}
+              </p>
+            </div>
+          </div>
 
-          <ArrowRight size={14} />
+          <div className="flex min-w-0 items-start gap-2.5">
+            <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+
+            <div className="min-w-0">
+              <p className="text-[11px] text-muted-foreground">
+                First due
+              </p>
+
+              <p className="mt-0.5 truncate text-xs font-medium text-foreground">
+                {formatDate(loan.firstDueDate)}
+              </p>
+            </div>
+          </div>
         </div>
       </div>
-    </button>
+
+      {/* =====================================================
+          FINES
+      ====================================================== */}
+
+      {totalFines > 0 && (
+        <div className="px-5 pb-4">
+          <div className="flex items-center justify-between rounded-2xl bg-amber-500/10 px-3.5 py-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-foreground">
+                  Fines
+                </p>
+
+                <p className="text-[11px] text-muted-foreground">
+                  {loan.fineStatus === "stopped"
+                    ? "Future fines stopped"
+                    : `KES ${loan.dailyFine}/day`}
+                </p>
+              </div>
+            </div>
+
+            <span className="shrink-0 text-sm font-semibold text-amber-700 dark:text-amber-400">
+              {formatKES(totalFines)}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================
+          GUARANTOR
+      ====================================================== */}
+
+      <div className="border-t border-border/50 px-5 py-4 dark:border-white/10">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+            <UserRound className="h-4 w-4" />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] text-muted-foreground">
+              Guarantor
+            </p>
+
+            <p className="truncate text-xs font-semibold text-foreground">
+              {loan.guarantor?.name || "Not provided"}
+            </p>
+          </div>
+
+          {loan.guarantor?.phone && (
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              {loan.guarantor.phone}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* =====================================================
+          ACTIONS
+      ====================================================== */}
+
+      <div className="grid grid-cols-2 gap-3 px-5 pb-5 pt-1">
+        <button
+          type="button"
+          onClick={onView}
+          className="
+            inline-flex
+            h-11
+            items-center
+            justify-center
+            gap-2
+            rounded-2xl
+            border
+            border-border
+            bg-background
+            px-4
+            text-sm
+            font-semibold
+            text-foreground
+            transition
+            hover:bg-muted
+            active:scale-[0.98]
+            dark:border-white/10
+          "
+        >
+          <ArrowUpRight className="h-4 w-4" />
+          View
+        </button>
+
+        <button
+          type="button"
+          onClick={onRepay}
+          disabled={!isRepayable || isCompleted}
+          className="
+            inline-flex
+            h-11
+            items-center
+            justify-center
+            gap-2
+            rounded-2xl
+            bg-sky-600
+            px-4
+            text-sm
+            font-semibold
+            text-white
+            transition
+            hover:bg-sky-700
+            active:scale-[0.98]
+            disabled:cursor-not-allowed
+            disabled:opacity-40
+          "
+        >
+          {isCompleted ? (
+            <CheckCircle2 className="h-4 w-4" />
+          ) : (
+            <Banknote className="h-4 w-4" />
+          )}
+
+          {isCompleted ? "Completed" : "Repay"}
+        </button>
+      </div>
+    </article>
   );
 }

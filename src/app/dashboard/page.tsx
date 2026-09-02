@@ -29,7 +29,7 @@ type DashboardStats = {
 
   savings: number;
   deposits: number;
-  adjustments: number;
+  withdrawals: number;
   reversals: number;
 
   loans: number;
@@ -54,7 +54,13 @@ type DashboardActivity = {
 type SavingsSummary = {
   totalBalance?: unknown;
   totalDeposits?: unknown;
+
+  /*
+   * Backend/domain name remains "totalAdjustments".
+   * UI presents this as "Withdrawals".
+   */
   totalAdjustments?: unknown;
+
   totalReversals?: unknown;
   memberCount?: unknown;
 };
@@ -128,7 +134,7 @@ const DEFAULT_STATS: DashboardStats = {
 
   savings: 0,
   deposits: 0,
-  adjustments: 0,
+  withdrawals: 0,
   reversals: 0,
 
   loans: 0,
@@ -189,6 +195,13 @@ function getDate(
   );
 }
 
+/*
+ * IMPORTANT:
+ * This function uses Date.now() and locale formatting.
+ *
+ * It is only called after the component has mounted,
+ * so it cannot produce a server/client hydration mismatch.
+ */
 function formatRelativeTime(
   value: string,
 ): string {
@@ -326,6 +339,20 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] =
     useState(false);
 
+  /*
+   * Hydration guard.
+   *
+   * Server:
+   *   mounted = false
+   *
+   * First client render:
+   *   mounted = false
+   *
+   * Therefore both render the exact same tree.
+   *
+   * Only after hydration do we switch to the
+   * real dashboard.
+   */
   const [mounted, setMounted] =
     useState(false);
 
@@ -358,6 +385,8 @@ export default function DashboardPage() {
                   {
                     method: "GET",
                     cache: "no-store",
+                    credentials:
+                      "same-origin",
                     headers: {
                       Accept:
                         "application/json",
@@ -370,6 +399,8 @@ export default function DashboardPage() {
                   {
                     method: "GET",
                     cache: "no-store",
+                    credentials:
+                      "same-origin",
                     headers: {
                       Accept:
                         "application/json",
@@ -382,6 +413,8 @@ export default function DashboardPage() {
                   {
                     method: "GET",
                     cache: "no-store",
+                    credentials:
+                      "same-origin",
                     headers: {
                       Accept:
                         "application/json",
@@ -394,6 +427,8 @@ export default function DashboardPage() {
                   {
                     method: "GET",
                     cache: "no-store",
+                    credentials:
+                      "same-origin",
                     headers: {
                       Accept:
                         "application/json",
@@ -643,6 +678,42 @@ export default function DashboardPage() {
             ).length;
 
           /* =================================================
+             SAVINGS FINANCIAL VALUES
+          ================================================= */
+
+          const savingsBalance =
+            safeNumber(
+              savings.totalBalance,
+            );
+
+          const savingsDeposits =
+            safeNumber(
+              savings.totalDeposits,
+            );
+
+          /*
+           * Backend still calls this "adjustments".
+           *
+           * The dashboard calls it "withdrawals".
+           *
+           * Math.abs() protects the UI from legacy signed
+           * adjustment records.
+           */
+          const savingsWithdrawals =
+            Math.abs(
+              safeNumber(
+                savings.totalAdjustments,
+              ),
+            );
+
+          const savingsReversals =
+            Math.abs(
+              safeNumber(
+                savings.totalReversals,
+              ),
+            );
+
+          /* =================================================
              STATS
           ================================================= */
 
@@ -653,24 +724,16 @@ export default function DashboardPage() {
             activeMembers,
 
             savings:
-              safeNumber(
-                savings.totalBalance,
-              ),
+              savingsBalance,
 
             deposits:
-              safeNumber(
-                savings.totalDeposits,
-              ),
+              savingsDeposits,
 
-            adjustments:
-              safeNumber(
-                savings.totalAdjustments,
-              ),
+            withdrawals:
+              savingsWithdrawals,
 
             reversals:
-              safeNumber(
-                savings.totalReversals,
-              ),
+              savingsReversals,
 
             loans:
               loanCount,
@@ -904,6 +967,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setMounted(true);
+
     void loadDashboard();
   }, [
     loadDashboard,
@@ -913,22 +977,27 @@ export default function DashboardPage() {
      REFRESH
   ======================================================= */
 
-  function handleRefresh() {
-    if (
-      loading ||
-      refreshing
-    ) {
-      return;
-    }
+  const handleRefresh =
+    useCallback(() => {
+      if (
+        loading === true ||
+        refreshing === true
+      ) {
+        return;
+      }
 
-    void loadDashboard(true);
-  }
+      void loadDashboard(true);
+    }, [
+      loadDashboard,
+      loading,
+      refreshing,
+    ]);
 
   /* =======================================================
      HYDRATION GUARD
   ======================================================= */
 
-  if (!mounted) {
+  if (mounted === false) {
     return (
       <main className="min-h-[100dvh] w-full overflow-x-clip bg-[#050505] text-white">
         <TopBar />
@@ -951,424 +1020,1013 @@ export default function DashboardPage() {
       <TopBar />
 
       <div className="w-full pt-16">
-        <div className="mx-auto w-full max-w-[1800px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10 xl:px-10 2xl:px-12">
+        <div className="mx-auto w-full max-w-[1800px] px-4 py-5 sm:px-6 sm:py-8 lg:px-8 lg:py-10 xl:px-10 2xl:px-12">
 
           {/* =================================================
-              HEADER
+              MOBILE DASHBOARD
           ================================================= */}
 
-          <section className="mb-6">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-yellow-500/10 text-yellow-400">
-                    <FileText
-                      size={17}
-                      strokeWidth={1.8}
-                    />
-                  </div>
-
-                  <span className="text-xs font-medium uppercase tracking-[0.22em] text-yellow-500/60">
-                    Overview
-                  </span>
-                </div>
-
-                <h1 className="mt-3 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-                  Dashboard
-                </h1>
-
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-white/35">
-                  A clean view of GEO-SHUA
-                  members, savings, loans and
-                  account activity.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={
+          <div className="lg:hidden">
+            {loading === true ? (
+              <MobileDashboardLoading />
+            ) : (
+              <MobileDashboard
+                stats={stats}
+                activities={activities}
+                onRefresh={
                   handleRefresh
                 }
-                disabled={
-                  loading ||
-                  refreshing
+                refreshing={
+                  refreshing === true
                 }
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-4 text-sm font-medium text-white/55 transition hover:border-white/[0.14] hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 lg:w-auto"
-              >
-                <RefreshCw
-                  size={16}
-                  strokeWidth={1.8}
-                  className={
-                    refreshing
-                      ? "animate-spin"
-                      : ""
-                  }
-                />
-
-                Refresh
-              </button>
-            </div>
-          </section>
+              />
+            )}
+          </div>
 
           {/* =================================================
-              STATS
+              DESKTOP DASHBOARD
           ================================================= */}
 
-          {loading ? (
-            <DashboardLoading />
-          ) : (
-            <>
-              <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-                <StatCard
-                  title="Members"
-                  value={
-                    stats.members
-                  }
-                  subtitle={`${stats.activeMembers.toLocaleString()} active`}
-                  icon={
-                    <Users
-                      size={19}
-                      strokeWidth={1.8}
-                    />
-                  }
-                  href="/dashboard/members"
-                />
+          <div className="hidden lg:block">
 
-                <StatCard
-                  title="Savings"
-                  value={formatCurrency(
-                    stats.savings,
-                  )}
-                  subtitle="Current ledger balance"
-                  icon={
-                    <Wallet
-                      size={19}
-                      strokeWidth={1.8}
-                    />
-                  }
-                  href="/dashboard/savings"
-                />
+            {/* =================================================
+                HEADER
+            ================================================= */}
 
-                <StatCard
-                  title="Loans"
-                  value={
-                    stats.loans
-                  }
-                  subtitle={formatCurrency(
-                    stats.outstandingLoans,
-                  )}
-                  icon={
-                    <HandCoins
-                      size={19}
-                      strokeWidth={1.8}
-                    />
-                  }
-                  href="/dashboard/loans"
-                />
-
-                <StatCard
-                  title="Defaulters"
-                  value={
-                    stats.defaulters
-                  }
-                  subtitle="Members requiring attention"
-                  icon={
-                    <Bell
-                      size={19}
-                      strokeWidth={1.8}
-                    />
-                  }
-                  href="/dashboard/loans"
-                />
-              </section>
-
-              {/* =================================================
-                  FINANCIAL BREAKDOWN
-              ================================================= */}
-
-              <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <MetricCard
-                  label="Deposits"
-                  value={formatCurrency(
-                    stats.deposits,
-                  )}
-                />
-
-                <MetricCard
-                  label="Adjustments"
-                  value={formatCurrency(
-                    stats.adjustments,
-                  )}
-                />
-
-                <MetricCard
-                  label="Reversals"
-                  value={formatCurrency(
-                    stats.reversals,
-                  )}
-                />
-
-                <MetricCard
-                  label="Net Savings"
-                  value={formatCurrency(
-                    stats.savings,
-                  )}
-                />
-              </section>
-
-              {/* =================================================
-                  MAIN GRID
-              ================================================= */}
-
-              <section className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
-
-                {/* RECENT ACTIVITY */}
-
-                <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
-                  <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-4 sm:px-5">
-                    <div>
-                      <h2 className="text-sm font-semibold text-white">
-                        Recent Activity
-                      </h2>
-
-                      <p className="mt-1 text-xs text-white/30">
-                        Latest recorded activity
-                      </p>
+            <section className="mb-6">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-yellow-500/10 text-yellow-400">
+                      <FileText
+                        size={17}
+                        strokeWidth={1.8}
+                      />
                     </div>
 
-                    <span className="rounded-lg bg-white/[0.04] px-2.5 py-1 text-[10px] text-white/25">
-                      Live data
+                    <span className="text-xs font-medium uppercase tracking-[0.22em] text-yellow-500/60">
+                      Overview
                     </span>
                   </div>
 
-                  {activities.length ===
-                  0 ? (
-                    <div className="flex min-h-[180px] items-center justify-center p-6">
-                      <div className="text-center">
-                        <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-white/25">
-                          <Bell
-                            size={19}
-                            strokeWidth={1.5}
-                          />
-                        </div>
+                  <h1 className="mt-3 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+                    Dashboard
+                  </h1>
 
-                        <p className="mt-4 text-sm font-medium text-white/45">
-                          No recent activity
-                        </p>
-
-                        <p className="mt-2 text-xs text-white/25">
-                          New records will appear
-                          here automatically.
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="max-h-[300px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
-                      <div className="divide-y divide-white/[0.05]">
-                        {activities.map(
-                          (
-                            activity,
-                          ) => (
-                            <ActivityRow
-                              key={
-                                activity.id
-                              }
-                              activity={
-                                activity
-                              }
-                            />
-                          ),
-                        )}
-                      </div>
-                    </div>
-                  )}
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-white/35">
+                    A clean view of GEO-SHUA
+                    members, savings, loans and
+                    account activity.
+                  </p>
                 </div>
 
-                {/* QUICK ACCESS */}
-
-                <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
-                  <div className="border-b border-white/[0.07] px-4 py-4 sm:px-5">
-                    <h2 className="text-sm font-semibold text-white">
-                      Quick Access
-                    </h2>
-
-                    <p className="mt-1 text-xs text-white/30">
-                      Core GEO-SHUA modules
-                    </p>
-                  </div>
-
-                  <div className="grid gap-1 p-3 sm:p-4">
-                    <QuickAccess
-                      label="Members"
-                      description="Manage member records"
-                      icon={
-                        <Users
-                          size={18}
-                          strokeWidth={1.8}
-                        />
-                      }
-                      href="/dashboard/members"
-                    />
-
-                    <QuickAccess
-                      label="Savings"
-                      description="View savings records"
-                      icon={
-                        <Wallet
-                          size={18}
-                          strokeWidth={1.8}
-                        />
-                      }
-                      href="/dashboard/savings"
-                    />
-
-                    <QuickAccess
-                      label="Loans"
-                      description="Manage loans and repayments"
-                      icon={
-                        <HandCoins
-                          size={18}
-                          strokeWidth={1.8}
-                        />
-                      }
-                      href="/dashboard/loans"
-                    />
-
-                    <QuickAccess
-                      label="Notifications"
-                      description={`${stats.notifications.toLocaleString()} unread notifications`}
-                      icon={
-                        <Bell
-                          size={18}
-                          strokeWidth={1.8}
-                        />
-                      }
-                      href="/dashboard/notifications"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* =================================================
-                  MEMBER + SAVINGS
-              ================================================= */}
-
-              <section className="mt-5 grid gap-5 md:grid-cols-2">
-                <OverviewCard
-                  eyebrow="Member Overview"
-                  value={stats.members.toLocaleString()}
-                  description="Registered members"
-                  icon={
-                    <Users
-                      size={19}
-                      strokeWidth={1.8}
-                    />
+                <button
+                  type="button"
+                  onClick={
+                    handleRefresh
                   }
-                  footerLabel="Manage members"
-                  footerHref="/dashboard/members"
-                  progress={
-                    stats.members > 0
-                      ? Math.min(
-                          100,
-                          (
-                            stats.activeMembers /
-                            stats.members
-                          ) * 100,
-                        )
-                      : 0
+                  disabled={
+                    loading === true ||
+                    refreshing === true
                   }
-                  progressLabel="Active members"
-                  progressValue={
-                    stats.members > 0
-                      ? `${Math.round(
-                          (
-                            stats.activeMembers /
-                            stats.members
-                          ) * 100,
-                        )}%`
-                      : "0%"
-                  }
-                />
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-4 text-sm font-medium text-white/55 transition hover:border-white/[0.14] hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 lg:w-auto"
+                >
+                  <RefreshCw
+                    size={16}
+                    strokeWidth={1.8}
+                    className={
+                      refreshing
+                        ? "animate-spin"
+                        : ""
+                    }
+                  />
 
-                <OverviewCard
-                  eyebrow="Savings Overview"
-                  value={formatCurrency(
-                    stats.savings,
-                  )}
-                  description="Authoritative ledger balance"
-                  icon={
-                    <Wallet
-                      size={19}
-                      strokeWidth={1.8}
-                    />
-                  }
-                  footerLabel="Open savings"
-                  footerHref="/dashboard/savings"
-                  metrics={[
-                    {
-                      label:
-                        "Deposits",
-                      value:
-                        formatCurrency(
-                          stats.deposits,
-                        ),
-                    },
-                    {
-                      label:
-                        "Adjustments",
-                      value:
-                        formatCurrency(
-                          stats.adjustments,
-                        ),
-                    },
-                    {
-                      label:
-                        "Reversals",
-                      value:
-                        formatCurrency(
-                          stats.reversals,
-                        ),
-                    },
-                  ]}
-                />
-              </section>
-
-              {/* =================================================
-                  LOANS
-              ================================================= */}
-
-              <section className="mt-5">
-                <LoanOverviewCard
-                  loans={
-                    stats.loans
-                  }
-                  outstanding={
-                    stats.outstandingLoans
-                  }
-                  defaulters={
-                    stats.defaulters
-                  }
-                />
-              </section>
-
-              {/* =================================================
-                  FOOTER
-              ================================================= */}
-
-              <div className="mt-5 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-[10px] text-white/20">
-                  GEO-SHUA SACCO Management
-                </p>
-
-                <p className="text-[10px] text-white/20">
-                  Financial data sourced from domain APIs
-                </p>
+                  Refresh
+                </button>
               </div>
-            </>
-          )}
+            </section>
+
+            {/* =================================================
+                STATS
+            ================================================= */}
+
+            {loading === true ? (
+              <DashboardLoading />
+            ) : (
+              <>
+                <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+                  <StatCard
+                    title="Members"
+                    value={
+                      stats.members
+                    }
+                    subtitle={`${stats.activeMembers.toLocaleString()} active`}
+                    icon={
+                      <Users
+                        size={19}
+                        strokeWidth={1.8}
+                      />
+                    }
+                    href="/dashboard/members"
+                  />
+
+                  <StatCard
+                    title="Savings"
+                    value={formatCurrency(
+                      stats.savings,
+                    )}
+                    subtitle="Current ledger balance"
+                    icon={
+                      <Wallet
+                        size={19}
+                        strokeWidth={1.8}
+                      />
+                    }
+                    href="/dashboard/savings"
+                  />
+
+                  <StatCard
+                    title="Loans"
+                    value={
+                      stats.loans
+                    }
+                    subtitle={formatCurrency(
+                      stats.outstandingLoans,
+                    )}
+                    icon={
+                      <HandCoins
+                        size={19}
+                        strokeWidth={1.8}
+                      />
+                    }
+                    href="/dashboard/loans"
+                  />
+
+                  <StatCard
+                    title="Defaulters"
+                    value={
+                      stats.defaulters
+                    }
+                    subtitle="Members requiring attention"
+                    icon={
+                      <Bell
+                        size={19}
+                        strokeWidth={1.8}
+                      />
+                    }
+                    href="/dashboard/loans"
+                  />
+                </section>
+
+                {/* =================================================
+                    FINANCIAL BREAKDOWN
+                ================================================= */}
+
+                <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <MetricCard
+                    label="Deposits"
+                    value={formatCurrency(
+                      stats.deposits,
+                    )}
+                  />
+
+                  <MetricCard
+                    label="Withdrawals"
+                    value={formatCurrency(
+                      stats.withdrawals,
+                    )}
+                  />
+
+                  <MetricCard
+                    label="Reversals"
+                    value={formatCurrency(
+                      stats.reversals,
+                    )}
+                  />
+
+                  <MetricCard
+                    label="Net Savings"
+                    value={formatCurrency(
+                      stats.savings,
+                    )}
+                  />
+                </section>
+
+                {/* =================================================
+                    MAIN GRID
+                ================================================= */}
+
+                <section className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
+
+                  {/* RECENT ACTIVITY */}
+
+                  <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
+                    <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-4 sm:px-5">
+                      <div>
+                        <h2 className="text-sm font-semibold text-white">
+                          Recent Activity
+                        </h2>
+
+                        <p className="mt-1 text-xs text-white/30">
+                          Latest recorded activity
+                        </p>
+                      </div>
+
+                      <span className="rounded-lg bg-white/[0.04] px-2.5 py-1 text-[10px] text-white/25">
+                        Live data
+                      </span>
+                    </div>
+
+                    {activities.length ===
+                    0 ? (
+                      <div className="flex min-h-[180px] items-center justify-center p-6">
+                        <div className="text-center">
+                          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-white/25">
+                            <Bell
+                              size={19}
+                              strokeWidth={1.5}
+                            />
+                          </div>
+
+                          <p className="mt-4 text-sm font-medium text-white/45">
+                            No recent activity
+                          </p>
+
+                          <p className="mt-2 text-xs text-white/25">
+                            New records will appear
+                            here automatically.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="max-h-[300px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
+                        <div className="divide-y divide-white/[0.05]">
+                          {activities.map(
+                            (
+                              activity,
+                            ) => (
+                              <ActivityRow
+                                key={
+                                  activity.id
+                                }
+                                activity={
+                                  activity
+                                }
+                              />
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* QUICK ACCESS */}
+
+                  <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
+                    <div className="border-b border-white/[0.07] px-4 py-4 sm:px-5">
+                      <h2 className="text-sm font-semibold text-white">
+                        Quick Access
+                      </h2>
+
+                      <p className="mt-1 text-xs text-white/30">
+                        Core GEO-SHUA modules
+                      </p>
+                    </div>
+
+                    <div className="grid gap-1 p-3 sm:p-4">
+                      <QuickAccess
+                        label="Members"
+                        description="Manage member records"
+                        icon={
+                          <Users
+                            size={18}
+                            strokeWidth={1.8}
+                          />
+                        }
+                        href="/dashboard/members"
+                      />
+
+                      <QuickAccess
+                        label="Savings"
+                        description="View savings records"
+                        icon={
+                          <Wallet
+                            size={18}
+                            strokeWidth={1.8}
+                          />
+                        }
+                        href="/dashboard/savings"
+                      />
+
+                      <QuickAccess
+                        label="Loans"
+                        description="Manage loans and repayments"
+                        icon={
+                          <HandCoins
+                            size={18}
+                            strokeWidth={1.8}
+                          />
+                        }
+                        href="/dashboard/loans"
+                      />
+
+                      <QuickAccess
+                        label="Notifications"
+                        description={`${stats.notifications.toLocaleString()} unread notifications`}
+                        icon={
+                          <Bell
+                            size={18}
+                            strokeWidth={1.8}
+                          />
+                        }
+                        href="/dashboard/notifications"
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                {/* =================================================
+                    MEMBER + SAVINGS
+                ================================================= */}
+
+                <section className="mt-5 grid gap-5 md:grid-cols-2">
+                  <OverviewCard
+                    eyebrow="Member Overview"
+                    value={stats.members.toLocaleString()}
+                    description="Registered members"
+                    icon={
+                      <Users
+                        size={19}
+                        strokeWidth={1.8}
+                      />
+                    }
+                    footerLabel="Manage members"
+                    footerHref="/dashboard/members"
+                    progress={
+                      stats.members > 0
+                        ? Math.min(
+                            100,
+                            (
+                              stats.activeMembers /
+                              stats.members
+                            ) * 100,
+                          )
+                        : 0
+                    }
+                    progressLabel="Active members"
+                    progressValue={
+                      stats.members > 0
+                        ? `${Math.round(
+                            (
+                              stats.activeMembers /
+                              stats.members
+                            ) * 100,
+                          )}%`
+                        : "0%"
+                    }
+                  />
+
+                  <OverviewCard
+                    eyebrow="Savings Overview"
+                    value={formatCurrency(
+                      stats.savings,
+                    )}
+                    description="Authoritative ledger balance"
+                    icon={
+                      <Wallet
+                        size={19}
+                        strokeWidth={1.8}
+                      />
+                    }
+                    footerLabel="Open savings"
+                    footerHref="/dashboard/savings"
+                    metrics={[
+                      {
+                        label:
+                          "Deposits",
+                        value:
+                          formatCurrency(
+                            stats.deposits,
+                          ),
+                      },
+                      {
+                        label:
+                          "Withdrawals",
+                        value:
+                          formatCurrency(
+                            stats.withdrawals,
+                          ),
+                      },
+                      {
+                        label:
+                          "Reversals",
+                        value:
+                          formatCurrency(
+                            stats.reversals,
+                          ),
+                      },
+                    ]}
+                  />
+                </section>
+
+                {/* =================================================
+                    LOANS
+                ================================================= */}
+
+                <section className="mt-5">
+                  <LoanOverviewCard
+                    loans={
+                      stats.loans
+                    }
+                    outstanding={
+                      stats.outstandingLoans
+                    }
+                    defaulters={
+                      stats.defaulters
+                    }
+                  />
+                </section>
+
+                {/* =================================================
+                    FOOTER
+                ================================================= */}
+
+                <div className="mt-5 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-[10px] text-white/20">
+                    GEO-SHUA SACCO Management
+                  </p>
+
+                  <p className="text-[10px] text-white/20">
+                    Financial data sourced from domain APIs
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </main>
+  );
+}
+
+/* =========================================================
+   MOBILE DASHBOARD
+========================================================= */
+
+function MobileDashboard({
+  stats,
+  activities,
+  onRefresh,
+  refreshing,
+}: {
+  stats: DashboardStats;
+  activities: DashboardActivity[];
+  onRefresh: () => void;
+  refreshing: boolean;
+}) {
+  /*
+   * This calculation is presentation-only.
+   *
+   * The API remains authoritative through stats.savings.
+   * This gives the mobile user visibility into how the
+   * balance is constructed.
+   */
+  const calculatedSavings =
+    stats.deposits -
+    stats.withdrawals -
+    stats.reversals;
+
+  return (
+    <div className="space-y-3">
+
+      {/* =====================================================
+          HEADER
+      ===================================================== */}
+
+      <section className="flex items-center justify-between px-1 pb-1">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#1683ff] shadow-[0_0_10px_rgba(22,131,255,0.8)]" />
+
+            <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#1683ff]">
+              GEO-SHUA
+            </span>
+          </div>
+
+          <h1 className="mt-1 text-lg font-semibold tracking-tight text-white">
+            Dashboard
+          </h1>
+
+          </div>
+
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={
+            refreshing === true
+          }
+          aria-label="Refresh dashboard"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-white/55 transition active:scale-95 disabled:opacity-40"
+        >
+          <RefreshCw
+            size={16}
+            strokeWidth={1.8}
+            className={
+              refreshing
+                ? "animate-spin"
+                : ""
+            }
+          />
+        </button>
+      </section>
+
+      {/* =====================================================
+          MEMBERS
+      ===================================================== */}
+
+      <button
+        type="button"
+        onClick={() =>
+          window.location.assign(
+            "/dashboard/members",
+          )
+        }
+        className="group relative w-full overflow-hidden rounded-[22px] border border-[#1683ff]/15 bg-gradient-to-br from-[#0b1c30] via-[#081521] to-[#060b11] p-4 text-left shadow-[0_12px_35px_rgba(0,0,0,0.25)] transition active:scale-[0.99]"
+      >
+        <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-[#1683ff]/10 blur-2xl" />
+
+        <div className="relative">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1683ff]/10 text-[#4da3ff]">
+                <Users
+                  size={17}
+                  strokeWidth={1.8}
+                />
+              </div>
+
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
+                  Members
+                </p>
+
+                <p className="text-[9px] text-white/20">
+                  Membership base
+                </p>
+              </div>
+            </div>
+
+            <ArrowRight
+              size={15}
+              className="text-white/20"
+            />
+          </div>
+
+          <div className="mt-3 flex items-end justify-between">
+            <div>
+              <p className="text-[28px] font-semibold leading-none tracking-tight text-white">
+                {stats.members.toLocaleString()}
+              </p>
+
+              <p className="mt-1 text-[10px] text-white/30">
+                registered members
+              </p>
+            </div>
+
+            <div className="text-right">
+              <p className="text-sm font-semibold text-[#4da3ff]">
+                {stats.activeMembers.toLocaleString()}
+              </p>
+
+              <p className="text-[9px] uppercase tracking-[0.12em] text-white/25">
+                active
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/[0.06]">
+            <div
+              className="h-full rounded-full bg-[#1683ff] transition-all"
+              style={{
+                width: `${
+                  stats.members > 0
+                    ? Math.min(
+                        100,
+                        (
+                          stats.activeMembers /
+                          stats.members
+                        ) * 100,
+                      )
+                    : 0
+                }%`,
+              }}
+            />
+          </div>
+
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-[9px] text-white/25">
+              Active membership
+            </span>
+
+            <span className="text-[9px] font-medium text-white/40">
+              {stats.members > 0
+                ? `${Math.round(
+                    (
+                      stats.activeMembers /
+                      stats.members
+                    ) * 100,
+                  )}%`
+                : "0%"}
+            </span>
+          </div>
+        </div>
+      </button>
+
+      {/* =====================================================
+          SAVINGS
+      ===================================================== */}
+
+      <button
+        type="button"
+        onClick={() =>
+          window.location.assign(
+            "/dashboard/savings",
+          )
+        }
+        className="group relative w-full overflow-hidden rounded-[22px] border border-[#1683ff]/15 bg-gradient-to-br from-[#0a1928] via-[#07131e] to-[#060b11] p-4 text-left shadow-[0_12px_35px_rgba(0,0,0,0.25)] transition active:scale-[0.99]"
+      >
+        <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-[#1683ff]/10 blur-3xl" />
+
+        <div className="relative">
+
+          {/* HEADER */}
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1683ff]/10 text-[#4da3ff]">
+                <Wallet
+                  size={17}
+                  strokeWidth={1.8}
+                />
+              </div>
+
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
+                  Savings
+                </p>
+
+                <p className="text-[9px] text-white/20">
+                  Authoritative ledger
+                </p>
+              </div>
+            </div>
+
+            <ArrowRight
+              size={15}
+              className="text-white/20"
+            />
+          </div>
+
+          {/* BALANCE */}
+
+          <div className="mt-3">
+            <p className="truncate text-[25px] font-semibold leading-none tracking-tight text-white">
+              {formatCurrency(
+                stats.savings,
+              )}
+            </p>
+
+            <p className="mt-1 text-[10px] text-white/30">
+              current savings balance
+            </p>
+          </div>
+
+          {/* CALCULATION */}
+
+          <div className="mt-4 border-t border-white/[0.06] pt-3">
+
+            <div className="flex items-center justify-between">
+              <p className="text-[8px] font-semibold uppercase tracking-[0.12em] text-white/20">
+                Balance calculation
+              </p>
+
+              <span
+                className={
+                  Math.abs(
+                    calculatedSavings -
+                      stats.savings,
+                  ) < 0.01
+                    ? "text-[8px] font-medium text-[#4da3ff]/70"
+                    : "text-[8px] font-medium text-red-400"
+                }
+              >
+                {Math.abs(
+                  calculatedSavings -
+                    stats.savings,
+                ) < 0.01
+                  ? "Balanced"
+                  : "Check ledger"}
+              </span>
+            </div>
+
+            <div className="mt-2 space-y-1.5">
+
+              {/* DEPOSITS */}
+
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[9px] text-white/30">
+                  Deposits
+                </span>
+
+                <span className="text-[10px] font-medium text-white/55">
+                  {formatCurrency(
+                    stats.deposits,
+                  )}
+                </span>
+              </div>
+
+              {/* WITHDRAWALS */}
+
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[9px] text-white/30">
+                  − Withdrawals
+                </span>
+
+                <span className="text-[10px] font-medium text-white/50">
+                  {formatCurrency(
+                    stats.withdrawals,
+                  )}
+                </span>
+              </div>
+
+              {/* REVERSALS */}
+
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[9px] text-white/30">
+                  − Reversals
+                </span>
+
+                <span className="text-[10px] font-medium text-white/50">
+                  {formatCurrency(
+                    stats.reversals,
+                  )}
+                </span>
+              </div>
+
+              {/* CURRENT BALANCE */}
+
+              <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/[0.06] pt-2">
+                <span className="text-[9px] font-medium text-white/40">
+                  Current balance
+                </span>
+
+                <span className="text-[10px] font-semibold text-[#4da3ff]">
+                  {formatCurrency(
+                    calculatedSavings,
+                  )}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </button>
+
+      {/* =====================================================
+          LOANS
+      ===================================================== */}
+
+      <button
+        type="button"
+        onClick={() =>
+          window.location.assign(
+            "/dashboard/loans",
+          )
+        }
+        className="group relative w-full overflow-hidden rounded-[22px] border border-[#1683ff]/15 bg-gradient-to-br from-[#0a1826] via-[#07131e] to-[#060b11] p-4 text-left shadow-[0_12px_35px_rgba(0,0,0,0.25)] transition active:scale-[0.99]"
+      >
+        <div className="absolute -bottom-12 -right-10 h-32 w-32 rounded-full bg-[#1683ff]/10 blur-3xl" />
+
+        <div className="relative">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1683ff]/10 text-[#4da3ff]">
+                <HandCoins
+                  size={17}
+                  strokeWidth={1.8}
+                />
+              </div>
+
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
+                  Loans
+                </p>
+
+                <p className="text-[9px] text-white/20">
+                  Lending portfolio
+                </p>
+              </div>
+            </div>
+
+            <ArrowRight
+              size={15}
+              className="text-white/20"
+            />
+          </div>
+
+          <div className="mt-3">
+            <p className="truncate text-[25px] font-semibold leading-none tracking-tight text-white">
+              {formatCurrency(
+                stats.outstandingLoans,
+              )}
+            </p>
+
+            <p className="mt-1 text-[10px] text-white/30">
+              outstanding balance
+            </p>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/[0.06] pt-3">
+            <div>
+              <p className="text-sm font-semibold text-white/80">
+                {stats.loans.toLocaleString()}
+              </p>
+
+              <p className="mt-0.5 text-[9px] uppercase tracking-[0.12em] text-white/25">
+                Active loans
+              </p>
+            </div>
+
+            <div className="text-right">
+              <p
+                className={`text-sm font-semibold ${
+                  stats.defaulters > 0
+                    ? "text-red-400"
+                    : "text-[#4da3ff]"
+                }`}
+              >
+                {stats.defaulters.toLocaleString()}
+              </p>
+
+              <p className="mt-0.5 text-[9px] uppercase tracking-[0.12em] text-white/25">
+                Defaulters
+              </p>
+            </div>
+          </div>
+        </div>
+      </button>
+
+      {/* =====================================================
+          RECENT ACTIVITY
+      ===================================================== */}
+
+      <section className="overflow-hidden rounded-[22px] border border-white/[0.07] bg-white/[0.025]">
+        <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3.5">
+          <div>
+            <p className="text-xs font-semibold text-white/75">
+              Recent activity
+            </p>
+
+            <p className="mt-0.5 text-[9px] text-white/25">
+              Latest system records
+            </p>
+          </div>
+
+          <span className="flex items-center gap-1.5 text-[9px] text-[#4da3ff]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#1683ff]" />
+            Live
+          </span>
+        </div>
+
+        {activities.length === 0 ? (
+          <div className="px-4 py-8 text-center">
+            <Bell
+              size={18}
+              className="mx-auto text-white/20"
+            />
+
+            <p className="mt-2 text-xs text-white/35">
+              No recent activity
+            </p>
+          </div>
+        ) : (
+          <div className="max-h-[260px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10">
+            {activities
+              .slice(0, 6)
+              .map(
+                (activity) => (
+                  <MobileActivityRow
+                    key={
+                      activity.id
+                    }
+                    activity={
+                      activity
+                    }
+                  />
+                ),
+              )}
+          </div>
+        )}
+      </section>
+
+      {/* =====================================================
+          MOBILE FOOTER
+      ===================================================== */}
+
+      <div className="px-1 pb-3 pt-1 text-center">
+        <p className="text-[9px] text-white/15">
+          GEO-SHUA SACCO Management
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   MOBILE SNAPSHOT
+========================================================= */
+
+function MobileSnapshot({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-xl border border-white/[0.05] bg-white/[0.025] px-3 py-2.5">
+      <p className="truncate text-[8px] uppercase tracking-[0.1em] text-white/20">
+        {label}
+      </p>
+
+      <p className="mt-1 truncate text-xs font-semibold text-white/70">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+/* =========================================================
+   MOBILE ACTIVITY
+========================================================= */
+
+function MobileActivityRow({
+  activity,
+}: {
+  activity: DashboardActivity;
+}) {
+  const icons: Record<
+    DashboardActivity["type"],
+    ReactNode
+  > = {
+    member: (
+      <Users
+        size={14}
+        strokeWidth={1.8}
+      />
+    ),
+
+    saving: (
+      <Wallet
+        size={14}
+        strokeWidth={1.8}
+      />
+    ),
+
+    loan: (
+      <HandCoins
+        size={14}
+        strokeWidth={1.8}
+      />
+    ),
+
+    notification: (
+      <Bell
+        size={14}
+        strokeWidth={1.8}
+      />
+    ),
+  };
+
+  return (
+    <div className="flex min-w-0 items-center gap-3 border-b border-white/[0.045] px-4 py-3 last:border-b-0">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1683ff]/[0.07] text-[#4da3ff]/70">
+        {icons[activity.type]}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[10px] font-medium text-white/60">
+          {activity.title}
+        </p>
+
+        <p className="mt-0.5 truncate text-[9px] text-white/20">
+          {activity.description}
+        </p>
+      </div>
+
+      <span className="shrink-0 text-[8px] text-white/20">
+        {activity.time}
+      </span>
+    </div>
   );
 }
 
@@ -1794,7 +2452,7 @@ function ActivityRow({
 }
 
 /* =========================================================
-   LOADING
+   DESKTOP LOADING
 ========================================================= */
 
 function DashboardLoading() {
@@ -1841,6 +2499,43 @@ function DashboardLoading() {
       <section>
         <div className="h-[125px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
       </section>
+    </div>
+  );
+}
+
+/* =========================================================
+   MOBILE LOADING
+========================================================= */
+
+function MobileDashboardLoading() {
+  return (
+    <div className="animate-pulse space-y-3">
+      <div className="mb-5 flex items-center justify-between">
+        <div>
+          <div className="h-2.5 w-20 rounded bg-white/[0.06]" />
+
+          <div className="mt-2 h-5 w-28 rounded bg-white/[0.06]" />
+
+          <div className="mt-2 h-2.5 w-36 rounded bg-white/[0.04]" />
+        </div>
+
+        <div className="h-10 w-10 rounded-xl bg-white/[0.05]" />
+      </div>
+
+      {Array.from({
+        length: 3,
+      }).map(
+        (_, index) => (
+          <div
+            key={index}
+            className="h-[137px] rounded-[22px] border border-white/[0.06] bg-white/[0.025]"
+          />
+        ),
+      )}
+
+      <div className="h-[170px] rounded-[22px] border border-white/[0.06] bg-white/[0.025]" />
+
+      <div className="h-[220px] rounded-[22px] border border-white/[0.06] bg-white/[0.025]" />
     </div>
   );
 }

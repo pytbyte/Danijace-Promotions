@@ -2,7 +2,6 @@
 
 import {
   ArrowDownLeft,
-  ArrowUpRight,
   FileEdit,
   RotateCcw,
   Smartphone,
@@ -22,40 +21,44 @@ type SavingsTransactionCardProps = {
   ) => void;
 };
 
-function formatKES(
-  amount: number
-): string {
+function formatKES(amount: number): string {
   if (!Number.isFinite(amount)) {
     return "KES 0.00";
   }
 
-  return new Intl.NumberFormat(
-    "en-KE",
-    {
-      style: "currency",
-      currency: "KES",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }
-  ).format(amount);
+  return new Intl.NumberFormat("en-KE", {
+    style: "currency",
+    currency: "KES",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
 }
 
-function formatDate(
-  value: string
-): string {
+function formatDate(value: string): string {
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
     return "Unknown date";
   }
 
-  return new Intl.DateTimeFormat(
-    "en-KE",
-    {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }
-  ).format(date);
+  return new Intl.DateTimeFormat("en-KE", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("en-KE", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function getTransactionLabel(
@@ -80,7 +83,6 @@ function getSourceLabel(
   source: SavingsTransaction["source"]
 ): string {
   switch (source) {
-
     case "sms":
       return "SMS";
 
@@ -120,7 +122,7 @@ function getTypeIcon(
     case "deposit":
       return (
         <ArrowDownLeft
-          size={17}
+          size={18}
           strokeWidth={1.8}
         />
       );
@@ -128,7 +130,7 @@ function getTypeIcon(
     case "adjustment":
       return (
         <FileEdit
-          size={17}
+          size={18}
           strokeWidth={1.8}
         />
       );
@@ -136,7 +138,7 @@ function getTypeIcon(
     case "reversal":
       return (
         <RotateCcw
-          size={17}
+          size={18}
           strokeWidth={1.8}
         />
       );
@@ -144,7 +146,7 @@ function getTypeIcon(
     default:
       return (
         <Wallet
-          size={17}
+          size={18}
           strokeWidth={1.8}
         />
       );
@@ -154,12 +156,10 @@ function getTypeIcon(
 function getSourceIcon(
   source: SavingsTransaction["source"]
 ) {
-  if (
-    source === "sms"
-  ) {
+  if (source === "sms") {
     return (
       <Smartphone
-        size={13}
+        size={12}
         strokeWidth={1.8}
       />
     );
@@ -167,7 +167,7 @@ function getSourceIcon(
 
   return (
     <User
-      size={13}
+      size={12}
       strokeWidth={1.8}
     />
   );
@@ -177,10 +177,8 @@ function isReversible(
   transaction: SavingsTransaction
 ): boolean {
   return (
-    transaction.status ===
-      "confirmed" &&
-    transaction.type !==
-      "reversal"
+    transaction.status === "confirmed" &&
+    transaction.type !== "reversal"
   );
 }
 
@@ -188,10 +186,8 @@ function isAdjustable(
   transaction: SavingsTransaction
 ): boolean {
   return (
-    transaction.status ===
-      "confirmed" &&
-    transaction.type !==
-      "reversal"
+    transaction.status === "confirmed" &&
+    transaction.type !== "reversal"
   );
 }
 
@@ -200,14 +196,8 @@ export default function SavingsTransactionCard({
   onAdjust,
   onReverse,
 }: SavingsTransactionCardProps) {
-  const amount =
-    Number(transaction.amount);
-
-  const positive =
-    amount > 0;
-
-  const amountLabel =
-    `${positive ? "+" : ""}${formatKES(amount)}`;
+  const amount = Number(transaction.amount);
+  const positive = amount > 0;
 
   const canAdjust =
     isAdjustable(transaction) &&
@@ -220,106 +210,195 @@ export default function SavingsTransactionCard({
   return (
     <article
       className="
-        rounded-2xl
+        relative
+        min-h-[290px]
+        overflow-hidden
+        rounded-[24px]
         border
         border-white/[0.08]
-        bg-[#0b0b0b]
-        p-4
+        bg-[#0b0d10]
+        p-5
+        shadow-[0_12px_40px_rgba(0,0,0,0.18)]
         transition
-        hover:border-white/[0.12]
-        sm:p-5
+        active:scale-[0.995]
+        sm:p-6
       "
     >
       {/* =====================================================
-          TOP
+          SUBTLE ACCENT
       ===================================================== */}
 
-      <div className="flex items-start justify-between gap-3">
+      <div
+        className="
+          pointer-events-none
+          absolute
+          -right-16
+          -top-16
+          h-36
+          w-36
+          rounded-full
+          bg-blue-500/[0.06]
+          blur-2xl
+        "
+      />
+
+      {/* =====================================================
+          HEADER
+      ===================================================== */}
+
+      <div className="relative flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
           <div
-            className={`
+            className="
               flex
-              h-10
-              w-10
+              h-11
+              w-11
               shrink-0
               items-center
               justify-center
-              rounded-xl
-              ${
-                positive
-                  ? "bg-emerald-500/10 text-emerald-400"
-                  : "bg-red-500/10 text-red-400"
-              }
-            `}
+              rounded-2xl
+              border
+              border-blue-400/10
+              bg-blue-500/10
+              text-blue-300
+            "
           >
-            {getTypeIcon(
-              transaction.type
-            )}
+            {getTypeIcon(transaction.type)}
           </div>
 
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-white">
-              {getTransactionLabel(
-                transaction.type
-              )}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="truncate text-sm font-semibold text-white">
+                {getTransactionLabel(
+                  transaction.type
+                )}
+              </p>
 
-            <p className="mt-0.5 truncate text-xs text-white/35">
+              <span
+                className={`
+                  hidden
+                  rounded-full
+                  px-2
+                  py-0.5
+                  text-[9px]
+                  font-medium
+                  sm:inline-flex
+                  ${
+                    transaction.status === "confirmed"
+                      ? "bg-emerald-400/10 text-emerald-300"
+                      : transaction.status === "pending"
+                        ? "bg-amber-400/10 text-amber-300"
+                        : "bg-red-400/10 text-red-300"
+                  }
+                `}
+              >
+                {getStatusLabel(
+                  transaction.status
+                )}
+              </span>
+            </div>
+
+            <p className="mt-1 text-[11px] text-white/35">
               {formatDate(
+                transaction.transactionAt
+              )}{" "}
+              ·{" "}
+              {formatTime(
                 transaction.transactionAt
               )}
             </p>
           </div>
         </div>
 
+        {/* ===================================================
+            AMOUNT
+        =================================================== */}
+
         <div className="shrink-0 text-right">
           <p
             className={`
-              text-sm
+              text-lg
               font-semibold
+              tracking-tight
               ${
                 positive
-                  ? "text-emerald-400"
-                  : "text-red-400"
+                  ? "text-emerald-300"
+                  : "text-red-300"
               }
             `}
           >
-            {amountLabel}
+            {positive ? "+" : ""}
+            {formatKES(amount)}
           </p>
 
-          <p className="mt-1 text-[10px] text-white/25">
+          <span
+            className={`
+              mt-1
+              inline-flex
+              rounded-full
+              px-2
+              py-0.5
+              text-[9px]
+              font-medium
+              sm:hidden
+              ${
+                transaction.status === "confirmed"
+                  ? "bg-emerald-400/10 text-emerald-300"
+                  : transaction.status === "pending"
+                    ? "bg-amber-400/10 text-amber-300"
+                    : "bg-red-400/10 text-red-300"
+              }
+            `}
+          >
             {getStatusLabel(
               transaction.status
             )}
-          </p>
+          </span>
         </div>
       </div>
 
       {/* =====================================================
-          DETAILS
+          MEMBER
       ===================================================== */}
 
-      <div className="mt-4 grid grid-cols-2 gap-3 border-t border-white/[0.06] pt-4">
+      <div
+        className="
+          relative
+          mt-5
+          rounded-2xl
+          border
+          border-white/[0.06]
+          bg-white/[0.025]
+          px-4
+          py-3
+        "
+      >
+        <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-white/25">
+          Member
+        </p>
+
+        <p className="mt-1 truncate text-sm font-medium text-white/80">
+          {transaction.memberName ||
+            "Unknown member"}
+        </p>
+      </div>
+
+      {/* =====================================================
+          METADATA
+      ===================================================== */}
+
+      <div className="relative mt-4 grid grid-cols-2 gap-x-4 gap-y-4">
         <div className="min-w-0">
-          <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-white/20">
-            Member
-          </p>
-
-          <p className="mt-1 truncate text-xs text-white/60">
-            {transaction.memberName ||
-              "Unknown member"}
-          </p>
-        </div>
-
-        <div className="min-w-0 text-right">
           <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-white/20">
             Source
           </p>
 
-          <div className="mt-1 flex items-center justify-end gap-1 text-xs text-white/60">
-            {getSourceIcon(
-              transaction.source
-            )}
+          <div className="mt-1.5 flex items-center gap-1.5 text-xs text-white/55">
+            <span className="text-blue-300/70">
+              {getSourceIcon(
+                transaction.source
+              )}
+            </span>
 
             <span>
               {getSourceLabel(
@@ -329,25 +408,35 @@ export default function SavingsTransactionCard({
           </div>
         </div>
 
-        {transaction.reference && (
-          <div className="min-w-0">
+        {transaction.reference ? (
+          <div className="min-w-0 text-right">
             <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-white/20">
               Reference
             </p>
 
-            <p className="mt-1 truncate font-mono text-[11px] text-white/45">
+            <p className="mt-1.5 truncate font-mono text-[10px] text-white/45">
               {transaction.reference}
+            </p>
+          </div>
+        ) : (
+          <div className="text-right">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-white/20">
+              Transaction
+            </p>
+
+            <p className="mt-1.5 text-xs text-white/35">
+              Savings ledger
             </p>
           </div>
         )}
 
         {transaction.smsId && (
-          <div className="min-w-0 text-right">
+          <div className="col-span-2 min-w-0">
             <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-white/20">
               SMS ID
             </p>
 
-            <p className="mt-1 truncate font-mono text-[11px] text-white/35">
+            <p className="mt-1.5 truncate font-mono text-[10px] text-white/35">
               {transaction.smsId}
             </p>
           </div>
@@ -359,7 +448,7 @@ export default function SavingsTransactionCard({
               Reason
             </p>
 
-            <p className="mt-1 break-words text-xs leading-5 text-white/45">
+            <p className="mt-1 text-xs leading-5 text-white/45">
               {transaction.reason}
             </p>
           </div>
@@ -371,28 +460,42 @@ export default function SavingsTransactionCard({
       ===================================================== */}
 
       {(canAdjust || canReverse) && (
-        <div className="mt-4 flex items-center justify-end gap-2 border-t border-white/[0.06] pt-3">
+        <div
+          className="
+            relative
+            mt-5
+            flex
+            items-center
+            justify-end
+            gap-2
+            border-t
+            border-white/[0.06]
+            pt-3
+          "
+        >
           {canAdjust && (
             <button
               type="button"
               onClick={() =>
-                onAdjust?.(
-                  transaction
-                )
+                onAdjust?.(transaction)
               }
               className="
                 inline-flex
                 h-9
                 items-center
                 gap-1.5
-                rounded-lg
+                rounded-xl
+                border
+                border-white/[0.06]
                 px-3
                 text-xs
                 font-medium
                 text-white/45
                 transition
-                hover:bg-white/[0.05]
-                hover:text-white
+                hover:border-blue-400/20
+                hover:bg-blue-500/[0.06]
+                hover:text-blue-300
+                active:scale-[0.98]
               "
             >
               <FileEdit
@@ -408,23 +511,25 @@ export default function SavingsTransactionCard({
             <button
               type="button"
               onClick={() =>
-                onReverse?.(
-                  transaction
-                )
+                onReverse?.(transaction)
               }
               className="
                 inline-flex
                 h-9
                 items-center
                 gap-1.5
-                rounded-lg
+                rounded-xl
+                border
+                border-red-400/[0.08]
                 px-3
                 text-xs
                 font-medium
-                text-red-400/70
+                text-red-300/65
                 transition
-                hover:bg-red-500/[0.08]
-                hover:text-red-400
+                hover:border-red-400/20
+                hover:bg-red-500/[0.06]
+                hover:text-red-300
+                active:scale-[0.98]
               "
             >
               <RotateCcw

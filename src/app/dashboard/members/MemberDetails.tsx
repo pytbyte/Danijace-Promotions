@@ -1,27 +1,109 @@
 "use client";
 
 import {
-  X,
-  UserRound,
-  Phone,
+  CalendarDays,
+  CreditCard,
+  Landmark,
   Mail,
   MapPin,
-  CreditCard,
-  CalendarDays,
-  VenusAndMars,
   Pencil,
+  Phone,
+  ShieldCheck,
   Trash2,
+  UserRound,
+  VenusAndMars,
+  WalletCards,
+  X,
 } from "lucide-react";
 
-import type { Member } from "@/lib/members/types";
+import type {
+  MemberWithFinancialSummary,
+} from "@/lib/members/types";
+
+/* =========================================================
+   PROPS
+========================================================= */
 
 type MemberViewModalProps = {
-  member: Member | null;
+  member: MemberWithFinancialSummary | null;
+
   open: boolean;
+
   onClose: () => void;
-  onEdit?: (member: Member) => void;
-  onDelete?: (member: Member) => void;
+
+  onEdit?: (
+    member: MemberWithFinancialSummary
+  ) => void;
+
+  onDelete?: (
+    member: MemberWithFinancialSummary
+  ) => void;
 };
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function formatMoney(
+  value: number | null | undefined
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    !Number.isFinite(value)
+  ) {
+    return "—";
+  }
+
+  return `KSh ${value.toLocaleString("en-KE", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })}`;
+}
+
+function formatDate(
+  value: string | undefined
+) {
+  if (!value) {
+    return "—";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+
+  return date.toLocaleDateString("en-KE", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function getFullName(
+  member: MemberWithFinancialSummary
+) {
+  return [
+    member.firstName,
+    member.middleName,
+    member.lastName,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function getInitials(
+  member: MemberWithFinancialSummary
+) {
+  return `${member.firstName?.charAt(0) ?? ""}${
+    member.lastName?.charAt(0) ?? ""
+  }`.toUpperCase();
+}
+
+/* =========================================================
+   COMPONENT
+========================================================= */
 
 export default function MemberViewModal({
   member,
@@ -34,35 +116,26 @@ export default function MemberViewModal({
     return null;
   }
 
-  const fullName = [
-    member.firstName,
-    member.middleName,
-    member.lastName,
+  const fullName = getFullName(member);
+  const initials = getInitials(member);
+
+  const summary = member.financialSummary;
+  const loan = summary?.loan;
+
+  const location = [
+    member.address,
+    member.city,
+    member.county,
   ]
     .filter(Boolean)
-    .join(" ");
-
-  if (!open || !member) {
-  return null;
-}
-
-const currentMember = member;
-
-function handleEdit() {
-  onClose();
-  onEdit?.(currentMember);
-}
-
-function handleDelete() {
-  onDelete?.(currentMember);
-}
+    .join(", ");
 
   return (
     <div
       className="
         fixed
         inset-0
-        z-50
+        z-[100]
         flex
         items-center
         justify-center
@@ -70,51 +143,38 @@ function handleDelete() {
         p-4
         backdrop-blur-sm
       "
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Member profile for ${fullName}`}
     >
       <div
         className="
           flex
-          max-h-[90vh]
+          max-h-[92dvh]
           w-full
-          max-w-2xl
+          max-w-4xl
           flex-col
           overflow-hidden
-          rounded-2xl
+          rounded-3xl
           border
           border-white/[0.08]
-          bg-[#0b0b0b]
+          bg-[#0a0c0e]
           shadow-2xl
         "
       >
-        {/* =====================================================
+        {/* =================================================
             HEADER
-        ===================================================== */}
+        ================================================= */}
 
-        <div
-          className="
-            flex
-            shrink-0
-            items-center
-            justify-between
-            border-b
-            border-white/[0.07]
-            px-5
-            py-4
-          "
-        >
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-white">
-              Member Details
-            </h2>
-
-            <p className="mt-1 text-xs text-white/30">
-              View member information
+        <div className="flex shrink-0 items-center justify-between border-b border-white/[0.06] px-5 py-4 sm:px-6">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-300/60">
+              Member Profile
             </p>
+
+            <h2 className="mt-1 text-lg font-semibold tracking-tight text-white">
+              {fullName}
+            </h2>
           </div>
 
           <button
@@ -124,378 +184,543 @@ function handleDelete() {
               flex
               h-9
               w-9
-              shrink-0
               items-center
               justify-center
               rounded-xl
-              text-white/35
+              border
+              border-white/[0.06]
+              bg-white/[0.025]
+              text-white/50
               transition
               hover:bg-white/[0.06]
               hover:text-white
             "
-            aria-label="Close member details"
-            title="Close"
+            aria-label="Close member profile"
           >
-            <X
-              size={18}
-              strokeWidth={1.8}
-            />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* =====================================================
-            MEMBER PROFILE
-        ===================================================== */}
+        {/* =================================================
+            CONTENT
+        ================================================= */}
 
-        <div
-          className="
-            flex
-            shrink-0
-            items-center
-            gap-4
-            border-b
-            border-white/[0.07]
-            px-5
-            py-5
-          "
-        >
-          {member.profileImage ? (
-            <img
-              src={member.profileImage}
-              alt={fullName || "Member"}
-              className="
-                h-16
-                w-16
-                shrink-0
-                rounded-2xl
-                object-cover
-                ring-1
-                ring-white/10
-              "
-            />
-          ) : (
-            <div
-              className="
-                flex
-                h-16
-                w-16
-                shrink-0
-                items-center
-                justify-center
-                rounded-2xl
-                bg-yellow-500/10
-                text-lg
-                font-semibold
-                text-yellow-400
-              "
-            >
-              {member.firstName?.charAt(0).toUpperCase() || ""}
-              {member.lastName?.charAt(0).toUpperCase() || ""}
-            </div>
-          )}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="space-y-6 p-5 sm:p-6">
+            {/* =================================================
+                PROFILE
+            ================================================= */}
 
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-base font-semibold text-white">
-              {fullName || "Unnamed member"}
-            </h3>
+            <section className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5">
+              <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+                <div className="shrink-0">
+                  {member.profileImage ? (
+                    <img
+                      src={member.profileImage}
+                      alt={fullName}
+                      className="
+                        h-20
+                        w-20
+                        rounded-2xl
+                        object-cover
+                        ring-1
+                        ring-white/10
+                      "
+                    />
+                  ) : (
+                    <div
+                      className="
+                        flex
+                        h-20
+                        w-20
+                        items-center
+                        justify-center
+                        rounded-2xl
+                        bg-sky-400/10
+                        text-xl
+                        font-bold
+                        text-sky-300
+                        ring-1
+                        ring-sky-400/15
+                      "
+                    >
+                      {initials || (
+                        <UserRound className="h-8 w-8" />
+                      )}
+                    </div>
+                  )}
+                </div>
 
-            <p className="mt-1 truncate font-mono text-xs text-white/35">
-              {member.membershipNumber || "No membership number"}
-            </p>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-xl font-semibold text-white">
+                      {fullName}
+                    </h3>
 
-            <div className="mt-2">
-              <StatusBadge status={member.status} />
-            </div>
-          </div>
-        </div>
+                    <span
+                      className={`
+                        rounded-full
+                        px-2.5
+                        py-1
+                        text-[9px]
+                        font-semibold
+                        uppercase
+                        tracking-[0.12em]
+                        ${
+                          member.status === "active"
+                            ? "bg-emerald-400/10 text-emerald-300"
+                            : member.status ===
+                                "suspended"
+                              ? "bg-rose-400/10 text-rose-300"
+                              : "bg-white/[0.06] text-white/40"
+                        }
+                      `}
+                    >
+                      {member.status}
+                    </span>
+                  </div>
 
-        {/* =====================================================
-            DETAILS
-        ===================================================== */}
+                  <p className="mt-1 text-sm text-sky-300/70">
+                    {member.membershipNumber}
+                  </p>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          <div className="space-y-5">
-            {/* ---------------------------------------------
-                PERSONAL INFORMATION
-            --------------------------------------------- */}
+                  {member.occupation && (
+                    <p className="mt-2 text-sm text-white/40">
+                      {member.occupation}
+                    </p>
+                  )}
+
+                  <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2">
+                    <div className="flex items-center gap-2 text-xs text-white/40">
+                      <Phone className="h-3.5 w-3.5 text-sky-300/60" />
+                      {member.phone || "—"}
+                    </div>
+
+                    {member.email && (
+                      <div className="flex items-center gap-2 text-xs text-white/40">
+                        <Mail className="h-3.5 w-3.5 text-sky-300/60" />
+                        {member.email}
+                      </div>
+                    )}
+
+                    {location && (
+                      <div className="flex items-center gap-2 text-xs text-white/40">
+                        <MapPin className="h-3.5 w-3.5 text-sky-300/60" />
+                        {location}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* =================================================
+                FINANCIAL OVERVIEW
+            ================================================= */}
 
             <section>
-              <SectionTitle title="Personal Information" />
+              <SectionTitle
+                icon={
+                  <WalletCards className="h-4 w-4" />
+                }
+                title="Financial Overview"
+              />
 
-              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <DetailItem
-                  icon={<UserRound size={15} />}
-                  label="First Name"
-                  value={member.firstName}
+              <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-5">
+                <SummaryCard
+                  label="Savings"
+                  value={formatMoney(
+                    summary?.savingsBalance
+                  )}
+                  primary
                 />
 
-                <DetailItem
-                  icon={<UserRound size={15} />}
-                  label="Middle Name"
-                  value={member.middleName}
+                <SummaryCard
+                  label="Loan"
+                  value={
+                    loan
+                      ? formatMoney(
+                          loan.outstandingBalance
+                        )
+                      : "—"
+                  }
                 />
 
-                <DetailItem
-                  icon={<UserRound size={15} />}
-                  label="Last Name"
-                  value={member.lastName}
+                <SummaryCard
+                  label="Deposits"
+                  value={formatMoney(
+                    summary?.totalDeposits
+                  )}
                 />
 
-                <DetailItem
-                  icon={<VenusAndMars size={15} />}
-                  label="Gender"
-                  value={member.gender}
+                <SummaryCard
+                  label="Paid"
+                  value={
+                    loan
+                      ? formatMoney(
+                          loan.amountPaid
+                        )
+                      : "—"
+                  }
                 />
 
-                <DetailItem
-                  icon={<CalendarDays size={15} />}
-                  label="Join Date"
-                  value={formatDate(member.joinDate)}
-                />
-
-                <DetailItem
-                  icon={<CreditCard size={15} />}
-                  label="National ID"
-                  value={member.nationalId}
+                <SummaryCard
+                  label="Fines"
+                  value={
+                    loan
+                      ? formatMoney(
+                          loan.totalFines
+                        )
+                      : "—"
+                  }
                 />
               </div>
             </section>
 
-            {/* ---------------------------------------------
-                CONTACT INFORMATION
-            --------------------------------------------- */}
+            {/* =================================================
+                LOAN DETAILS
+            ================================================= */}
 
-            <section>
-              <SectionTitle title="Contact Information" />
-
-              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <DetailItem
-                  icon={<Phone size={15} />}
-                  label="Phone"
-                  value={member.phone}
-                />
-
-                <DetailItem
-                  icon={<Mail size={15} />}
-                  label="Email"
-                  value={member.email}
-                />
-
-                <DetailItem
-                  icon={<MapPin size={15} />}
-                  label="Address"
-                  value={member.address}
-                />
-
-                <DetailItem
-                  icon={<MapPin size={15} />}
-                  label="City"
-                  value={member.city}
-                />
-
-                <DetailItem
-                  icon={<MapPin size={15} />}
-                  label="County"
-                  value={member.county}
-                />
-              </div>
-            </section>
-
-            {/* ---------------------------------------------
-                MEMBERSHIP INFORMATION
-            --------------------------------------------- */}
-
-            <section>
-              <SectionTitle title="Membership Information" />
-
-              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <DetailItem
-                  icon={<CreditCard size={15} />}
-                  label="Membership No."
-                  value={member.membershipNumber}
-                />
-
-                <DetailItem
-                  icon={<CalendarDays size={15} />}
-                  label="Join Date"
-                  value={formatDate(member.joinDate)}
-                />
-
-                <DetailItem
-                  icon={<UserRound size={15} />}
-                  label="Occupation"
-                  value={member.occupation}
-                />
-
-                <DetailItem
-                  icon={<UserRound size={15} />}
-                  label="Status"
-                  value={formatStatus(member.status)}
-                />
-              </div>
-            </section>
-
-            {/* ---------------------------------------------
-                NEXT OF KIN
-            --------------------------------------------- */}
-
-            {(member.nextOfKinName ||
-              member.nextOfKinPhone ||
-              member.nextOfKinRelationship) && (
+            {loan && (
               <section>
-                <SectionTitle title="Next of Kin" />
+                <SectionTitle
+                  icon={
+                    <Landmark className="h-4 w-4" />
+                  }
+                  title="Loan Details"
+                />
 
-                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <DetailItem
-                    icon={<UserRound size={15} />}
-                    label="Name"
-                    value={member.nextOfKinName}
-                  />
+                <div className="mt-3 rounded-2xl border border-sky-400/10 bg-sky-400/[0.035] p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-white/25">
+                        Loan Number
+                      </p>
 
-                  <DetailItem
-                    icon={<Phone size={15} />}
-                    label="Phone"
-                    value={member.nextOfKinPhone}
-                  />
+                      <p className="mt-1 text-sm font-semibold text-white">
+                        {loan.loanNumber}
+                      </p>
+                    </div>
 
-                  <DetailItem
-                    icon={<UserRound size={15} />}
-                    label="Relationship"
-                    value={member.nextOfKinRelationship}
-                  />
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-sky-400/10 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-sky-300">
+                        {loan.status}
+                      </span>
+
+                      <span className="rounded-full bg-white/[0.05] px-2.5 py-1 text-[9px] font-medium text-white/40">
+                        Fine: {loan.fineStatus}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-2 gap-4 md:grid-cols-4">
+                    <DetailValue
+                      label="Principal"
+                      value={formatMoney(
+                        loan.principal
+                      )}
+                    />
+
+                    <DetailValue
+                      label="Total Due"
+                      value={formatMoney(
+                        loan.totalDue
+                      )}
+                    />
+
+                    <DetailValue
+                      label="Amount Paid"
+                      value={formatMoney(
+                        loan.amountPaid
+                      )}
+                    />
+
+                    <DetailValue
+                      label="Outstanding"
+                      value={formatMoney(
+                        loan.outstandingBalance
+                      )}
+                    />
+                  </div>
+
+                  <div className="mt-5 border-t border-white/[0.06] pt-4">
+                    <DetailValue
+                      label="First Due Date"
+                      value={formatDate(
+                        loan.firstDueDate
+                      )}
+                    />
+                  </div>
                 </div>
               </section>
             )}
 
-            {/* ---------------------------------------------
+            {/* =================================================
+                PERSONAL INFORMATION
+            ================================================= */}
+
+            <InfoSection title="Personal Information">
+              <DetailValue
+                label="First Name"
+                value={member.firstName}
+              />
+
+              <DetailValue
+                label="Middle Name"
+                value={member.middleName}
+              />
+
+              <DetailValue
+                label="Last Name"
+                value={member.lastName}
+              />
+
+              <DetailValue
+                label="Gender"
+                value={member.gender}
+              />
+
+              <DetailValue
+                label="Date of Birth"
+                value={formatDate(
+                  member.dateOfBirth
+                )}
+              />
+
+              <DetailValue
+                label="National ID"
+                value={member.nationalId}
+              />
+            </InfoSection>
+
+            {/* =================================================
+                CONTACT INFORMATION
+            ================================================= */}
+
+            <InfoSection title="Contact Information">
+              <DetailValue
+                label="Phone"
+                value={member.phone}
+                icon={
+                  <Phone className="h-3.5 w-3.5" />
+                }
+              />
+
+              <DetailValue
+                label="Email"
+                value={member.email}
+                icon={
+                  <Mail className="h-3.5 w-3.5" />
+                }
+              />
+
+              <DetailValue
+                label="Address"
+                value={member.address}
+                icon={
+                  <MapPin className="h-3.5 w-3.5" />
+                }
+              />
+
+              <DetailValue
+                label="City"
+                value={member.city}
+              />
+
+              <DetailValue
+                label="County"
+                value={member.county}
+              />
+
+              <DetailValue
+                label="Occupation"
+                value={member.occupation}
+              />
+            </InfoSection>
+
+            {/* =================================================
+                MEMBERSHIP INFORMATION
+            ================================================= */}
+
+            <InfoSection title="Membership Information">
+              <DetailValue
+                label="Membership Number"
+                value={member.membershipNumber}
+                icon={
+                  <CreditCard className="h-3.5 w-3.5" />
+                }
+              />
+
+              <DetailValue
+                label="Join Date"
+                value={formatDate(
+                  member.joinDate
+                )}
+                icon={
+                  <CalendarDays className="h-3.5 w-3.5" />
+                }
+              />
+
+              <DetailValue
+                label="Status"
+                value={member.status}
+              />
+            </InfoSection>
+
+            {/* =================================================
+                NEXT OF KIN
+            ================================================= */}
+
+            <InfoSection title="Next of Kin">
+              <DetailValue
+                label="Name"
+                value={member.nextOfKinName}
+              />
+
+              <DetailValue
+                label="Phone"
+                value={member.nextOfKinPhone}
+              />
+
+              <DetailValue
+                label="Relationship"
+                value={
+                  member.nextOfKinRelationship
+                }
+              />
+            </InfoSection>
+
+            {/* =================================================
                 RECORD INFORMATION
-            --------------------------------------------- */}
+            ================================================= */}
 
-            <section>
-              <SectionTitle title="Record Information" />
+            <InfoSection title="Record Information">
+              <DetailValue
+                label="Created By"
+                value={member.createdBy}
+                icon={
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                }
+              />
 
-              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <DetailItem
-                  icon={<CalendarDays size={15} />}
-                  label="Created"
-                  value={formatDate(member.createdAt)}
+              <DetailValue
+                label="Created At"
+                value={formatDate(
+                  member.createdAt
+                )}
+              />
+
+              <DetailValue
+                label="Updated By"
+                value={member.updatedBy}
+              />
+
+              <DetailValue
+                label="Updated At"
+                value={formatDate(
+                  member.updatedAt
+                )}
+              />
+            </InfoSection>
+
+            {/* =================================================
+                NOTES
+            ================================================= */}
+
+            {member.notes && (
+              <section>
+                <SectionTitle
+                  icon={
+                    <VenusAndMars className="h-4 w-4" />
+                  }
+                  title="Notes"
                 />
 
-                <DetailItem
-                  icon={<CalendarDays size={15} />}
-                  label="Updated"
-                  value={formatDate(member.updatedAt)}
-                />
-
-                <DetailItem
-                  icon={<UserRound size={15} />}
-                  label="Created By"
-                  value={member.createdBy}
-                />
-              </div>
-            </section>
+                <div className="mt-3 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+                  <p className="whitespace-pre-wrap text-sm leading-6 text-white/50">
+                    {member.notes}
+                  </p>
+                </div>
+              </section>
+            )}
           </div>
         </div>
 
-        {/* =====================================================
-            FOOTER ACTIONS
-        ===================================================== */}
+        {/* =================================================
+            FOOTER
+        ================================================= */}
 
-        <div
-          className="
-            flex
-            shrink-0
-            flex-col
-            gap-2
-            border-t
-            border-white/[0.07]
-            p-4
-            sm:flex-row
-          "
-        >
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] px-5 py-4 sm:px-6">
           <button
             type="button"
             onClick={onClose}
             className="
-              flex
-              h-10
-              flex-1
-              items-center
-              justify-center
               rounded-xl
-              bg-white/[0.04]
+              border
+              border-white/[0.07]
+              bg-white/[0.025]
               px-4
+              py-2.5
               text-xs
               font-medium
               text-white/55
               transition
-              hover:bg-white/[0.07]
+              hover:bg-white/[0.05]
               hover:text-white
             "
           >
             Close
           </button>
 
-          {onEdit && (
-            <button
-              type="button"
-              onClick={handleEdit}
-              className="
-                flex
-                h-10
-                flex-1
-                items-center
-                justify-center
-                gap-2
-                rounded-xl
-                bg-yellow-500/[0.08]
-                px-4
-                text-xs
-                font-medium
-                text-yellow-400
-                transition
-                hover:bg-yellow-500/15
-              "
-            >
-              <Pencil
-                size={15}
-                strokeWidth={1.8}
-              />
+          <div className="flex items-center gap-2">
+            {onEdit && (
+              <button
+                type="button"
+                onClick={() => onEdit(member)}
+                className="
+                  flex
+                  items-center
+                  gap-2
+                  rounded-xl
+                  bg-sky-400/10
+                  px-4
+                  py-2.5
+                  text-xs
+                  font-medium
+                  text-sky-300
+                  transition
+                  hover:bg-sky-400/15
+                "
+              >
+                <Pencil className="h-3.5 w-3.5" />
+                Edit
+              </button>
+            )}
 
-              Edit Member
-            </button>
-          )}
-
-          {onDelete && (
-            <button
-              type="button"
-              onClick={handleDelete}
-              className="
-                flex
-                h-10
-                items-center
-                justify-center
-                gap-2
-                rounded-xl
-                bg-red-500/[0.06]
-                px-4
-                text-xs
-                font-medium
-                text-red-400/80
-                transition
-                hover:bg-red-500/10
-                hover:text-red-400
-                sm:flex-none
-              "
-            >
-              <Trash2
-                size={15}
-                strokeWidth={1.8}
-              />
-
-              Delete
-            </button>
-          )}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={() => onDelete(member)}
+                className="
+                  flex
+                  items-center
+                  gap-2
+                  rounded-xl
+                  bg-rose-400/[0.07]
+                  px-4
+                  py-2.5
+                  text-xs
+                  font-medium
+                  text-rose-300
+                  transition
+                  hover:bg-rose-400/10
+                "
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -507,190 +732,127 @@ function handleDelete() {
 ========================================================= */
 
 function SectionTitle({
+  icon,
   title,
 }: {
+  icon: React.ReactNode;
   title: string;
 }) {
   return (
-    <div className="flex items-center gap-3">
-      <div className="h-px flex-1 bg-white/[0.06]" />
-
-      <span
-        className="
-          shrink-0
-          text-[9px]
-          font-semibold
-          uppercase
-          tracking-[0.16em]
-          text-white/25
-        "
-      >
-        {title}
+    <div className="flex items-center gap-2">
+      <span className="text-sky-300/70">
+        {icon}
       </span>
 
-      <div className="h-px flex-1 bg-white/[0.06]" />
+      <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-white/40">
+        {title}
+      </h3>
     </div>
   );
 }
 
 /* =========================================================
-   DETAIL ITEM
+   SUMMARY CARD
 ========================================================= */
 
-function DetailItem({
-  icon,
+function SummaryCard({
   label,
   value,
+  primary = false,
 }: {
-  icon: React.ReactNode;
   label: string;
-  value?: string | null;
+  value: string;
+  primary?: boolean;
 }) {
   return (
     <div
-      className="
-        min-w-0
-        rounded-xl
+      className={`
+        rounded-2xl
         border
-        border-white/[0.06]
-        bg-white/[0.02]
-        p-3
-      "
+        p-4
+        ${
+          primary
+            ? "border-sky-400/10 bg-sky-400/[0.045]"
+            : "border-white/[0.06] bg-white/[0.02]"
+        }
+      `}
     >
-      <div className="flex items-center gap-2 text-white/25">
-        {icon}
-
-        <span
-          className="
-            truncate
-            text-[9px]
-            font-medium
-            uppercase
-            tracking-[0.14em]
-          "
-        >
-          {label}
-        </span>
-      </div>
+      <p className="text-[9px] font-medium uppercase tracking-[0.12em] text-white/25">
+        {label}
+      </p>
 
       <p
-        className="
+        className={`
           mt-2
-          break-words
-          text-xs
-          leading-5
-          text-white/65
-        "
+          text-sm
+          font-semibold
+          ${
+            primary
+              ? "text-sky-200"
+              : "text-white/75"
+          }
+        `}
       >
-        {value || "—"}
+        {value}
       </p>
     </div>
   );
 }
 
 /* =========================================================
-   STATUS BADGE
+   INFO SECTION
 ========================================================= */
 
-function StatusBadge({
-  status,
+function InfoSection({
+  title,
+  children,
 }: {
-  status: Member["status"];
+  title: string;
+  children: React.ReactNode;
 }) {
-  const styles: Record<Member["status"], string> = {
-    active:
-      "bg-emerald-500/10 text-emerald-400 ring-emerald-500/10",
-
-    inactive:
-      "bg-white/[0.06] text-white/45 ring-white/[0.06]",
-
-    suspended:
-      "bg-red-500/10 text-red-400 ring-red-500/10",
-  };
-
-  const labels: Record<Member["status"], string> = {
-    active: "Active",
-    inactive: "Inactive",
-    suspended: "Suspended",
-  };
-
-  const dots: Record<Member["status"], string> = {
-    active: "bg-emerald-400",
-    inactive: "bg-white/30",
-    suspended: "bg-red-400",
-  };
-
   return (
-    <span
-      className={`
-        inline-flex
-        items-center
-        rounded-lg
-        px-2
-        py-1
-        text-[9px]
-        font-medium
-        ring-1
-        ${styles[status]}
-      `}
-    >
-      <span
-        className={`
-          mr-1.5
-          h-1.5
-          w-1.5
-          rounded-full
-          ${dots[status]}
-        `}
-      />
+    <section>
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-white/35">
+        {title}
+      </h3>
 
-      {labels[status]}
-    </span>
+      <div className="grid grid-cols-1 gap-x-6 gap-y-4 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5 sm:grid-cols-2 lg:grid-cols-3">
+        {children}
+      </div>
+    </section>
   );
 }
 
 /* =========================================================
-   STATUS FORMATTER
+   DETAIL VALUE
 ========================================================= */
 
-function formatStatus(
-  status: Member["status"]
-) {
-  switch (status) {
-    case "active":
-      return "Active";
+function DetailValue({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value?: string | null;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-1.5">
+        {icon && (
+          <span className="text-sky-300/50">
+            {icon}
+          </span>
+        )}
 
-    case "inactive":
-      return "Inactive";
+        <p className="text-[9px] uppercase tracking-[0.1em] text-white/25">
+          {label}
+        </p>
+      </div>
 
-    case "suspended":
-      return "Suspended";
-
-    default:
-      return "—";
-  }
-}
-
-/* =========================================================
-   DATE FORMATTER
-========================================================= */
-
-function formatDate(
-  value?: string | null
-) {
-  if (!value) {
-    return "—";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "—";
-  }
-
-  return new Intl.DateTimeFormat("en-KE", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(date);
+      <p className="mt-1 truncate text-sm text-white/60">
+        {value || "—"}
+      </p>
+    </div>
+  );
 }

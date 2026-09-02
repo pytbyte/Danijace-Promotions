@@ -1,9 +1,10 @@
+
 "use client";
 
 import {
   AlertCircle,
   ArrowDownLeft,
-  ArrowUpRight,
+  ArrowRight,
   FileEdit,
   Loader2,
   RefreshCw,
@@ -19,9 +20,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 
 import TopBar from "@/components/dashboard/TopBar";
+
 import SavingsForm from "@/components/dashboard/savings/SavingsForm";
 import SavingsHeader from "@/components/dashboard/savings/SavingsHeader";
 import SavingsSearch, {
@@ -37,7 +40,9 @@ import type { SavingsTransaction } from "@/lib/savings/types";
 ========================================================= */
 
 const SUMMARY_ENDPOINT = "/api/savings/summary";
-const TRANSACTIONS_ENDPOINT = "/api/savings/transactions";
+
+const TRANSACTIONS_ENDPOINT =
+  "/api/savings/transactions";
 
 const API_PAGE_LIMIT = 100;
 
@@ -60,170 +65,97 @@ type SummaryData = {
   memberCount: number;
 };
 
-type SummaryApiResponse = {
-  success?: boolean;
-  data?: Partial<SummaryData> | null;
-  error?: string;
-};
+type ActionType =
+  | "adjust"
+  | "reverse";
 
-type TransactionPageData = {
-  transactions?: unknown;
-  total?: unknown;
-  page?: unknown;
-  limit?: unknown;
-  totalPages?: unknown;
-};
-
-type TransactionsApiResponse = {
-  success?: boolean;
-  data?: TransactionPageData | unknown[] | null;
-  transactions?: unknown;
-  total?: unknown;
-  page?: unknown;
-  limit?: unknown;
-  totalPages?: unknown;
-  error?: string;
-};
-
-type TransactionPageResult = {
-  transactions: SavingsTransaction[];
-  total: number;
+type PaginationData = {
   page: number;
   limit: number;
+  total: number;
   totalPages: number;
 };
 
-type ActionApiResponse = {
-  success?: boolean;
-  message?: string;
-  error?: string;
-  transaction?: unknown;
-  data?: unknown;
-};
-
-type ActionType = "adjust" | "reverse";
-
-/* =========================================================
-   DEFAULT SUMMARY
-========================================================= */
-
-const DEFAULT_SUMMARY: SummaryData = {
-  totalBalance: 0,
-  totalDeposits: 0,
-  totalAdjustments: 0,
-  totalReversals: 0,
-  memberCount: 0,
+type TransactionPage = {
+  transactions: SavingsTransaction[];
+  pagination: PaginationData;
 };
 
 /* =========================================================
    HELPERS
 ========================================================= */
 
-function safeNumber(value: unknown): number {
-  if (
-    typeof value === "number" &&
-    Number.isFinite(value)
-  ) {
-    return value;
-  }
+function safeNumber(
+  value: unknown,
+): number {
+  const number = Number(value);
 
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-
-    if (!trimmed) {
-      return 0;
-    }
-
-    const parsed = Number(trimmed);
-
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  return 0;
+  return Number.isFinite(number)
+    ? number
+    : 0;
 }
 
 function safePositiveInteger(
   value: unknown,
-  fallback: number
 ): number {
-  const number = safeNumber(value);
+  const number = Number(value);
 
   if (
-    Number.isInteger(number) &&
-    number > 0
+    !Number.isInteger(number) ||
+    number < 0
   ) {
-    return number;
+    return 0;
   }
 
-  return fallback;
+  return number;
 }
 
-function normalizeDate(value: unknown): string {
-  if (
-    typeof value === "string" &&
-    value.trim()
-  ) {
-    const date = new Date(value);
-
-    if (!Number.isNaN(date.getTime())) {
-      return date.toISOString();
-    }
+function normalizeDate(
+  value: unknown,
+): string {
+  if (value instanceof Date) {
+    return value.toISOString();
   }
 
   if (
-    typeof value === "number" &&
-    Number.isFinite(value)
+    typeof value === "string"
   ) {
     const date = new Date(value);
 
-    if (!Number.isNaN(date.getTime())) {
+    if (
+      !Number.isNaN(
+        date.getTime(),
+      )
+    ) {
       return date.toISOString();
     }
+
+    return value;
   }
 
   if (
-    value &&
-    typeof value === "object"
+    typeof value === "number"
   ) {
-    const objectValue =
-      value as {
-        $date?: unknown;
-      };
+    const date = new Date(value);
 
     if (
-      typeof objectValue.$date === "string" &&
-      objectValue.$date.trim()
+      !Number.isNaN(
+        date.getTime(),
+      )
     ) {
-      const date = new Date(
-        objectValue.$date
-      );
-
-      if (!Number.isNaN(date.getTime())) {
-        return date.toISOString();
-      }
-    }
-
-    if (
-      typeof objectValue.$date === "number" &&
-      Number.isFinite(objectValue.$date)
-    ) {
-      const date = new Date(
-        objectValue.$date
-      );
-
-      if (!Number.isNaN(date.getTime())) {
-        return date.toISOString();
-      }
+      return date.toISOString();
     }
   }
 
   return new Date(0).toISOString();
 }
 
+/* =========================================================
+   TRANSACTION NORMALIZER
+========================================================= */
+
 function normalizeTransaction(
-  value: unknown
+  value: unknown,
 ): SavingsTransaction | null {
   if (
     !value ||
@@ -233,18 +165,18 @@ function normalizeTransaction(
   }
 
   const raw =
-    value as Record<string, unknown>;
+    value as Partial<SavingsTransaction> & {
+      _id?: unknown;
+    };
+
+  const rawId =
+    raw.id ??
+    raw._id;
 
   if (
-    typeof raw.id !== "string" ||
-    !raw.id.trim()
-  ) {
-    return null;
-  }
-
-  if (
-    typeof raw.memberId !== "string" ||
-    !raw.memberId.trim()
+    rawId === undefined ||
+    rawId === null ||
+    String(rawId).trim() === ""
   ) {
     return null;
   }
@@ -252,231 +184,355 @@ function normalizeTransaction(
   return {
     ...raw,
 
-    id: raw.id,
+    id: String(rawId),
 
-    memberId: raw.memberId,
+    memberId: String(
+      raw.memberId ?? "",
+    ),
 
-    memberName:
-      typeof raw.memberName === "string"
-        ? raw.memberName
-        : "",
+    memberName: String(
+      raw.memberName ??
+        "Unknown member",
+    ),
 
     amount: safeNumber(
-      raw.amount
+      raw.amount,
     ),
+
+    reference:
+      raw.reference ===
+        undefined ||
+      raw.reference === null
+        ? undefined
+        : String(
+            raw.reference,
+          ),
+
+    smsId:
+      raw.smsId === undefined ||
+      raw.smsId === null
+        ? undefined
+        : String(
+            raw.smsId,
+          ),
+
+    sourceReference:
+      raw.sourceReference ===
+        undefined ||
+      raw.sourceReference === null
+        ? undefined
+        : String(
+            raw.sourceReference,
+          ),
+
+    reason:
+      raw.reason === undefined ||
+      raw.reason === null
+        ? undefined
+        : String(
+            raw.reason,
+          ),
+
+    relatedTransactionId:
+      raw.relatedTransactionId ===
+        undefined ||
+      raw.relatedTransactionId === null
+        ? undefined
+        : String(
+            raw.relatedTransactionId,
+          ),
 
     transactionAt:
       normalizeDate(
-        raw.transactionAt
+        raw.transactionAt,
       ),
 
     createdAt:
       normalizeDate(
-        raw.createdAt
+        raw.createdAt,
       ),
 
     updatedAt:
       normalizeDate(
-        raw.updatedAt
+        raw.updatedAt,
       ),
   } as SavingsTransaction;
 }
 
-function extractTransactions(
-  result: TransactionsApiResponse
-): SavingsTransaction[] {
-  let source: unknown[] = [];
+/* =========================================================
+   OBJECT HELPERS
+========================================================= */
 
+function asRecord(
+  value: unknown,
+): Record<
+  string,
+  unknown
+> | null {
   if (
-    Array.isArray(result.data)
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
   ) {
-    source = result.data;
-  } else if (
-    result.data &&
-    typeof result.data === "object" &&
-    !Array.isArray(result.data)
-  ) {
-    const data =
-      result.data as TransactionPageData;
+    return value as Record<
+      string,
+      unknown
+    >;
+  }
+
+  return null;
+}
+
+/* =========================================================
+   JSON RESPONSE HELPER
+
+   Protects the UI from HTML responses such as a 404 page.
+========================================================= */
+
+async function readJsonResponse(
+  response: Response,
+): Promise<Record<string, unknown>> {
+  const text =
+    await response.text();
+
+  if (!text.trim()) {
+    return {};
+  }
+
+  try {
+    const parsed =
+      JSON.parse(text);
 
     if (
-      Array.isArray(
-        data.transactions
+      parsed &&
+      typeof parsed === "object"
+    ) {
+      return parsed as Record<
+        string,
+        unknown
+      >;
+    }
+
+    return {};
+  } catch {
+    throw new Error(
+      `Server returned an invalid response (${response.status}).`,
+    );
+  }
+}
+
+/* =========================================================
+   EXTRACT TRANSACTIONS
+========================================================= */
+
+function extractTransactions(
+  payload: unknown,
+): SavingsTransaction[] {
+  const root =
+    asRecord(payload);
+
+  if (!root) {
+    return [];
+  }
+
+  const data =
+    asRecord(root.data);
+
+  const nestedData =
+    data
+      ? asRecord(data.data)
+      : null;
+
+  const result =
+    asRecord(root.result);
+
+  const nestedResult =
+    result
+      ? asRecord(result.data)
+      : null;
+
+  const candidates: unknown[] = [
+    root.transactions,
+    data?.transactions,
+    nestedData?.transactions,
+    result?.transactions,
+    nestedResult?.transactions,
+    root.data,
+  ];
+
+  for (
+    const candidate of
+      candidates
+  ) {
+    if (
+      !Array.isArray(
+        candidate,
       )
     ) {
-      source =
-        data.transactions;
+      continue;
+    }
+
+    return candidate
+      .map(
+        normalizeTransaction,
+      )
+      .filter(
+        (
+          transaction,
+        ): transaction is SavingsTransaction =>
+          transaction !==
+          null,
+      );
+  }
+
+  return [];
+}
+
+/* =========================================================
+   EXTRACT PAGINATION
+========================================================= */
+
+function extractPagination(
+  payload: unknown,
+): PaginationData {
+  const fallback: PaginationData = {
+    page: 1,
+    limit:
+      API_PAGE_LIMIT,
+    total: 0,
+    totalPages: 1,
+  };
+
+  const root =
+    asRecord(payload);
+
+  if (!root) {
+    return fallback;
+  }
+
+  const data =
+    asRecord(root.data);
+
+  const nestedData =
+    data
+      ? asRecord(data.data)
+      : null;
+
+  const result =
+    asRecord(root.result);
+
+  const nestedResult =
+    result
+      ? asRecord(result.data)
+      : null;
+
+  const paginationCandidates:
+    unknown[] = [
+      root.pagination,
+      data?.pagination,
+      nestedData?.pagination,
+      result?.pagination,
+      nestedResult?.pagination,
+    ];
+
+  let pagination:
+    | Record<
+        string,
+        unknown
+      >
+    | null = null;
+
+  for (
+    const candidate of
+      paginationCandidates
+  ) {
+    const record =
+      asRecord(candidate);
+
+    if (record) {
+      pagination = record;
+      break;
     }
   }
 
-  if (
-    source.length === 0 &&
-    Array.isArray(
-      result.transactions
-    )
-  ) {
-    source =
-      result.transactions;
+  if (!pagination) {
+    return fallback;
   }
 
-  return source
-    .map(normalizeTransaction)
-    .filter(
-      (
-        transaction
-      ): transaction is SavingsTransaction =>
-        transaction !== null
-    );
-}
-
-function extractPagination(
-  result: TransactionsApiResponse
-): {
-  total: number;
-  page: number;
-  limit: number;
-  totalPages: number;
-} {
-  let total: unknown;
-  let page: unknown;
-  let limit: unknown;
-  let totalPages: unknown;
-
-  if (
-    result.data &&
-    typeof result.data === "object" &&
-    !Array.isArray(result.data)
-  ) {
-    const data =
-      result.data as TransactionPageData;
-
-    total = data.total;
-    page = data.page;
-    limit = data.limit;
-    totalPages =
-      data.totalPages;
-  }
-
-  if (
-    total === undefined
-  ) {
-    total = result.total;
-  }
-
-  if (
-    page === undefined
-  ) {
-    page = result.page;
-  }
-
-  if (
-    limit === undefined
-  ) {
-    limit = result.limit;
-  }
-
-  if (
-    totalPages === undefined
-  ) {
-    totalPages =
-      result.totalPages;
-  }
-
-  const safeLimit =
+  const page =
     safePositiveInteger(
-      limit,
-      API_PAGE_LIMIT
+      pagination.page,
     );
 
-  const safeTotal =
-    Math.max(
-      0,
-      Math.floor(
-        safeNumber(total)
-      )
-    );
-
-  const safePage =
+  const limit =
     safePositiveInteger(
-      page,
-      1
+      pagination.limit,
     );
 
-  const calculatedTotalPages =
-    safeTotal > 0
-      ? Math.ceil(
-          safeTotal /
-            safeLimit
-        )
-      : 1;
+  const total =
+    safePositiveInteger(
+      pagination.total,
+    );
 
-  const safeTotalPages =
-    Math.max(
-      1,
-      safePositiveInteger(
-        totalPages,
-        calculatedTotalPages
-      )
+  const totalPages =
+    safePositiveInteger(
+      pagination.totalPages,
     );
 
   return {
-    total: safeTotal,
-    page: safePage,
-    limit: safeLimit,
+    page:
+      page > 0
+        ? page
+        : 1,
+
+    limit:
+      limit > 0
+        ? limit
+        : API_PAGE_LIMIT,
+
+    total,
+
     totalPages:
-      safeTotalPages,
+      totalPages > 0
+        ? totalPages
+        : 1,
   };
 }
 
+/* =========================================================
+   SORT
+========================================================= */
+
 function sortTransactions(
-  transactions: SavingsTransaction[]
+  transactions: SavingsTransaction[],
 ): SavingsTransaction[] {
   return [
     ...transactions,
   ].sort(
     (a, b) => {
-      const aTime =
+      const dateA =
         new Date(
-          a.transactionAt
+          a.transactionAt,
         ).getTime();
 
-      const bTime =
+      const dateB =
         new Date(
-          b.transactionAt
+          b.transactionAt,
         ).getTime();
 
-      const aValid =
-        !Number.isNaN(
-          aTime
-        );
-
-      const bValid =
-        !Number.isNaN(
-          bTime
-        );
-
-      if (
-        !aValid &&
-        !bValid
-      ) {
-        return 0;
-      }
-
-      if (!aValid) {
-        return 1;
-      }
-
-      if (!bValid) {
-        return -1;
-      }
-
-      return bTime - aTime;
-    }
+      return (
+        dateB - dateA
+      );
+    },
   );
 }
 
+/* =========================================================
+   DEDUPLICATION
+========================================================= */
+
 function deduplicateTransactions(
-  transactions: SavingsTransaction[]
+  transactions: SavingsTransaction[],
 ): SavingsTransaction[] {
   const map =
     new Map<
@@ -489,24 +545,28 @@ function deduplicateTransactions(
       transactions
   ) {
     if (
-      !map.has(
-        transaction.id
-      )
+      !transaction.id
     ) {
-      map.set(
-        transaction.id,
-        transaction
-      );
+      continue;
     }
+
+    map.set(
+      transaction.id,
+      transaction,
+    );
   }
 
   return Array.from(
-    map.values()
+    map.values(),
   );
 }
 
+/* =========================================================
+   ABORT
+========================================================= */
+
 function isAbortError(
-  error: unknown
+  error: unknown,
 ): boolean {
   return (
     error instanceof
@@ -516,120 +576,233 @@ function isAbortError(
   );
 }
 
+/* =========================================================
+   ERROR MESSAGE
+========================================================= */
+
 function getErrorMessage(
   error: unknown,
-  fallback: string
+  fallback: string,
 ): string {
   if (
-    error instanceof
-    Error
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof (
+      error as {
+        message?: unknown;
+      }
+    ).message ===
+      "string"
   ) {
-    return error.message;
-  }
-
-  if (
-    typeof error === "string" &&
-    error.trim()
-  ) {
-    return error;
+    return (
+      error as {
+        message: string;
+      }
+    ).message;
   }
 
   return fallback;
 }
 
-function formatKES(
-  value: number
-): string {
-  const amount =
-    Number.isFinite(value)
-      ? value
-      : 0;
+/* =========================================================
+   KES FORMATTER
+========================================================= */
 
-  return new Intl.NumberFormat(
+const KES_FORMATTER =
+  new Intl.NumberFormat(
     "en-KE",
     {
       style: "currency",
       currency: "KES",
-      minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    }
-  ).format(amount);
+    },
+  );
+
+function formatKES(
+  value: number,
+): string {
+  return KES_FORMATTER.format(
+    safeNumber(value),
+  );
 }
 
 /* =========================================================
-   SUMMARY CARD
+   CLONED DASHBOARD OVERVIEW CARD
 ========================================================= */
 
-function SummaryCard({
-  label,
+function OverviewCard({
+  eyebrow,
   value,
+  description,
   icon,
-  loading,
-  valueClassName = "text-white",
+  footerLabel,
+  footerHref,
+  progress,
+  progressLabel,
+  progressValue,
+  metrics,
 }: {
-  label: string;
+  eyebrow: string;
   value: string;
-  icon: React.ReactNode;
-  loading: boolean;
-  valueClassName?: string;
+  description: string;
+  icon: ReactNode;
+  footerLabel: string;
+  footerHref: string;
+  progress?: number;
+  progressLabel?: string;
+  progressValue?: string;
+  metrics?: {
+    label: string;
+    value: string;
+  }[];
 }) {
   return (
-    <div
-      className="
-        rounded-2xl
-        border
-        border-white/[0.08]
-        bg-[#0b0b0b]
-        p-4
-        sm:p-5
-      "
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div
-          className="
-            flex
-            h-9
-            w-9
-            shrink-0
-            items-center
-            justify-center
-            rounded-xl
-            bg-yellow-500/10
-            text-yellow-400
-          "
-        >
+    <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-[0.18em] text-white/25">
+            {eyebrow}
+          </p>
+
+          <p className="mt-3 truncate text-3xl font-semibold tracking-tight text-white">
+            {value}
+          </p>
+
+          <p className="mt-1 text-xs text-white/30">
+            {description}
+          </p>
+        </div>
+
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
           {icon}
         </div>
       </div>
 
-      <p className="mt-4 text-[10px] font-medium uppercase tracking-[0.14em] text-white/25">
-        {label}
-      </p>
+      {progress !==
+        undefined && (
+        <div className="mt-5">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="truncate text-[10px] text-white/25">
+              {progressLabel}
+            </span>
 
-      {loading ? (
-        <div className="mt-2 h-6 w-28 animate-pulse rounded-lg bg-white/[0.05]" />
-      ) : (
-        <p
-          className={`
-            mt-2
-            truncate
-            text-lg
-            font-semibold
-            ${valueClassName}
-          `}
-        >
-          {value}
-        </p>
+            <span className="shrink-0 text-[10px] text-white/40">
+              {progressValue}
+            </span>
+          </div>
+
+          <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+            <div
+              className="h-full rounded-full bg-yellow-500 transition-all"
+              style={{
+                width: `${Math.max(
+                  0,
+                  Math.min(
+                    100,
+                    progress,
+                  ),
+                )}%`,
+              }}
+            />
+          </div>
+        </div>
       )}
+
+      {metrics &&
+        metrics.length > 0 && (
+          <div className="mt-5 grid grid-cols-3 gap-3">
+            {metrics.map(
+              (
+                metric,
+              ) => (
+                <div
+                  key={
+                    metric.label
+                  }
+                  className="min-w-0"
+                >
+                  <p className="truncate text-[9px] uppercase tracking-[0.12em] text-white/20">
+                    {
+                      metric.label
+                    }
+                  </p>
+
+                  <p className="mt-1 truncate text-xs font-medium text-white/55">
+                    {
+                      metric.value
+                    }
+                  </p>
+                </div>
+              ),
+            )}
+          </div>
+        )}
+
+      <button
+        type="button"
+        onClick={() =>
+          window.location.assign(
+            footerHref,
+          )
+        }
+        className="mt-5 flex items-center gap-2 text-xs font-medium text-yellow-400 transition hover:text-yellow-300"
+      >
+        <span>
+          {footerLabel}
+        </span>
+
+        <ArrowRight
+          size={14}
+          strokeWidth={1.8}
+        />
+      </button>
     </div>
   );
 }
+
+/* =========================================================
+   ACTION MODAL TYPES
+========================================================= */
+
+type SavingsActionModalProps = {
+  open: boolean;
+
+  action:
+    | ActionType
+    | null;
+
+  transaction:
+    | SavingsTransaction
+    | null;
+
+  amount: string;
+  reason: string;
+  loading: boolean;
+
+  error:
+    | string
+    | null;
+
+  onAmountChange: (
+    value: string,
+  ) => void;
+
+  onReasonChange: (
+    value: string,
+  ) => void;
+
+  onClose: () => void;
+
+  onSubmit: () => void;
+};
 
 /* =========================================================
    ACTION MODAL
 ========================================================= */
 
 function SavingsActionModal({
+  open,
   action,
   transaction,
   amount,
@@ -640,23 +813,9 @@ function SavingsActionModal({
   onReasonChange,
   onClose,
   onSubmit,
-}: {
-  action: ActionType | null;
-  transaction: SavingsTransaction | null;
-  amount: string;
-  reason: string;
-  loading: boolean;
-  error: string | null;
-  onAmountChange: (
-    value: string
-  ) => void;
-  onReasonChange: (
-    value: string
-  ) => void;
-  onClose: () => void;
-  onSubmit: () => void;
-}) {
+}: SavingsActionModalProps) {
   if (
+    !open ||
     !action ||
     !transaction
   ) {
@@ -666,42 +825,37 @@ function SavingsActionModal({
   const isAdjustment =
     action === "adjust";
 
-  const title =
-    isAdjustment
-      ? "Adjust savings transaction"
-      : "Reverse savings transaction";
-
-  const description =
-    isAdjustment
-      ? "Create a new signed ledger adjustment. The original transaction will remain unchanged."
-      : "Create a new reversal entry. The original transaction will remain unchanged.";
+  const parsedAmount =
+    Number(amount);
 
   const canSubmit =
-    reason.trim().length > 0 &&
-    (!isAdjustment ||
-      (amount.trim().length > 0 &&
+    reason.trim().length >
+      0 &&
+    (
+      !isAdjustment ||
+      (
+        amount.trim()
+          .length > 0 &&
         Number.isFinite(
-          Number(amount)
+          parsedAmount,
         ) &&
-        Number(amount) !== 0));
+        parsedAmount > 0
+      )
+    );
 
   return (
     <div
       className="
         fixed
         inset-0
-        z-[100]
+        z-50
         flex
         items-center
         justify-center
-        bg-black/75
-        px-4
-        py-6
+        bg-black/60
+        p-4
         backdrop-blur-sm
       "
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="savings-action-title"
     >
       <div
         className="
@@ -710,13 +864,11 @@ function SavingsActionModal({
           overflow-hidden
           rounded-2xl
           border
-          border-white/[0.09]
+          border-white/[0.08]
           bg-[#0b0b0b]
           shadow-2xl
         "
       >
-        {/* HEADER */}
-
         <div
           className="
             flex
@@ -724,110 +876,87 @@ function SavingsActionModal({
             justify-between
             gap-4
             border-b
-            border-white/[0.07]
+            border-white/[0.08]
             px-5
             py-4
           "
         >
           <div>
-            <h2
-              id="savings-action-title"
-              className="text-sm font-semibold text-white"
-            >
-              {title}
+            <h2 className="text-lg font-semibold text-white">
+              {isAdjustment
+                ? "Record savings withdrawal"
+                : "Reverse savings transaction"}
             </h2>
 
-            <p className="mt-1 text-xs leading-5 text-white/35">
-              {description}
+            <p className="mt-1 text-sm text-white/40">
+              {isAdjustment
+                ? "Create a new withdrawal entry. The original transaction remains unchanged."
+                : "Create a new reversal entry. The original transaction remains unchanged."}
             </p>
           </div>
 
           <button
             type="button"
-            onClick={onClose}
-            disabled={loading}
+            onClick={
+              onClose
+            }
+            disabled={
+              loading === true
+            }
             className="
-              flex
-              h-8
-              w-8
-              shrink-0
-              items-center
-              justify-center
               rounded-lg
-              text-white/35
+              p-2
+              text-white/40
               transition
-              hover:bg-white/[0.05]
+              hover:bg-white/[0.06]
               hover:text-white
               disabled:cursor-not-allowed
-              disabled:opacity-40
+              disabled:opacity-50
             "
             aria-label="Close"
           >
-            <X
-              size={17}
-            />
+            <X size={18} />
           </button>
         </div>
 
-        {/* BODY */}
-
-        <div className="space-y-5 p-5">
-          {/* ORIGINAL */}
-
-          <div
-            className="
-              rounded-xl
-              border
-              border-white/[0.07]
-              bg-black/30
-              p-4
-            "
-          >
-            <div className="flex items-start justify-between gap-4">
+        <div className="space-y-5 px-5 py-5">
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-4">
+            <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-[0.12em] text-white/25">
-                  Original transaction
+                <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
+                  Member
                 </p>
 
-                <p className="mt-1 truncate text-xs font-medium text-white/65">
-                  {transaction.id}
-                </p>
-
-                <p className="mt-1 text-xs text-white/30">
-                  {transaction.memberName ||
-                    transaction.memberId}
+                <p className="mt-1 truncate font-medium text-white">
+                  {
+                    transaction.memberName
+                  }
                 </p>
               </div>
 
-              <p
-                className={`
-                  shrink-0
-                  text-sm
-                  font-semibold
-                  ${
-                    transaction.amount >=
-                    0
-                      ? "text-emerald-400"
-                      : "text-red-400"
-                  }
-                `}
-              >
-                {formatKES(
-                  transaction.amount
-                )}
-              </p>
+              <div className="shrink-0 text-right">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
+                  Original amount
+                </p>
+
+                <p className="mt-1 font-semibold text-white">
+                  {formatKES(
+                    Math.abs(
+                      transaction.amount,
+                    ),
+                  )}
+                </p>
+              </div>
             </div>
           </div>
-
-          {/* ADJUSTMENT AMOUNT */}
 
           {isAdjustment && (
             <div>
               <label
                 htmlFor="adjustment-amount"
-                className="mb-2 block text-[11px] font-medium text-white/50"
+                className="mb-2 block text-sm font-medium text-white/70"
               >
-                Adjustment amount
+                Withdrawal amount
               </label>
 
               <input
@@ -835,67 +964,78 @@ function SavingsActionModal({
                 type="number"
                 inputMode="decimal"
                 step="0.01"
+                min="0.01"
                 value={amount}
-                onChange={(event) =>
+                onChange={(
+                  event,
+                ) =>
                   onAmountChange(
-                    event.target.value
+                    event.target.value,
                   )
                 }
-                disabled={loading}
-                placeholder="e.g. 200 or -200"
+                disabled={
+                  loading === true
+                }
+                placeholder="e.g. 200"
                 className="
                   h-11
                   w-full
                   rounded-xl
                   border
                   border-white/[0.08]
-                  bg-black/40
-                  px-3
+                  bg-white/[0.03]
+                  px-4
                   text-sm
                   text-white
                   outline-none
                   transition
                   placeholder:text-white/20
-                  focus:border-yellow-500/40
+                  focus:border-yellow-500/30
+                  focus:bg-white/[0.04]
+                  focus:ring-2
+                  focus:ring-yellow-500/10
                   disabled:cursor-not-allowed
                   disabled:opacity-50
                 "
               />
 
-              <p className="mt-1.5 text-[10px] leading-4 text-white/25">
-                Positive increases the balance. Negative decreases
-                the balance. Zero is not allowed.
+              <p className="mt-2 text-xs text-white/30">
+                Enter the withdrawal amount
+                as a positive value. The
+                ledger records withdrawals
+                as negative entries.
               </p>
             </div>
           )}
 
-          {/* REASON */}
-
           <div>
             <label
               htmlFor="savings-action-reason"
-              className="mb-2 block text-[11px] font-medium text-white/50"
+              className="mb-2 block text-sm font-medium text-white/70"
             >
               {isAdjustment
-                ? "Adjustment reason"
+                ? "Withdrawal reason"
                 : "Reversal reason"}
             </label>
 
             <textarea
               id="savings-action-reason"
+              rows={4}
               value={reason}
-              onChange={(event) =>
+              onChange={(
+                event,
+              ) =>
                 onReasonChange(
-                  event.target.value
+                  event.target.value,
                 )
               }
-              disabled={loading}
-              maxLength={500}
-              rows={4}
+              disabled={
+                loading === true
+              }
               placeholder={
                 isAdjustment
-                  ? "Explain why this financial correction is required..."
-                  : "Explain why this transaction must be reversed..."
+                  ? "Explain why this withdrawal is being recorded..."
+                  : "Explain why this transaction is being reversed..."
               }
               className="
                 w-full
@@ -903,114 +1043,56 @@ function SavingsActionModal({
                 rounded-xl
                 border
                 border-white/[0.08]
-                bg-black/40
-                px-3
+                bg-white/[0.03]
+                px-4
                 py-3
                 text-sm
-                leading-5
                 text-white
                 outline-none
                 transition
                 placeholder:text-white/20
-                focus:border-yellow-500/40
+                focus:border-yellow-500/30
+                focus:bg-white/[0.04]
+                focus:ring-2
+                focus:ring-yellow-500/10
                 disabled:cursor-not-allowed
                 disabled:opacity-50
               "
             />
-
-            <div className="mt-1 flex justify-end">
-              <span className="text-[10px] text-white/20">
-                {reason.length}/500
-              </span>
-            </div>
           </div>
-
-          {/* WARNING */}
-
-          <div
-            className="
-              rounded-xl
-              border
-              border-yellow-500/10
-              bg-yellow-500/[0.04]
-              px-3
-              py-3
-            "
-          >
-            <p className="text-[11px] leading-5 text-yellow-400/60">
-              This operation creates a new financial ledger entry.
-              The original transaction will not be deleted or have
-              its amount changed.
-            </p>
-          </div>
-
-          {/* ERROR */}
 
           {error && (
-            <div
-              role="alert"
-              className="
-                flex
-                items-start
-                gap-2.5
-                rounded-xl
-                border
-                border-red-500/15
-                bg-red-500/[0.05]
-                px-3
-                py-3
-              "
-            >
-              <AlertCircle
-                size={15}
-                className="
-                  mt-0.5
-                  shrink-0
-                  text-red-400
-                "
-              />
+            <div className="flex gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
 
-              <p className="text-xs leading-5 text-red-400/80">
+              <span>
                 {error}
-              </p>
+              </span>
             </div>
           )}
         </div>
 
-        {/* FOOTER */}
-
-        <div
-          className="
-            flex
-            flex-col-reverse
-            gap-2
-            border-t
-            border-white/[0.07]
-            px-5
-            py-4
-            sm:flex-row
-            sm:justify-end
-          "
-        >
+        <div className="flex items-center justify-end gap-3 border-t border-white/[0.08] px-5 py-4">
           <button
             type="button"
-            onClick={onClose}
-            disabled={loading}
+            onClick={
+              onClose
+            }
+            disabled={
+              loading === true
+            }
             className="
-              h-10
               rounded-xl
-              border
-              border-white/[0.08]
-              bg-white/[0.02]
               px-4
-              text-xs
+              py-2.5
+              text-sm
               font-medium
               text-white/50
               transition
               hover:bg-white/[0.05]
               hover:text-white
               disabled:cursor-not-allowed
-              disabled:opacity-40
+              disabled:opacity-50
             "
           >
             Cancel
@@ -1018,57 +1100,38 @@ function SavingsActionModal({
 
           <button
             type="button"
-            onClick={onSubmit}
-            disabled={
-              loading ||
-              !canSubmit
+            onClick={
+              onSubmit
             }
-            className={`
+            disabled={
+              canSubmit !==
+                true ||
+              loading === true
+            }
+            className="
               inline-flex
-              h-10
               items-center
-              justify-center
               gap-2
               rounded-xl
+              bg-yellow-500
               px-4
-              text-xs
+              py-2.5
+              text-sm
               font-semibold
+              text-black
               transition
+              hover:bg-yellow-400
               disabled:cursor-not-allowed
-              disabled:opacity-40
-              ${
-                isAdjustment
-                  ? "bg-yellow-500 text-black hover:bg-yellow-400"
-                  : "bg-red-500 text-white hover:bg-red-400"
-              }
-            `}
+              disabled:opacity-50
+            "
           >
-            {loading ? (
-              <>
-                <Loader2
-                  size={14}
-                  className="animate-spin"
-                />
-
-                Processing...
-              </>
-            ) : isAdjustment ? (
-              <>
-                <FileEdit
-                  size={14}
-                />
-
-                Create Adjustment
-              </>
-            ) : (
-              <>
-                <RotateCcw
-                  size={14}
-                />
-
-                Reverse Transaction
-              </>
+            {loading && (
+              <Loader2 className="h-4 w-4 animate-spin" />
             )}
+
+            {isAdjustment
+              ? "Record Withdrawal"
+              : "Reverse Transaction"}
           </button>
         </div>
       </div>
@@ -1082,28 +1145,19 @@ function SavingsActionModal({
 
 export default function SavingsPage() {
   /* =======================================================
-     FILTERS
+     STATE
   ======================================================= */
 
   const [
-    filters,
-    setFilters,
-  ] = useState<SavingsSearchFilters>(
-    DEFAULT_FILTERS
-  );
-
-  /* =======================================================
-     FORM
-  ======================================================= */
-
-  const [
-    formOpen,
-    setFormOpen,
-  ] = useState(false);
-
-  /* =======================================================
-     TRANSACTIONS
-  ======================================================= */
+    summary,
+    setSummary,
+  ] = useState<SummaryData>({
+    totalBalance: 0,
+    totalDeposits: 0,
+    totalAdjustments: 0,
+    totalReversals: 0,
+    memberCount: 0,
+  });
 
   const [
     transactions,
@@ -1113,36 +1167,18 @@ export default function SavingsPage() {
   >([]);
 
   const [
-    transactionsLoading,
-    setTransactionsLoading,
-  ] = useState(true);
-
-  const [
-    transactionsError,
-    setTransactionsError,
-  ] = useState<
-    string | null
-  >(null);
-
-  const [
     transactionsTotal,
     setTransactionsTotal,
   ] = useState(0);
 
-  /* =======================================================
-     SUMMARY
-  ======================================================= */
-
-  const [
-    summary,
-    setSummary,
-  ] = useState<SummaryData>(
-    DEFAULT_SUMMARY
-  );
-
   const [
     summaryLoading,
     setSummaryLoading,
+  ] = useState(true);
+
+  const [
+    transactionsLoading,
+    setTransactionsLoading,
   ] = useState(true);
 
   const [
@@ -1152,35 +1188,46 @@ export default function SavingsPage() {
     string | null
   >(null);
 
-  /* =======================================================
-     REFRESH
-  ======================================================= */
+  const [
+    transactionsError,
+    setTransactionsError,
+  ] = useState<
+    string | null
+  >(null);
 
   const [
     refreshing,
     setRefreshing,
   ] = useState(false);
 
-  const requestSequence =
-    useRef(0);
+  const [
+    filters,
+    setFilters,
+  ] =
+    useState<SavingsSearchFilters>(
+      DEFAULT_FILTERS,
+    );
 
-  /* =======================================================
-     ACTION MODAL
-  ======================================================= */
+  const [
+    formOpen,
+    setFormOpen,
+  ] = useState(false);
 
   const [
     action,
     setAction,
-  ] = useState<
-    ActionType | null
-  >(null);
+  ] =
+    useState<ActionType | null>(
+      null,
+    );
 
   const [
     actionTransaction,
     setActionTransaction,
-  ] = useState<
-    SavingsTransaction | null
-  >(null);
+  ] =
+    useState<
+      SavingsTransaction | null
+    >(null);
 
   const [
     actionAmount,
@@ -1204,6 +1251,71 @@ export default function SavingsPage() {
     string | null
   >(null);
 
+  const activeController =
+    useRef<AbortController | null>(
+      null,
+    );
+
+  const requestSequence =
+    useRef(0);
+
+  /* =======================================================
+     FINANCIAL VALUES
+  ======================================================= */
+
+  const deposits =
+    useMemo(
+      () =>
+        Math.max(
+          0,
+          safeNumber(
+            summary.totalDeposits,
+          ),
+        ),
+      [
+        summary.totalDeposits,
+      ],
+    );
+
+  const withdrawals =
+    useMemo(
+      () =>
+        Math.abs(
+          safeNumber(
+            summary.totalAdjustments,
+          ),
+        ),
+      [
+        summary.totalAdjustments,
+      ],
+    );
+
+  const reversals =
+    useMemo(
+      () =>
+        Math.abs(
+          safeNumber(
+            summary.totalReversals,
+          ),
+        ),
+      [
+        summary.totalReversals,
+      ],
+    );
+
+  const calculatedBalance =
+    useMemo(
+      () =>
+        deposits -
+        withdrawals -
+        reversals,
+      [
+        deposits,
+        withdrawals,
+        reversals,
+      ],
+    );
+
   /* =======================================================
      LOAD SUMMARY
   ======================================================= */
@@ -1211,13 +1323,14 @@ export default function SavingsPage() {
   const loadSummary =
     useCallback(
       async (
-        signal?: AbortSignal
+        signal?: AbortSignal,
       ) => {
         setSummaryLoading(
-          true
+          true,
         );
+
         setSummaryError(
-          null
+          null,
         );
 
         try {
@@ -1231,109 +1344,95 @@ export default function SavingsPage() {
                   "no-store",
                 credentials:
                   "same-origin",
-                headers: {
-                  Accept:
-                    "application/json",
-                },
                 signal,
-              }
+              },
             );
 
-          let result:
-            | SummaryApiResponse
-            | null =
-            null;
+          const payload =
+            await readJsonResponse(
+              response,
+            );
 
-          try {
-            result =
-              (await response.json()) as SummaryApiResponse;
-          } catch {
-            result =
-              null;
-          }
-
-          if (
-            !response.ok
-          ) {
+          if (!response.ok) {
             throw new Error(
-              result?.error ||
-                `Failed to load savings summary (${response.status}).`
+              String(
+                payload.message ??
+                  payload.error ??
+                  "Failed to load savings summary.",
+              ),
             );
           }
 
           if (
-            result?.success ===
-            false
+            signal?.aborted
           ) {
-            throw new Error(
-              result.error ||
-                "Failed to load savings summary."
-            );
+            return;
           }
+
+          const root =
+            asRecord(payload);
 
           const data =
-            result?.data ||
-            {};
+            asRecord(
+              root?.data,
+            ) ?? root;
 
           setSummary({
             totalBalance:
               safeNumber(
-                data.totalBalance
+                data?.totalBalance,
               ),
 
             totalDeposits:
               safeNumber(
-                data.totalDeposits
+                data?.totalDeposits,
               ),
 
             totalAdjustments:
               safeNumber(
-                data.totalAdjustments
+                data?.totalAdjustments,
               ),
 
             totalReversals:
               safeNumber(
-                data.totalReversals
+                data?.totalReversals,
               ),
 
             memberCount:
-              safeNumber(
-                data.memberCount
+              safePositiveInteger(
+                data?.memberCount,
               ),
           });
-        } catch (
-          error
-        ) {
+        } catch (error) {
           if (
-            isAbortError(
-              error
-            )
+            isAbortError(error)
           ) {
             return;
           }
 
           console.error(
             "Savings summary loading error:",
-            error
+            error,
           );
 
           setSummaryError(
             getErrorMessage(
               error,
-              "Failed to load savings summary."
-            )
+              "Failed to load savings summary.",
+            ),
           );
         } finally {
           if (
-            !signal?.aborted
+            signal?.aborted !==
+            true
           ) {
             setSummaryLoading(
-              false
+              false,
             );
           }
         }
       },
-      []
+      [],
     );
 
   /* =======================================================
@@ -1344,21 +1443,21 @@ export default function SavingsPage() {
     useCallback(
       async (
         page: number,
-        signal?: AbortSignal
-      ): Promise<TransactionPageResult> => {
+        signal?: AbortSignal,
+      ): Promise<TransactionPage> => {
         const params =
           new URLSearchParams();
 
         params.set(
           "page",
-          String(page)
+          String(page),
         );
 
         params.set(
           "limit",
           String(
-            API_PAGE_LIMIT
-          )
+            API_PAGE_LIMIT,
+          ),
         );
 
         const response =
@@ -1371,63 +1470,38 @@ export default function SavingsPage() {
                 "no-store",
               credentials:
                 "same-origin",
-              headers: {
-                Accept:
-                  "application/json",
-              },
               signal,
-            }
+            },
           );
 
-        let result:
-          | TransactionsApiResponse
-          | null =
-          null;
+        const payload =
+          await readJsonResponse(
+            response,
+          );
 
-        try {
-          result =
-            (await response.json()) as TransactionsApiResponse;
-        } catch {
-          result =
-            null;
-        }
-
-        if (
-          !response.ok
-        ) {
+        if (!response.ok) {
           throw new Error(
-            result?.error ||
-              `Failed to load savings transactions (${response.status}).`
+            String(
+              payload.message ??
+                payload.error ??
+                "Failed to load savings transactions.",
+            ),
           );
         }
-
-        if (
-          result?.success ===
-          false
-        ) {
-          throw new Error(
-            result.error ||
-              "Failed to load savings transactions."
-          );
-        }
-
-        const normalized =
-          extractTransactions(
-            result || {}
-          );
-
-        const pagination =
-          extractPagination(
-            result || {}
-          );
 
         return {
           transactions:
-            normalized,
-          ...pagination,
+            extractTransactions(
+              payload,
+            ),
+
+          pagination:
+            extractPagination(
+              payload,
+            ),
         };
       },
-      []
+      [],
     );
 
   /* =======================================================
@@ -1437,20 +1511,21 @@ export default function SavingsPage() {
   const loadTransactions =
     useCallback(
       async (
-        signal?: AbortSignal
+        signal?: AbortSignal,
       ) => {
         setTransactionsLoading(
-          true
+          true,
         );
+
         setTransactionsError(
-          null
+          null,
         );
 
         try {
           const firstPage =
             await fetchTransactionPage(
               1,
-              signal
+              signal,
             );
 
           if (
@@ -1459,40 +1534,46 @@ export default function SavingsPage() {
             return;
           }
 
-          let allTransactions =
-            [
-              ...firstPage.transactions,
-            ];
+          let allTransactions = [
+            ...firstPage.transactions,
+          ];
+
+          const totalPages =
+            Math.max(
+              1,
+              firstPage
+                .pagination
+                .totalPages,
+            );
 
           if (
-            firstPage.totalPages >
-            1
+            totalPages > 1
           ) {
             const remainingPages =
               Array.from(
                 {
                   length:
-                    firstPage.totalPages -
+                    totalPages -
                     1,
                 },
                 (
                   _,
-                  index
+                  index,
                 ) =>
-                  index + 2
+                  index + 2,
               );
 
             const pageResults =
               await Promise.all(
                 remainingPages.map(
                   (
-                    page
+                    page,
                   ) =>
                     fetchTransactionPage(
                       page,
-                      signal
-                    )
-                )
+                      signal,
+                    ),
+                ),
               );
 
             if (
@@ -1507,74 +1588,88 @@ export default function SavingsPage() {
             ) {
               allTransactions =
                 allTransactions.concat(
-                  pageResult.transactions
+                  pageResult.transactions,
                 );
             }
           }
 
-          const uniqueTransactions =
+          if (
+            signal?.aborted
+          ) {
+            return;
+          }
+
+          const unique =
             deduplicateTransactions(
-              allTransactions
+              allTransactions,
             );
 
-          const sortedTransactions =
+          const sorted =
             sortTransactions(
-              uniqueTransactions
+              unique,
             );
 
           setTransactions(
-            sortedTransactions
+            sorted,
           );
 
+          const apiTotal =
+            firstPage
+              .pagination
+              .total;
+
           setTransactionsTotal(
-            firstPage.total >
-              0
-              ? firstPage.total
-              : sortedTransactions.length
+            apiTotal > 0
+              ? apiTotal
+              : sorted.length,
           );
-        } catch (
-          error
-        ) {
+
           if (
-            isAbortError(
-              error
-            )
+            apiTotal > 0 &&
+            sorted.length === 0
+          ) {
+            setTransactionsError(
+              "The savings API returned transactions, but the response format could not be understood.",
+            );
+          }
+        } catch (error) {
+          if (
+            isAbortError(error)
           ) {
             return;
           }
 
           console.error(
             "Savings transaction loading error:",
-            error
+            error,
           );
 
           setTransactionsError(
             getErrorMessage(
               error,
-              "Failed to load savings transactions."
-            )
+              "Failed to load savings transactions.",
+            ),
           );
 
-          setTransactions(
-            []
-          );
+          setTransactions([]);
 
           setTransactionsTotal(
-            0
+            0,
           );
         } finally {
           if (
-            !signal?.aborted
+            signal?.aborted !==
+            true
           ) {
             setTransactionsLoading(
-              false
+              false,
             );
           }
         }
       },
       [
         fetchTransactionPage,
-      ]
+      ],
     );
 
   /* =======================================================
@@ -1584,21 +1679,17 @@ export default function SavingsPage() {
   const loadData =
     useCallback(
       async (
-        signal?: AbortSignal
+        signal?: AbortSignal,
       ) => {
         await Promise.all([
-          loadSummary(
-            signal
-          ),
-          loadTransactions(
-            signal
-          ),
+          loadSummary(signal),
+          loadTransactions(signal),
         ]);
       },
       [
         loadSummary,
         loadTransactions,
-      ]
+      ],
     );
 
   /* =======================================================
@@ -1609,12 +1700,39 @@ export default function SavingsPage() {
     const controller =
       new AbortController();
 
+    activeController.current =
+      controller;
+
+    const sequence =
+      ++requestSequence.current;
+
     void loadData(
-      controller.signal
-    );
+      controller.signal,
+    ).finally(() => {
+      if (
+        requestSequence.current ===
+        sequence
+      ) {
+        if (
+          activeController.current ===
+          controller
+        ) {
+          activeController.current =
+            null;
+        }
+      }
+    });
 
     return () => {
       controller.abort();
+
+      if (
+        activeController.current ===
+        controller
+      ) {
+        activeController.current =
+          null;
+      }
     };
   }, [loadData]);
 
@@ -1623,62 +1741,45 @@ export default function SavingsPage() {
   ======================================================= */
 
   const handleRefresh =
-    useCallback(
-      async () => {
-        if (
-          refreshing
-        ) {
-          return;
-        }
+    useCallback(async () => {
+      activeController.current?.abort();
 
-        const sequence =
-          ++requestSequence.current;
+      const controller =
+        new AbortController();
 
-        setRefreshing(
-          true
+      activeController.current =
+        controller;
+
+      const sequence =
+        ++requestSequence.current;
+
+      setRefreshing(
+        true,
+      );
+
+      try {
+        await loadData(
+          controller.signal,
         );
-
-        const controller =
-          new AbortController();
-
-        try {
-          await loadData(
-            controller.signal
+      } finally {
+        if (
+          requestSequence.current ===
+          sequence
+        ) {
+          setRefreshing(
+            false,
           );
-        } finally {
+
           if (
-            sequence ===
-            requestSequence.current
+            activeController.current ===
+            controller
           ) {
-            setRefreshing(
-              false
-            );
+            activeController.current =
+              null;
           }
         }
-      },
-      [
-        loadData,
-        refreshing,
-      ]
-    );
-
-  /* =======================================================
-     FORM
-  ======================================================= */
-
-  const handleAddSavings =
-    useCallback(() => {
-      setFormOpen(
-        true
-      );
-    }, []);
-
-  const handleCloseForm =
-    useCallback(() => {
-      setFormOpen(
-        false
-      );
-    }, []);
+      }
+    }, [loadData]);
 
   /* =======================================================
      SAVINGS SUCCESS
@@ -1687,61 +1788,49 @@ export default function SavingsPage() {
   const handleSavingsSuccess =
     useCallback(
       async (
-        transaction: SavingsTransaction
+        transaction?: SavingsTransaction,
       ) => {
-        const normalized =
-          normalizeTransaction(
-            transaction
-          );
-
         if (
-          normalized
+          transaction
         ) {
-          setTransactions(
-            (
-              current
-            ) => {
-              const withoutExisting =
-                current.filter(
-                  (
-                    item
-                  ) =>
-                    item.id !==
-                    normalized.id
-                );
+          const normalized =
+            normalizeTransaction(
+              transaction,
+            );
 
-              return sortTransactions(
-                [
-                  normalized,
-                  ...withoutExisting,
-                ]
-              );
-            }
-          );
+          if (
+            normalized
+          ) {
+            setTransactions(
+              (current) =>
+                sortTransactions(
+                  deduplicateTransactions([
+                    normalized,
+                    ...current,
+                  ]),
+                ),
+            );
+          }
         }
 
         setFormOpen(
-          false
+          false,
         );
 
-        await loadData();
+        await handleRefresh();
       },
-      [loadData]
+      [handleRefresh],
     );
 
   /* =======================================================
-     OPEN ADJUSTMENT
+     OPEN WITHDRAWAL
   ======================================================= */
 
   const handleAdjust =
     useCallback(
       (
-        transaction: SavingsTransaction
+        transaction: SavingsTransaction,
       ) => {
-        /*
-         * Do not allow adjustment of a transaction
-         * already marked reversed.
-         */
         if (
           transaction.status ===
           "reversed"
@@ -1749,10 +1838,6 @@ export default function SavingsPage() {
           return;
         }
 
-        /*
-         * Reversal transactions should not themselves
-         * be adjusted.
-         */
         if (
           transaction.type ===
           "reversal"
@@ -1761,30 +1846,26 @@ export default function SavingsPage() {
         }
 
         setAction(
-          "adjust"
+          "adjust",
         );
 
         setActionTransaction(
-          transaction
+          transaction,
         );
 
         setActionAmount(
-          ""
+          "",
         );
 
         setActionReason(
-          ""
+          "",
         );
 
         setActionError(
-          null
-        );
-
-        setActionLoading(
-          false
+          null,
         );
       },
-      []
+      [],
     );
 
   /* =======================================================
@@ -1794,12 +1875,8 @@ export default function SavingsPage() {
   const handleReverse =
     useCallback(
       (
-        transaction: SavingsTransaction
+        transaction: SavingsTransaction,
       ) => {
-        /*
-         * A reversed transaction cannot be
-         * reversed again.
-         */
         if (
           transaction.status ===
           "reversed"
@@ -1807,9 +1884,6 @@ export default function SavingsPage() {
           return;
         }
 
-        /*
-         * A reversal cannot itself be reversed.
-         */
         if (
           transaction.type ===
           "reversal"
@@ -1818,74 +1892,70 @@ export default function SavingsPage() {
         }
 
         setAction(
-          "reverse"
+          "reverse",
         );
 
         setActionTransaction(
-          transaction
+          transaction,
         );
 
         setActionAmount(
-          ""
+          "",
         );
 
         setActionReason(
-          ""
+          "",
         );
 
         setActionError(
-          null
-        );
-
-        setActionLoading(
-          false
+          null,
         );
       },
-      []
+      [],
     );
 
   /* =======================================================
      CLOSE ACTION MODAL
   ======================================================= */
 
-  const handleCloseAction =
+  const closeActionModal =
     useCallback(() => {
       if (
-        actionLoading
+        actionLoading ===
+        true
       ) {
         return;
       }
 
       setAction(
-        null
+        null,
       );
 
       setActionTransaction(
-        null
+        null,
       );
 
       setActionAmount(
-        ""
+        "",
       );
 
       setActionReason(
-        ""
+        "",
       );
 
       setActionError(
-        null
+        null,
       );
     }, [actionLoading]);
 
   /* =======================================================
-     EXECUTE ADJUSTMENT / REVERSAL
+     SUBMIT ACTION
   ======================================================= */
 
   const handleSubmitAction =
     useCallback(
       async () => {
         if (
-          actionLoading ||
           !action ||
           !actionTransaction
         ) {
@@ -1897,112 +1967,60 @@ export default function SavingsPage() {
 
         if (!reason) {
           setActionError(
-            action ===
-              "adjust"
-              ? "Adjustment reason is required."
-              : "Reversal reason is required."
-          );
-
-          return;
-        }
-
-        if (
-          reason.length >
-          500
-        ) {
-          setActionError(
-            action ===
-              "adjust"
-              ? "Adjustment reason must not exceed 500 characters."
-              : "Reversal reason must not exceed 500 characters."
+            "A reason is required.",
           );
 
           return;
         }
 
         let numericAmount:
-          number | null =
-          null;
+          | number
+          | undefined;
 
         if (
           action ===
           "adjust"
         ) {
-          const trimmedAmount =
-            actionAmount.trim();
-
-          if (
-            !trimmedAmount
-          ) {
-            setActionError(
-              "Adjustment amount is required."
-            );
-
-            return;
-          }
-
           numericAmount =
             Number(
-              trimmedAmount
+              actionAmount,
             );
 
           if (
             !Number.isFinite(
-              numericAmount
-            )
+              numericAmount,
+            ) ||
+            numericAmount <=
+              0
           ) {
             setActionError(
-              "Adjustment amount must be a valid number."
-            );
-
-            return;
-          }
-
-          if (
-            numericAmount ===
-            0
-          ) {
-            setActionError(
-              "Adjustment amount cannot be zero."
+              "Enter a valid withdrawal amount greater than zero.",
             );
 
             return;
           }
         }
 
-        /*
-         * Capture the transaction ID before beginning
-         * the asynchronous operation.
-         */
-        const transactionId =
-          actionTransaction.id;
-
         setActionLoading(
-          true
+          true,
         );
 
         setActionError(
-          null
+          null,
         );
 
         try {
+          const transactionId =
+            encodeURIComponent(
+              actionTransaction.id,
+            );
+
           const endpoint =
             action ===
             "adjust"
-              ? `${TRANSACTIONS_ENDPOINT}/${encodeURIComponent(
-                  transactionId
-                )}/adjust`
-              : `${TRANSACTIONS_ENDPOINT}/${encodeURIComponent(
-                  transactionId
-                )}/reverse`;
+              ? `${TRANSACTIONS_ENDPOINT}/${transactionId}/adjust`
+              : `${TRANSACTIONS_ENDPOINT}/${transactionId}/reverse`;
 
-          /*
-           * Reversal deliberately does NOT send amount.
-           *
-           * The backend calculates:
-           *
-           * original.amount * -1
-           */
           const body =
             action ===
             "adjust"
@@ -2021,128 +2039,85 @@ export default function SavingsPage() {
               {
                 method:
                   "POST",
-                credentials:
-                  "same-origin",
-                cache:
-                  "no-store",
+
                 headers: {
-                  Accept:
-                    "application/json",
                   "Content-Type":
                     "application/json",
                 },
-                body:
-                  JSON.stringify(
-                    body
-                  ),
-              }
+
+                credentials:
+                  "same-origin",
+
+                body: JSON.stringify(
+                  body,
+                ),
+              },
             );
 
-          let result:
-            ActionApiResponse =
-            {};
-
-          try {
-            result =
-              (await response.json()) as ActionApiResponse;
-          } catch {
-            result =
-              {};
-          }
+          const payload =
+            await readJsonResponse(
+              response,
+            );
 
           if (
             !response.ok
           ) {
             throw new Error(
-              result.error ||
-                result.message ||
-                (
-                  action ===
-                  "adjust"
-                    ? `Failed to create savings adjustment (${response.status}).`
-                    : `Failed to reverse savings transaction (${response.status}).`
-                )
+              String(
+                payload.message ??
+                  payload.error ??
+                  `Failed to ${
+                    action ===
+                    "adjust"
+                      ? "record withdrawal"
+                      : "reverse transaction"
+                  }.`,
+              ),
             );
           }
 
-          if (
-            result.success ===
-            false
-          ) {
-            throw new Error(
-              result.error ||
-                (
-                  action ===
-                  "adjust"
-                    ? "Failed to create savings adjustment."
-                    : "Failed to reverse savings transaction."
-                )
-            );
-          }
-
-          /*
-           * Close only after the server has confirmed
-           * successful creation.
-           */
           setAction(
-            null
+            null,
           );
 
           setActionTransaction(
-            null
+            null,
           );
 
           setActionAmount(
-            ""
+            "",
           );
 
           setActionReason(
-            ""
+            "",
           );
 
-          setActionError(
-            null
-          );
-
-          /*
-           * Reload authoritative ledger and summary.
-           *
-           * We intentionally do not manufacture a local
-           * transaction from the response because the
-           * server remains authoritative.
-           */
-          await loadData();
-        } catch (
-          error
-        ) {
+          await handleRefresh();
+        } catch (error) {
           console.error(
-            `Savings ${action} operation error:`,
-            error
+            "Savings action error:",
+            error,
           );
 
           setActionError(
             getErrorMessage(
               error,
-              action ===
-                "adjust"
-                ? "Failed to create savings adjustment."
-                : "Failed to reverse savings transaction."
-            )
+              "Unable to complete the savings action.",
+            ),
           );
         } finally {
           setActionLoading(
-            false
+            false,
           );
         }
       },
       [
         action,
-        actionAmount,
-        actionLoading,
-        actionReason,
         actionTransaction,
-        loadData,
-      ]
+        actionAmount,
+        actionReason,
+        handleRefresh,
+      ],
     );
 
   /* =======================================================
@@ -2150,141 +2125,155 @@ export default function SavingsPage() {
   ======================================================= */
 
   const filteredTransactions =
-    useMemo(
-      () => {
-        const search =
-          filters.search
-            .trim()
-            .toLowerCase();
+    useMemo(() => {
+      const search =
+        filters.search
+          .trim()
+          .toLowerCase();
 
-        return transactions.filter(
-          (
-            transaction
-          ) => {
-            if (
-              search
-            ) {
-              const searchable =
-                [
-                  transaction.id,
-                  transaction.memberId,
-                  transaction.memberName,
-                  transaction.reference,
-                  transaction.sourceReference,
-                  transaction.smsId,
-                  transaction.reason,
-                ]
-                  .filter(
-                    (
-                      value
-                    ) =>
-                      typeof value ===
-                      "string"
-                  )
-                  .join(
-                    " "
-                  )
-                  .toLowerCase();
-
-              if (
-                !searchable.includes(
-                  search
+      return transactions.filter(
+        (
+          transaction,
+        ) => {
+          if (
+            search
+          ) {
+            const searchableText =
+              [
+                transaction.id,
+                transaction.memberId,
+                transaction.memberName,
+                transaction.reference,
+                transaction.sourceReference,
+                transaction.smsId,
+                transaction.reason,
+                transaction.source,
+                transaction.type,
+                transaction.status,
+              ]
+                .filter(
+                  Boolean,
                 )
-              ) {
-                return false;
-              }
-            }
+                .join(
+                  " ",
+                )
+                .toLowerCase();
 
             if (
-              filters.type &&
-              transaction.type !==
-                filters.type
+              !searchableText.includes(
+                search,
+              )
             ) {
               return false;
             }
-
-            if (
-              filters.source &&
-              transaction.source !==
-                filters.source
-            ) {
-              return false;
-            }
-
-            if (
-              filters.status &&
-              transaction.status !==
-                filters.status
-            ) {
-              return false;
-            }
-
-            return true;
           }
-        );
-      },
-      [
-        transactions,
-        filters,
-      ]
-    );
+
+          if (
+            filters.type &&
+            transaction.type !==
+              filters.type
+          ) {
+            return false;
+          }
+
+          if (
+            filters.source &&
+            transaction.source !==
+              filters.source
+          ) {
+            return false;
+          }
+
+          if (
+            filters.status &&
+            transaction.status !==
+              filters.status
+          ) {
+            return false;
+          }
+
+          return true;
+        },
+      );
+    }, [
+      transactions,
+      filters,
+    ]);
 
   /* =======================================================
-     ERROR
+     UI STATE
   ======================================================= */
 
   const hasDataError =
     Boolean(
       summaryError ||
-      transactionsError
+        transactionsError,
     );
+
+  const isRefreshing =
+    refreshing ===
+    true;
+
+  const isTransactionsLoading =
+    transactionsLoading ===
+    true;
+
+  const isSummaryLoading =
+    summaryLoading ===
+    true;
+
+  const refreshDisabled =
+    isRefreshing ||
+    isTransactionsLoading ||
+    isSummaryLoading;
 
   /* =======================================================
      RENDER
   ======================================================= */
 
   return (
-    <>
+    <div className="min-h-screen bg-[#050505] text-white">
       <TopBar />
 
-      <main
-        className="
-          min-h-screen
-          bg-[#050505]
-          px-4
-          pb-10
-          pt-24
-          text-white
-          sm:px-6
-          lg:px-8
-        "
-      >
-        <div
-          className="
-            mx-auto
-            w-full
-            max-w-7xl
-            space-y-6
-          "
-        >
-          {/* =================================================
-              HEADER
-          ================================================= */}
+       <main className="
+    mx-auto
+    w-full
+    max-w-[1600px]
+    overflow-x-hidden
+    px-4
+    pb-24
+    pt-20
+    sm:px-6
+    lg:px-8
+    lg:pb-8
+    lg:pt-20
+  "
+>
+        {/* HEADER */}
 
-          <div
-            className="
-              flex
-              items-start
-              justify-between
-              gap-4
-            "
-          >
-            <div className="min-w-0 flex-1">
-              <SavingsHeader
-                onAddSavings={
-                  handleAddSavings
-                }
-              />
+        <SavingsHeader
+          onAddSavings={() =>
+            setFormOpen(true)
+          }
+        />
+
+        {/* ERROR */}
+
+        {hasDataError && (
+          <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex gap-3">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-400" />
+
+              <div>
+                <p className="font-medium text-red-300">
+                  Unable to load some savings data
+                </p>
+
+                <p className="mt-1 text-sm text-red-300/70">
+                  {summaryError ||
+                    transactionsError}
+                </p>
+              </div>
             </div>
 
             <button
@@ -2293,324 +2282,258 @@ export default function SavingsPage() {
                 handleRefresh
               }
               disabled={
-                refreshing ||
-                transactionsLoading ||
-                summaryLoading
+                refreshDisabled ===
+                true
               }
               className="
-                mt-1
                 inline-flex
-                h-10
-                shrink-0
                 items-center
+                justify-center
                 gap-2
                 rounded-xl
                 border
-                border-white/[0.08]
-                bg-[#0b0b0b]
-                px-3
-                text-xs
+                border-red-500/20
+                bg-black/20
+                px-4
+                py-2
+                text-sm
                 font-medium
-                text-white/45
+                text-red-300
                 transition
-                hover:border-white/[0.14]
-                hover:bg-white/[0.03]
-                hover:text-white
+                hover:bg-red-500/10
                 disabled:cursor-not-allowed
-                disabled:opacity-40
+                disabled:opacity-50
               "
-              aria-label="Refresh savings"
             >
               <RefreshCw
-                size={14}
-                strokeWidth={
-                  1.8
-                }
                 className={
-                  refreshing
-                    ? "animate-spin"
-                    : ""
+                  isRefreshing
+                    ? "h-4 w-4 animate-spin"
+                    : "h-4 w-4"
                 }
               />
 
-              <span className="hidden sm:inline">
-                Refresh
-              </span>
+              Retry
+            
             </button>
           </div>
+        )}
 
-          {/* =================================================
-              ERROR
-          ================================================= */}
+        {/* DESKTOP SUMMARY */}
 
-          {hasDataError && (
-            <div
-              role="alert"
-              className="
-                flex
-                items-start
-                gap-3
-                rounded-2xl
-                border
-                border-red-500/15
-                bg-red-500/[0.05]
-                px-4
-                py-3
-              "
-            >
-              <AlertCircle
-                size={17}
-                className="
-                  mt-0.5
-                  shrink-0
-                  text-red-400
-                "
-              />
-
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-red-400">
-                  Savings data could not be loaded completely.
-                </p>
-
-                {summaryError && (
-                  <p className="mt-1 text-[11px] text-red-400/60">
-                    Summary:{" "}
-                    {
-                      summaryError
-                    }
-                  </p>
-                )}
-
-                {transactionsError && (
-                  <p className="mt-1 text-[11px] text-red-400/60">
-                    Transactions:{" "}
-                    {
-                      transactionsError
-                    }
-                  </p>
-                )}
+        <section className="mt-6 hidden grid-cols-5 gap-4 lg:grid">
+          <div className="rounded-2xl border border-white/[0.08] bg-[#0b0b0b] p-5">
+            <div className="flex items-center justify-between">
+              <div className="rounded-xl bg-blue-500/10 p-2.5 text-blue-400">
+                <Wallet className="h-5 w-5" />
               </div>
 
-              <button
-                type="button"
-                onClick={
-                  handleRefresh
-                }
-                disabled={
-                  refreshing
-                }
-                className="
-                  ml-auto
-                  shrink-0
-                  rounded-lg
-                  px-2.5
-                  py-1.5
-                  text-[11px]
-                  font-medium
-                  text-red-400
-                  transition
-                  hover:bg-red-500/10
-                  disabled:cursor-not-allowed
-                  disabled:opacity-40
-                "
-              >
-                Retry
-              </button>
+              <span className="text-xs font-medium text-white/25">
+                BALANCE
+              </span>
             </div>
-          )}
 
-          {/* =================================================
-              SUMMARY
-          ================================================= */}
+            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-white/35">
+              Total Savings
+            </p>
 
-          <section
-            aria-label="Savings summary"
-            className="
-              grid
-              grid-cols-2
-              gap-3
-              lg:grid-cols-5
-            "
-          >
-            <SummaryCard
-              label="Balance"
-              value={formatKES(
-                summary.totalBalance
-              )}
-              icon={
-                <Wallet
-                  size={17}
-                  strokeWidth={
-                    1.8
-                  }
-                />
-              }
-              loading={
-                summaryLoading
-              }
-              valueClassName="text-emerald-400"
-            />
+            <p className="mt-1 text-2xl font-bold tracking-tight text-white">
+              {isSummaryLoading
+                ? "—"
+                : formatKES(
+                    calculatedBalance,
+                  )}
+            </p>
 
-            <SummaryCard
-              label="Deposits"
-              value={formatKES(
-                summary.totalDeposits
-              )}
-              icon={
-                <ArrowDownLeft
-                  size={17}
-                  strokeWidth={
-                    1.8
-                  }
-                />
-              }
-              loading={
-                summaryLoading
-              }
-              valueClassName="text-emerald-400"
-            />
+            <p className="mt-2 text-xs text-white/25">
+              Deposits − Withdrawals −
+              Reversals
+            </p>
+          </div>
 
-            <SummaryCard
-              label="Adjustments"
-              value={formatKES(
-                summary.totalAdjustments
-              )}
-              icon={
-                <FileEdit
-                  size={17}
-                  strokeWidth={
-                    1.8
-                  }
-                />
-              }
-              loading={
-                summaryLoading
-              }
-            />
+          <div className="rounded-2xl border border-white/[0.08] bg-[#0b0b0b] p-5">
+            <div className="flex items-center justify-between">
+              <div className="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-400">
+                <ArrowDownLeft className="h-5 w-5" />
+              </div>
 
-            <SummaryCard
-              label="Reversals"
-              value={formatKES(
-                summary.totalReversals
-              )}
-              icon={
-                <RotateCcw
-                  size={17}
-                  strokeWidth={
-                    1.8
-                  }
-                />
-              }
-              loading={
-                summaryLoading
-              }
-              valueClassName="text-red-400"
-            />
+              <span className="text-xs font-medium text-white/25">
+                DEPOSITS
+              </span>
+            </div>
 
-            <SummaryCard
-              label="Members"
-              value={String(
-                summary.memberCount
-              )}
-              icon={
-                <Users
-                  size={17}
-                  strokeWidth={
-                    1.8
-                  }
-                />
-              }
-              loading={
-                summaryLoading
-              }
-            />
-          </section>
+            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-white/35">
+              Total Deposits
+            </p>
 
-          {/* =================================================
-              SEARCH
-          ================================================= */}
+            <p className="mt-1 text-2xl font-bold tracking-tight text-white">
+              {isSummaryLoading
+                ? "—"
+                : formatKES(
+                    deposits,
+                  )}
+            </p>
+          </div>
 
+          <div className="rounded-2xl border border-white/[0.08] bg-[#0b0b0b] p-5">
+            <div className="flex items-center justify-between">
+              <div className="rounded-xl bg-yellow-500/10 p-2.5 text-yellow-400">
+                <FileEdit className="h-5 w-5" />
+              </div>
+
+              <span className="text-xs font-medium text-white/25">
+                WITHDRAWALS
+              </span>
+            </div>
+
+            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-white/35">
+              Total Withdrawals
+            </p>
+
+            <p className="mt-1 text-2xl font-bold tracking-tight text-white">
+              {isSummaryLoading
+                ? "—"
+                : formatKES(
+                    withdrawals,
+                  )}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-white/[0.08] bg-[#0b0b0b] p-5">
+            <div className="flex items-center justify-between">
+              <div className="rounded-xl bg-red-500/10 p-2.5 text-red-400">
+                <RotateCcw className="h-5 w-5" />
+              </div>
+
+              <span className="text-xs font-medium text-white/25">
+                REVERSALS
+              </span>
+            </div>
+
+            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-white/35">
+              Total Reversals
+            </p>
+
+            <p className="mt-1 text-2xl font-bold tracking-tight text-white">
+              {isSummaryLoading
+                ? "—"
+                : formatKES(
+                    reversals,
+                  )}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-white/[0.08] bg-[#0b0b0b] p-5">
+            <div className="flex items-center justify-between">
+              <div className="rounded-xl bg-purple-500/10 p-2.5 text-purple-400">
+                <Users className="h-5 w-5" />
+              </div>
+
+              <span className="text-xs font-medium text-white/25">
+                MEMBERS
+              </span>
+            </div>
+
+            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-white/35">
+              Members with Savings
+            </p>
+
+            <p className="mt-1 text-2xl font-bold tracking-tight text-white">
+              {isSummaryLoading
+                ? "—"
+                : summary.memberCount.toLocaleString(
+                    "en-KE",
+                  )}
+            </p>
+          </div>
+        </section>
+
+        {/* MOBILE SUMMARY */}
+
+        <section className="mt-5 lg:hidden">
+          <OverviewCard
+            eyebrow="Savings Overview"
+            value={
+              isSummaryLoading
+                ? "—"
+                : formatKES(
+                    calculatedBalance,
+                  )
+            }
+            description="Authoritative ledger balance"
+            icon={
+              <Wallet
+                size={19}
+                strokeWidth={1.8}
+              />
+            }
+            footerLabel="Open savings"
+            footerHref="/dashboard/savings"
+            metrics={[
+              {
+                label:
+                  "Deposits",
+                value:
+                  isSummaryLoading
+                    ? "—"
+                    : formatKES(
+                        deposits,
+                      ),
+              },
+              {
+                label:
+                  "Withdrawals",
+                value:
+                  isSummaryLoading
+                    ? "—"
+                    : formatKES(
+                        withdrawals,
+                      ),
+              },
+              {
+                label:
+                  "Reversals",
+                value:
+                  isSummaryLoading
+                    ? "—"
+                    : formatKES(
+                        reversals,
+                      ),
+              },
+            ]}
+          />
+        </section>
+
+        {/* SEARCH */}
+
+        <section className="mt-6">
           <SavingsSearch
-            value={filters}
+            value={
+              filters
+            }
             onChange={
               setFilters
             }
+            onReset={() =>
+              setFilters(
+                DEFAULT_FILTERS,
+              )
+            }
           />
+        </section>
 
-          {/* =================================================
-              TRANSACTION COUNT
-          ================================================= */}
+        {/* TRANSACTIONS */}
 
-          {!transactionsLoading &&
-            !transactionsError && (
-              <div
-                className="
-                  flex
-                  items-center
-                  justify-between
-                  gap-3
-                "
-              >
-                <div className="flex items-center gap-2">
-                  <Wallet
-                    size={15}
-                    strokeWidth={
-                      1.8
-                    }
-                    className="text-yellow-400/70"
-                  />
+        <section className="mt-5">
+          {/* DESKTOP */}
 
-                  <span className="text-xs text-white/30">
-                    Showing{" "}
-                    <span className="font-medium text-white/55">
-                      {
-                        filteredTransactions.length
-                      }
-                    </span>{" "}
-                    of{" "}
-                    <span className="font-medium text-white/55">
-                      {
-                        transactionsTotal
-                      }
-                    </span>{" "}
-                    transactions
-                  </span>
-                </div>
-
-                {filteredTransactions.length !==
-                  transactions.length && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setFilters(
-                        DEFAULT_FILTERS
-                      )
-                    }
-                    className="
-                      text-[11px]
-                      font-medium
-                      text-yellow-400/70
-                      transition
-                      hover:text-yellow-400
-                    "
-                  >
-                    Clear filters
-                  </button>
-                )}
-              </div>
-            )}
-
-          {/* =================================================
-              DESKTOP TABLE
-          ================================================= */}
-
-          <div className="hidden md:block">
+          <div className="hidden lg:block">
             <SavingsTable
               transactions={
                 filteredTransactions
               }
               loading={
-                transactionsLoading
+                isTransactionsLoading
               }
               onAdjust={
                 handleAdjust
@@ -2621,87 +2544,67 @@ export default function SavingsPage() {
             />
           </div>
 
-          {/* =================================================
-              MOBILE TRANSACTIONS
-          ================================================= */}
+          {/* MOBILE */}
 
-          <div className="md:hidden">
-            {transactionsLoading ? (
+          <div className="lg:hidden">
+            <div className="mb-3 flex items-end justify-between px-1">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/30">
+                  Transactions
+                </p>
+
+                <p className="mt-1 text-[10px] text-white/20">
+                  Swipe left or right
+                  for more
+                </p>
+              </div>
+
+              <span className="text-[9px] text-[#4da3ff]/70">
+                {filteredTransactions.length.toLocaleString(
+                  "en-KE",
+                )}
+              </span>
+            </div>
+
+            {isTransactionsLoading ? (
               <div
                 className="
-                  flex
-                  snap-x
-                  snap-mandatory
-                  gap-3
-                  overflow-x-auto
-                  overscroll-x-contain
-                  pb-2
-                  [scrollbar-width:none]
-                  [-ms-overflow-style:none]
-                  [&::-webkit-scrollbar]:hidden
-                "
-              >
-                {Array.from(
-                  {
-                    length: 5,
-                  },
-                  (_, index) => (
-                    <div
-                      key={index}
-                      className="
-                        h-[190px]
-                        w-[calc(100vw-2rem)]
-                        max-w-[calc(100vw-2rem)]
-                        shrink-0
-                        snap-center
-                        animate-pulse
-                        rounded-2xl
-                        border
-                        border-white/[0.08]
-                        bg-[#0b0b0b]
-                      "
-                    />
-                  )
-                )}
-              </div>
-            ) : transactionsError ? (
-              <section
-                className="
-                  rounded-2xl
+                  animate-pulse
+                  overflow-hidden
+                  rounded-[20px]
                   border
-                  border-red-500/15
-                  bg-[#0b0b0b]
-                  px-6
-                  py-12
-                  text-center
+                  border-white/[0.07]
+                  bg-white/[0.025]
+                  p-4
                 "
               >
-                <div
-                  className="
-                    mx-auto
-                    flex
-                    h-12
-                    w-12
-                    items-center
-                    justify-center
-                    rounded-2xl
-                    bg-red-500/10
-                    text-red-400
-                  "
-                >
-                  <AlertCircle
-                    size={21}
-                    strokeWidth={
-                      1.8
-                    }
-                  />
+                <div className="flex items-center gap-3">
+                  <div className="h-9 w-9 rounded-xl bg-white/[0.06]" />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="h-2.5 w-28 rounded bg-white/[0.06]" />
+
+                    <div className="mt-2 h-2 w-36 rounded bg-white/[0.04]" />
+                  </div>
+
+                  <div className="h-2 w-10 rounded bg-white/[0.04]" />
                 </div>
 
-                <p className="mt-4 text-sm font-medium text-white/60">
+                <div className="mt-4 flex items-end justify-between gap-4">
+                  <div className="h-2 w-32 rounded bg-white/[0.04]" />
+
+                  <div className="h-4 w-24 rounded bg-white/[0.06]" />
+                </div>
+              </div>
+            ) : transactionsError ? (
+              <div className="rounded-[20px] border border-red-500/20 bg-red-500/10 p-5 text-center">
+                <AlertCircle className="mx-auto h-7 w-7 text-red-400" />
+
+                <p className="mt-3 font-medium text-red-300">
                   Failed to load transactions
                 </p>
 
-                <p className="mt-1 text-xs leading-5 text-white/25">
+                <p className="mt-1 text-sm text-red-300/60">
                   {transactionsError}
                 </p>
 
@@ -2711,190 +2614,195 @@ export default function SavingsPage() {
                     handleRefresh
                   }
                   disabled={
-                    refreshing
+                    refreshDisabled ===
+                    true
                   }
-                  className="
-                    mt-5
-                    inline-flex
-                    items-center
-                    gap-2
-                    rounded-xl
-                    bg-yellow-500
-                    px-4
-                    py-2.5
-                    text-xs
-                    font-semibold
-                    text-black
-                    transition
-                    hover:bg-yellow-400
-                    disabled:cursor-not-allowed
-                    disabled:opacity-50
-                  "
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-yellow-500 px-4 py-2 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {refreshing ? (
-                    <Loader2
-                      size={14}
-                      className="animate-spin"
-                    />
-                  ) : (
-                    <RefreshCw
-                      size={14}
-                    />
-                  )}
+                  <RefreshCw className="h-4 w-4" />
 
-                  Try Again
+                  Retry
                 </button>
-              </section>
+              </div>
             ) : filteredTransactions.length ===
               0 ? (
-              <section
-                className="
-                  rounded-2xl
-                  border
-                  border-white/[0.08]
-                  bg-[#0b0b0b]
-                  px-6
-                  py-14
-                  text-center
-                "
-              >
-                <div
-                  className="
-                    mx-auto
-                    flex
-                    h-12
-                    w-12
-                    items-center
-                    justify-center
-                    rounded-2xl
-                    bg-yellow-500/10
-                    text-yellow-400
-                  "
-                >
-                  <Wallet
-                    size={21}
-                    strokeWidth={1.8}
-                  />
-                </div>
+              <div className="rounded-[20px] border border-white/[0.08] bg-white/[0.025] p-8 text-center">
+                <Wallet className="mx-auto h-8 w-8 text-white/20" />
 
-                <p className="mt-4 text-sm font-medium text-white/60">
-                  No savings transactions found
+                <p className="mt-3 font-medium text-white/70">
+                  No savings transactions
+                  found
                 </p>
 
-                <p className="mt-1 text-xs text-white/25">
-                  Transactions matching the current filters
-                  will appear here.
+                <p className="mt-1 text-sm text-white/30">
+                  Try changing your search or
+                  filters.
                 </p>
-
-                {transactions.length >
-                  0 && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setFilters(
-                        DEFAULT_FILTERS
-                      )
-                    }
-                    className="
-                      mt-4
-                      text-xs
-                      font-medium
-                      text-yellow-400/70
-                      transition
-                      hover:text-yellow-400
-                    "
-                  >
-                    Clear filters
-                  </button>
-                )}
-              </section>
+              </div>
             ) : (
-              <div
-                className="
-                  -mx-4
-                  overflow-hidden
-                  sm:-mx-6
-                "
-              >
+              <>
+                {/* =================================================
+                    ONE CARD PER VIEWPORT
+
+                    Native horizontal scrolling gives us:
+                    - one card visible at a time
+                    - swipe left/right
+                    - snap-to-card
+                    - smooth Android touch interaction
+                ================================================= */}
+
                 <div
                   className="
-                    flex
-                    snap-x
-                    snap-mandatory
-                    gap-3
+                    -mx-4
                     overflow-x-auto
                     overscroll-x-contain
+                    scroll-smooth
+                    snap-x
+                    snap-mandatory
                     px-4
-                    pb-3
-                    sm:px-6
-                    [scrollbar-width:none]
+                    pb-2
                     [-ms-overflow-style:none]
+                    [scrollbar-width:none]
                     [&::-webkit-scrollbar]:hidden
                   "
                   style={{
-                    WebkitOverflowScrolling:
-                      "touch",
+                    touchAction:
+                      "pan-x",
                   }}
                 >
-                  {filteredTransactions.map(
-                    (
-                      transaction
-                    ) => (
-                      <div
-                        key={
-                          transaction.id
-                        }
-                        className="
-                          w-[calc(100vw-2rem)]
-                          max-w-[calc(100vw-2rem)]
-                          shrink-0
-                          snap-center
-                          sm:w-[calc(100vw-3rem)]
-                          sm:max-w-[calc(100vw-3rem)]
-                        "
-                      >
-                        <SavingsTransactionCard
-                          transaction={
-                            transaction
+                  <div className="flex gap-3">
+                    {filteredTransactions.map(
+                      (
+                        transaction,
+                      ) => (
+                        <div
+                          key={
+                            transaction.id
                           }
-                          onAdjust={
-                            handleAdjust
-                          }
-                          onReverse={
-                            handleReverse
-                          }
-                        />
-                      </div>
-                    )
-                  )}
+                          className="
+                            w-full
+                            min-w-full
+                            shrink-0
+                            snap-center
+                          "
+                        >
+                          <SavingsTransactionCard
+                            transaction={
+                              transaction
+                            }
+                            onAdjust={
+                              handleAdjust
+                            }
+                            onReverse={
+                              handleReverse
+                            }
+                          />
+                        </div>
+                      ),
+                    )}
+                  </div>
                 </div>
-              </div>
+
+                {/* SWIPE HINT */}
+
+                {filteredTransactions.length >
+                  1 && (
+                  <div className="mt-3 flex items-center justify-center gap-1.5">
+                    <span className="text-[9px] text-white/20">
+                      ←
+                    </span>
+
+                    <div className="flex items-center gap-1">
+                      {filteredTransactions
+                        .slice(
+                          0,
+                          Math.min(
+                            filteredTransactions.length,
+                            8,
+                          ),
+                        )
+                        .map(
+                          (
+                            transaction,
+                            index,
+                          ) => (
+                            <span
+                              key={
+                                transaction.id
+                              }
+                              className={`
+                                h-1 rounded-full
+                                transition-all
+                                ${
+                                  index ===
+                                  0
+                                    ? "w-4 bg-[#4da3ff]"
+                                    : "w-1.5 bg-white/15"
+                                }
+                              `}
+                            />
+                          ),
+                        )}
+                    </div>
+
+                    <span className="text-[9px] text-white/20">
+                      →
+                    </span>
+                  </div>
+                )}
+              </>
             )}
           </div>
-        </div>
+
+          {/* COUNT */}
+
+          <div className="mt-4 flex items-center justify-between text-xs text-white/25">
+            <span>
+              Showing{" "}
+              {
+                filteredTransactions.length
+              }{" "}
+              of{" "}
+              {
+                transactionsTotal
+              }{" "}
+              transactions
+            </span>
+
+            {isRefreshing && (
+              <span className="inline-flex items-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Refreshing…
+              </span>
+            )}
+          </div>
+        </section>
       </main>
 
-      {/* =====================================================
-          ADD SAVINGS
-      ===================================================== */}
+      {/* SAVINGS FORM */}
 
-      <SavingsForm
-        open={
-          formOpen
-        }
-        onClose={
-          handleCloseForm
-        }
-        onSuccess={
-          handleSavingsSuccess
-        }
-      />
+      {formOpen && (
+        <SavingsForm
+          open={
+            formOpen
+          }
+          onClose={() =>
+            setFormOpen(false)
+          }
+          onSuccess={
+            handleSavingsSuccess
+          }
+        />
+      )}
 
-      {/* =====================================================
-          ADJUST / REVERSE MODAL
-      ===================================================== */}
+      {/* ACTION MODAL */}
 
       <SavingsActionModal
+        open={
+          action !== null &&
+          actionTransaction !==
+            null
+        }
         action={
           action
         }
@@ -2920,12 +2828,13 @@ export default function SavingsPage() {
           setActionReason
         }
         onClose={
-          handleCloseAction
+          closeActionModal
         }
         onSubmit={
           handleSubmitAction
         }
       />
-    </>
+    </div>
   );
 }
+

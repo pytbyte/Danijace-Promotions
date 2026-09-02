@@ -1,26 +1,59 @@
+/**
+ * =========================================================
+ * GEO-SHUA
+ * SAVINGS TRANSACTIONS API
+ * =========================================================
+ *
+ * GET  /api/savings/transactions
+ * POST /api/savings/transactions
+ *
+ * Production savings transaction API.
+ *
+ * IMPORTANT:
+ * ---------------------------------------------------------
+ * - Savings has NO saccoId.
+ * - POST creates DEPOSITS only.
+ * - Deposit amounts must always be positive.
+ * - Adjustments and reversals are handled by their
+ *   dedicated domain operations.
+ * - Financial validation belongs to the savings service.
+ * - Authentication is required for every operation.
+ * - Client-supplied identity is never trusted for recordedBy.
+ *
+ * Ledger conventions:
+ *
+ *   deposit    = positive
+ *   adjustment = signed delta
+ *   reversal   = negative
+ *
+ * The savings service remains responsible for:
+ *
+ *   - account existence
+ *   - account ownership
+ *   - member ownership
+ *   - account status
+ *   - duplicate detection
+ *   - ledger insertion
+ *   - balance update
+ *   - financial invariants
+ *
+ * =========================================================
+ */
+
 import { NextResponse } from "next/server";
 
-import {
-  auth,
-} from "@/auth";
+import { auth } from "@/auth";
 
 import {
   createSavingsDeposit,
   getSavingsTransactions,
-  type GetSavingsTransactionsOptions,
   type CreateSavingsDepositInput,
+  type GetSavingsTransactionsOptions,
 } from "@/lib/savings/service";
 
 import type {
   SavingsTransaction,
 } from "@/lib/savings/types";
-
-/* =========================================================
-   FIXED SACCO
-========================================================= */
-
-const SACCO_ID = "geoshua";
-const SACCO_NAME = "GEO-SHUA";
 
 /* =========================================================
    RESPONSE HELPERS
@@ -37,6 +70,9 @@ function errorResponse(
     },
     {
       status,
+      headers: {
+        "Cache-Control": "no-store",
+      },
     }
   );
 }
@@ -52,6 +88,9 @@ function successResponse<T>(
     },
     {
       status,
+      headers: {
+        "Cache-Control": "no-store",
+      },
     }
   );
 }
@@ -94,34 +133,34 @@ function getPositiveAmount(
 function isSavingsTransactionType(
   value: string
 ): value is SavingsTransaction["type"] {
-  return [
-    "deposit",
-    "adjustment",
-    "reversal",
-  ].includes(value);
+  return (
+    value === "deposit" ||
+    value === "adjustment" ||
+    value === "reversal"
+  );
 }
 
 function isSavingsTransactionSource(
   value: string
 ): value is SavingsTransaction["source"] {
-  return [
-    "mpesa",
-    "bank",
-    "cash",
-    "sms",
-    "system",
-    "manual",
-  ].includes(value);
+  return (
+    value === "mpesa" ||
+    value === "bank" ||
+    value === "cash" ||
+    value === "sms" ||
+    value === "system" ||
+    value === "manual"
+  );
 }
 
 function isSavingsTransactionStatus(
   value: string
 ): value is SavingsTransaction["status"] {
-  return [
-    "pending",
-    "confirmed",
-    "reversed",
-  ].includes(value);
+  return (
+    value === "pending" ||
+    value === "confirmed" ||
+    value === "reversed"
+  );
 }
 
 /* =========================================================
@@ -130,27 +169,33 @@ function isSavingsTransactionStatus(
 ========================================================= */
 
 /**
- * Query parameters:
+ * Supported query parameters:
  *
  * page
  * limit
  * memberId
  * savingsAccountId
- * saccoId
  * type
  * source
  * status
  *
- * SACCO is fixed to GEO-SHUA for now.
+ * NOTE:
+ * ---------------------------------------------------------
+ * There is intentionally NO saccoId filter.
+ *
+ * Savings currently belongs to the GEO-SHUA application
+ * and the savings domain does not contain saccoId.
  */
 export async function GET(
   request: Request
 ) {
   try {
-    /**
-     * Require authentication.
-     */
-    const session = await auth();
+    /* =====================================================
+       AUTHENTICATION
+    ===================================================== */
+
+    const session =
+      await auth();
 
     if (!session?.user) {
       return errorResponse(
@@ -158,6 +203,10 @@ export async function GET(
         401
       );
     }
+
+    /* =====================================================
+       QUERY PARAMETERS
+    ===================================================== */
 
     const { searchParams } =
       new URL(request.url);
@@ -180,11 +229,6 @@ export async function GET(
         )
       );
 
-    const requestedSaccoId =
-      getString(
-        searchParams.get("saccoId")
-      );
-
     const typeParam =
       getString(
         searchParams.get("type")
@@ -200,69 +244,48 @@ export async function GET(
         searchParams.get("status")
       );
 
-    /**
-     * At this stage there is only one SACCO.
-     *
-     * We deliberately ignore a different SACCO ID
-     * supplied by the client instead of allowing the
-     * client to query another SACCO.
-     */
-    const saccoId =
-      requestedSaccoId &&
-      requestedSaccoId !== SACCO_ID
-        ? SACCO_ID
-        : SACCO_ID;
+    /* =====================================================
+       PAGINATION
+    ===================================================== */
 
-    /**
-     * Parse pagination.
-     *
-     * The service performs the final safety limits,
-     * but we still normalize the values here.
-     */
-    const page =
-      pageParam !== null
-        ? Number(pageParam)
-        : undefined;
+    let page:
+      number | undefined;
 
-    const limit =
-      limitParam !== null
-        ? Number(limitParam)
-        : undefined;
+    if (pageParam !== null) {
+      page = Number(pageParam);
 
-    if (
-      page !== undefined &&
-      (
-        !Number.isFinite(page) ||
+      if (
+        !Number.isInteger(page) ||
         page < 1
-      )
-    ) {
-      return errorResponse(
-        "Invalid page number.",
-        400
-      );
+      ) {
+        return errorResponse(
+          "Invalid page number.",
+          400
+        );
+      }
     }
 
-    if (
-      limit !== undefined &&
-      (
-        !Number.isFinite(limit) ||
+    let limit:
+      number | undefined;
+
+    if (limitParam !== null) {
+      limit = Number(limitParam);
+
+      if (
+        !Number.isInteger(limit) ||
         limit < 1
-      )
-    ) {
-      return errorResponse(
-        "Invalid limit.",
-        400
-      );
+      ) {
+        return errorResponse(
+          "Invalid limit.",
+          400
+        );
+      }
     }
 
-    /**
-     * Validate transaction filters using the
-     * actual SavingsTransaction types.
-     *
-     * This avoids the previous TS2339 issue where
-     * optional properties were accessed through
-     * GetSavingsTransactionsOptions | undefined.
-     */
+    /* =====================================================
+       TRANSACTION TYPE
+    ===================================================== */
+
     let type:
       SavingsTransaction["type"] |
       undefined;
@@ -281,6 +304,10 @@ export async function GET(
 
       type = typeParam;
     }
+
+    /* =====================================================
+       TRANSACTION SOURCE
+    ===================================================== */
 
     let source:
       SavingsTransaction["source"] |
@@ -301,6 +328,10 @@ export async function GET(
       source = sourceParam;
     }
 
+    /* =====================================================
+       TRANSACTION STATUS
+    ===================================================== */
+
     let status:
       SavingsTransaction["status"] |
       undefined;
@@ -320,23 +351,24 @@ export async function GET(
       status = statusParam;
     }
 
-    /**
-     * Build service options explicitly.
-     */
+    /* =====================================================
+       SERVICE OPTIONS
+    ===================================================== */
+
     const options:
       GetSavingsTransactionsOptions = {
       page,
       limit,
-
       memberId,
-
       savingsAccountId,
       type,
-
       source,
-
       status,
     };
+
+    /* =====================================================
+       FETCH TRANSACTIONS
+    ===================================================== */
 
     const result =
       await getSavingsTransactions(
@@ -348,7 +380,7 @@ export async function GET(
     );
   } catch (error) {
     console.error(
-      "GET /api/savings/transactions error:",
+      "[GET /api/savings/transactions]",
       error
     );
 
@@ -367,24 +399,30 @@ export async function GET(
 ========================================================= */
 
 /**
- * Create a savings deposit.
+ * Create a savings DEPOSIT.
  *
- * SACCO information is ALWAYS supplied by this
- * API rather than trusted from the client.
+ * This endpoint intentionally creates deposits only.
  *
- * Current SACCO:
+ * Do NOT use this endpoint to create:
  *
- * saccoId   = geoshua
- * saccoName = GEO-SHUA
+ *   - adjustments
+ *   - withdrawals
+ *   - reversals
+ *
+ * Those operations must go through their dedicated
+ * domain operations so that their financial invariants
+ * cannot be bypassed.
  */
 export async function POST(
   request: Request
 ) {
   try {
-    /**
-     * Require authentication.
-     */
-    const session = await auth();
+    /* =====================================================
+       AUTHENTICATION
+    ===================================================== */
+
+    const session =
+      await auth();
 
     if (!session?.user) {
       return errorResponse(
@@ -393,9 +431,10 @@ export async function POST(
       );
     }
 
-    /**
-     * Parse request body.
-     */
+    /* =====================================================
+       REQUEST BODY
+    ===================================================== */
+
     let body: unknown;
 
     try {
@@ -424,9 +463,10 @@ export async function POST(
         unknown
       >;
 
-    /**
-     * Required fields.
-     */
+    /* =====================================================
+       SAVINGS ACCOUNT
+    ===================================================== */
+
     const savingsAccountId =
       getString(
         payload.savingsAccountId
@@ -438,6 +478,10 @@ export async function POST(
         400
       );
     }
+
+    /* =====================================================
+       MEMBER
+    ===================================================== */
 
     const memberId =
       getString(
@@ -463,6 +507,10 @@ export async function POST(
       );
     }
 
+    /* =====================================================
+       AMOUNT
+    ===================================================== */
+
     const amount =
       getPositiveAmount(
         payload.amount
@@ -474,6 +522,10 @@ export async function POST(
         400
       );
     }
+
+    /* =====================================================
+       SOURCE
+    ===================================================== */
 
     const source =
       getString(
@@ -498,9 +550,10 @@ export async function POST(
       );
     }
 
-    /**
-     * Optional fields.
-     */
+    /* =====================================================
+       OPTIONAL EXTERNAL REFERENCES
+    ===================================================== */
+
     const reference =
       getString(
         payload.reference
@@ -516,16 +569,15 @@ export async function POST(
         payload.sourceReference
       );
 
+    /* =====================================================
+       TRANSACTION DATE
+    ===================================================== */
+
     const transactionAt =
       getString(
         payload.transactionAt
       );
 
-    /**
-     * Validate transaction date if supplied.
-     *
-     * We do not silently convert invalid dates.
-     */
     if (transactionAt) {
       const parsedDate =
         new Date(transactionAt);
@@ -542,68 +594,64 @@ export async function POST(
       }
     }
 
-    /**
-     * recordedBy is deliberately built from the
-     * authenticated session where possible.
+    /* =====================================================
+       RECORDED BY
+    ===================================================== */
+
+    /*
+     * Never trust recordedBy from the client.
      *
-     * The service accepts a recordedBy object,
-     * but we do not trust arbitrary client identity
-     * information.
+     * The authenticated session is the source of identity.
      */
     const recordedBy =
       session.user.email
         ? {
             id:
               session.user.email,
+
             name:
               session.user.name ||
               session.user.email,
+
             email:
               session.user.email,
           }
         : undefined;
 
-    /**
-     * SACCO values are controlled by the API.
-     *
-     * The client cannot submit another SACCO.
-     */
+    /* =====================================================
+       DEPOSIT INPUT
+    ===================================================== */
+
     const deposit:
       CreateSavingsDepositInput = {
       savingsAccountId,
-
       memberId,
-
-
       memberName,
-
-
       amount,
-
       source,
-
       reference,
-
       smsId,
-
       sourceReference,
-
       transactionAt,
-
       recordedBy,
     };
 
-    /**
-     * Service performs the authoritative checks:
+    /* =====================================================
+       CREATE DEPOSIT
+    ===================================================== */
+
+    /*
+     * The service is authoritative.
      *
-     * - account existence
-     * - account ownership
-     * - SACCO ownership
-     * - account status
-     * - transaction validation
-     * - duplicate detection
-     * - ledger insertion
-     * - cached balance update
+     * It must verify:
+     *
+     *   - account exists
+     *   - account belongs to member
+     *   - account is active
+     *   - member exists
+     *   - duplicate transaction does not exist
+     *   - ledger entry is valid
+     *   - cached balance is updated correctly
      */
     const transaction =
       await createSavingsDeposit(
@@ -616,15 +664,10 @@ export async function POST(
     );
   } catch (error) {
     console.error(
-      "POST /api/savings/transactions error:",
+      "[POST /api/savings/transactions]",
       error
     );
 
-    /**
-     * Duplicate external transactions are handled
-     * idempotently by the service and normally return
-     * the existing transaction.
-     */
     return errorResponse(
       error instanceof Error
         ? error.message

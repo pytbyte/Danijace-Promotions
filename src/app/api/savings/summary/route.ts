@@ -8,30 +8,53 @@
  *
  * Production financial dashboard summary.
  *
- * IMPORTANT:
+ * FINANCIAL MODEL
  * ---------------------------------------------------------
- * - Savings has NO saccoId.
- * - savings_transactions is the authoritative ledger.
- * - savingsAccounts.balance is only a cache.
- * - Pending transactions do NOT affect financial totals.
- * - Reversal transactions are stored as negative amounts.
- * - Original reversed deposits are excluded from the
- *   deposit total because the reversal offsets them.
- * - Adjustments are signed ledger deltas.
- * - No financial records are modified or deleted here.
+ *
+ * Deposit:
+ *   Positive ledger entry.
+ *
+ * Adjustment:
+ *   Withdrawal/correction.
+ *   Public amount is positive.
+ *   Stored amount SHOULD be negative.
+ *
+ * Reversal:
+ *   Cancellation of a deposit.
+ *   Stored amount SHOULD be negative.
+ *
+ * Dashboard:
+ *
+ *   Gross Deposits
+ *        -
+ *   Withdrawals / Adjustments
+ *        -
+ *   Reversals
+ *        =
+ *   Current Balance
+ *
+ * IMPORTANT
+ * ---------------------------------------------------------
+ *
+ * 1. Savings has NO saccoId.
+ * 2. savings_transactions is authoritative.
+ * 3. savingsAccounts.balance is only a cache.
+ * 4. Pending transactions do NOT affect totals.
+ * 5. Original transaction amounts are never changed.
+ * 6. Reversals are separate ledger transactions.
+ * 7. Adjustments are separate ledger transactions.
+ * 8. Dashboard deduction values are positive magnitudes.
+ * 9. Legacy positive adjustment/reversal records are handled
+ *    safely using $abs.
+ * 10. Balance is reconstructed from financial categories.
+ * 11. Reversed deposits remain part of gross deposits.
  *
  * =========================================================
  */
 
-import {
-  NextResponse,
-} from "next/server";
+import { NextResponse } from "next/server";
 
 import clientPromise from "@/lib/mongodb";
-
-import {
-  getSavingsAccount,
-} from "@/lib/savings/service";
 
 /* =========================================================
    CONSTANTS
@@ -60,11 +83,40 @@ type SavingsSummary = {
 };
 
 /* =========================================================
+   AGGREGATION RESULT
+========================================================= */
+
+type LedgerSummary = {
+  _id: null;
+
+  /*
+   * Gross deposits.
+   *
+   * Always exposed as a positive magnitude.
+   */
+  totalDeposits: number;
+
+  /*
+   * Withdrawals / adjustments.
+   *
+   * Always exposed as a positive magnitude.
+   */
+  totalAdjustments: number;
+
+  /*
+   * Reversals.
+   *
+   * Always exposed as a positive magnitude.
+   */
+  totalReversals: number;
+};
+
+/* =========================================================
    SAFE NUMBER
 ========================================================= */
 
 function safeNumber(
-  value: unknown
+  value: unknown,
 ): number {
   if (
     typeof value !== "number" ||
@@ -84,6 +136,10 @@ export async function GET(): Promise<
   NextResponse
 > {
   try {
+    /* =====================================================
+       DATABASE
+    ===================================================== */
+
     const client =
       await clientPromise;
 
@@ -92,35 +148,39 @@ export async function GET(): Promise<
 
     const accounts =
       db.collection(
-        ACCOUNT_COLLECTION
+        ACCOUNT_COLLECTION,
       );
 
     const transactions =
       db.collection(
-        TRANSACTION_COLLECTION
+        TRANSACTION_COLLECTION,
       );
 
-    /*
-     * =====================================================
-     * AUTHORITATIVE LEDGER SUMMARY
-     * =====================================================
-     *
-     * Only confirmed financial transactions participate.
-     *
-     * Pending transactions are deliberately excluded.
-     *
-     * A reversal is a negative transaction and therefore
-     * naturally reduces the total balance.
-     */
+    /* =====================================================
+       AUTHORITATIVE LEDGER SUMMARY
+    ===================================================== */
+
     const result =
       await transactions
-        .aggregate<{
-          _id: null;
-          totalBalance: number;
-          totalDeposits: number;
-          totalAdjustments: number;
-          totalReversals: number;
-        }>([
+        .aggregate<LedgerSummary>([
+          /* -------------------------------------------------
+             ONLY FINANCIAL TRANSACTIONS
+          ------------------------------------------------- */
+
+          /*
+           * Pending transactions must never affect the
+           * dashboard.
+           *
+           * We intentionally include every non-pending
+           * status here, including:
+           *
+           *   confirmed
+           *   reversed
+           *
+           * because reversed deposits remain part of gross
+           * deposits and are cancelled by their separate
+           * reversal transaction.
+           */
           {
             $match: {
               status: {
@@ -129,118 +189,95 @@ export async function GET(): Promise<
             },
           },
 
+          /* -------------------------------------------------
+             GROUP FINANCIAL CATEGORIES
+          ------------------------------------------------- */
+
           {
             $group: {
               _id: null,
 
-              /*
-               * Complete authoritative balance.
-               *
-               * Deposits:
-               *   +amount
-               *
-               * Adjustments:
-               *   signed amount
-               *
-               * Reversals:
-               *   -original amount
-               */
-              totalBalance: {
-                $sum: "$amount",
-              },
+              /* =============================================
+                 GROSS DEPOSITS
+              ============================================= */
 
-              /*
-               * Deposit total represents confirmed
-               * deposit entries still contributing to the
-               * ledger.
-               *
-               * When a deposit has been reversed, the
-               * original deposit is marked "reversed".
-               *
-               * Therefore it is excluded here.
-               */
               totalDeposits: {
                 $sum: {
                   $cond: [
                     {
-                      $and: [
-                        {
-                          $eq: [
-                            "$type",
-                            "deposit",
-                          ],
-                        },
-                        {
-                          $eq: [
-                            "$status",
-                            "confirmed",
-                          ],
-                        },
+                      $eq: [
+                        "$type",
+                        "deposit",
                       ],
                     },
-                    "$amount",
+
+                    /*
+                     * Deposits should be positive.
+                     *
+                     * $abs also protects the dashboard from
+                     * malformed legacy negative deposits.
+                     */
+                    {
+                      $abs: "$amount",
+                    },
+
                     0,
                   ],
                 },
               },
 
-              /*
-               * Adjustments are signed ledger deltas.
-               */
+              /* =============================================
+                 WITHDRAWALS / ADJUSTMENTS
+              ============================================= */
+
               totalAdjustments: {
                 $sum: {
                   $cond: [
                     {
-                      $and: [
-                        {
-                          $eq: [
-                            "$type",
-                            "adjustment",
-                          ],
-                        },
-                        {
-                          $eq: [
-                            "$status",
-                            "confirmed",
-                          ],
-                        },
+                      $eq: [
+                        "$type",
+                        "adjustment",
                       ],
                     },
-                    "$amount",
+
+                    /*
+                     * Adjustments are deductions regardless of
+                     * whether an old record stored the amount
+                     * as positive or negative.
+                     *
+                     * Therefore the dashboard uses magnitude.
+                     */
+                    {
+                      $abs: "$amount",
+                    },
+
                     0,
                   ],
                 },
               },
 
-              /*
-               * Reversal transactions are stored as negative
-               * amounts.
-               *
-               * The dashboard displays reversal activity as
-               * a positive monetary value.
-               */
+              /* =============================================
+                 REVERSALS
+              ============================================= */
+
               totalReversals: {
                 $sum: {
                   $cond: [
                     {
-                      $and: [
-                        {
-                          $eq: [
-                            "$type",
-                            "reversal",
-                          ],
-                        },
-                        {
-                          $eq: [
-                            "$status",
-                            "confirmed",
-                          ],
-                        },
+                      $eq: [
+                        "$type",
+                        "reversal",
                       ],
                     },
+
+                    /*
+                     * Reversals are deductions regardless of
+                     * the historical sign of the stored amount.
+                     */
                     {
                       $abs: "$amount",
                     },
+
                     0,
                   ],
                 },
@@ -254,18 +291,73 @@ export async function GET(): Promise<
       result[0];
 
     /* =====================================================
+       NORMALIZE FINANCIAL VALUES
+    ===================================================== */
+
+    const totalDeposits =
+      safeNumber(
+        ledger?.totalDeposits,
+      );
+
+    const totalAdjustments =
+      safeNumber(
+        ledger?.totalAdjustments,
+      );
+
+    const totalReversals =
+      safeNumber(
+        ledger?.totalReversals,
+      );
+
+    /* =====================================================
+       AUTHORITATIVE DASHBOARD BALANCE
+    ===================================================== */
+
+    /*
+     * Financial formula:
+     *
+     *   Deposits
+     *      -
+     *   Withdrawals
+     *      -
+     *   Reversals
+     *      =
+     *   Current Balance
+     *
+     * This deliberately does NOT use:
+     *
+     *   $sum: "$amount"
+     *
+     * because historical records may contain adjustments or
+     * reversals with inconsistent signs.
+     *
+     * The transaction TYPE determines the financial meaning.
+     */
+
+    const totalBalance =
+      totalDeposits -
+      totalAdjustments -
+      totalReversals;
+
+    /* =====================================================
        MEMBER COUNT
     ===================================================== */
 
     /*
-     * One savings account belongs to exactly one member.
+     * One active savings account represents one member.
      *
-     * We therefore count active savings accounts rather
-     * than counting transactions.
+     * Supports:
      *
-     * This prevents a member with 20 deposits from being
-     * counted 20 times.
+     *   Modern:
+     *     isActive: true
+     *
+     *   Legacy:
+     *     status: "active"
+     *
+     * We deliberately avoid counting transactions because
+     * one member can have many transactions.
      */
+
     const memberCount =
       await accounts.countDocuments({
         $or: [
@@ -281,36 +373,37 @@ export async function GET(): Promise<
         ],
       });
 
-    const summary:
-      SavingsSummary = {
+    /* =====================================================
+       FINAL SUMMARY
+    ===================================================== */
+
+    const summary: SavingsSummary = {
       totalBalance:
         safeNumber(
-          ledger?.totalBalance
+          totalBalance,
         ),
 
       totalDeposits:
-        safeNumber(
-          ledger?.totalDeposits
-        ),
+        totalDeposits,
 
       totalAdjustments:
-        safeNumber(
-          ledger?.totalAdjustments
-        ),
+        totalAdjustments,
 
       totalReversals:
-        safeNumber(
-          ledger?.totalReversals
-        ),
+        totalReversals,
 
       memberCount:
         Math.max(
           0,
           Math.floor(
-            memberCount
-          )
+            memberCount,
+          ),
         ),
     };
+
+    /* =====================================================
+       RESPONSE
+    ===================================================== */
 
     return NextResponse.json(
       {
@@ -319,21 +412,16 @@ export async function GET(): Promise<
       },
       {
         status: 200,
-
         headers: {
-          /*
-           * The dashboard must always see current database
-           * information.
-           */
           "Cache-Control":
             "no-store, no-cache, must-revalidate, proxy-revalidate",
         },
-      }
+      },
     );
   } catch (error) {
     console.error(
       "[GET /api/savings/summary]",
-      error
+      error,
     );
 
     return NextResponse.json(
@@ -344,12 +432,11 @@ export async function GET(): Promise<
       },
       {
         status: 500,
-
         headers: {
           "Cache-Control":
             "no-store",
         },
-      }
+      },
     );
   }
 }

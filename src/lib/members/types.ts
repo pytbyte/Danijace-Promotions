@@ -1,6 +1,16 @@
-export type MemberStatus = "active" | "inactive" | "suspended";
+export type MemberStatus =
+  | "active"
+  | "inactive"
+  | "suspended";
 
-export type MemberGender = "male" | "female" | "other";
+export type MemberGender =
+  | "male"
+  | "female"
+  | "other";
+
+/* =========================================================
+   MEMBER
+========================================================= */
 
 export type Member = {
   _id?: string;
@@ -42,4 +52,64 @@ export type Member = {
 
   createdAt: string;
   updatedAt: string;
+};
+
+/* =========================================================
+   MEMBER FINANCIAL SUMMARY
+========================================================= */
+
+export type MemberFinancialSummary = {
+  /**
+   * Current confirmed savings balance.
+   *
+   * Pending transactions must not affect this value.
+   */
+  savingsBalance: number;
+
+  /**
+   * Total confirmed deposits.
+   */
+  totalDeposits: number;
+
+  /**
+   * Total confirmed withdrawals/outflows.
+   */
+  totalWithdrawals: number;
+
+  /**
+   * Current/latest loan information, when applicable.
+   */
+  loan?: {
+    loanNumber: string;
+
+    status:
+      | "pending"
+      | "active"
+      | "completed"
+      | "cancelled";
+
+    principal: number;
+
+    totalDue: number;
+
+    amountPaid: number;
+
+    totalFines: number;
+
+    outstandingBalance: number;
+
+    firstDueDate: string;
+
+    fineStatus:
+      | "active"
+      | "stopped";
+  };
+};
+
+/* =========================================================
+   MEMBER WITH FINANCIAL SUMMARY
+========================================================= */
+
+export type MemberWithFinancialSummary = Member & {
+  financialSummary: MemberFinancialSummary;
 };

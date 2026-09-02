@@ -9,6 +9,10 @@ import {
   validateMember,
 } from "./validation";
 
+import {
+  getMemberFinancialSummaries,
+} from "./financial";
+
 /* =========================================================
    CONSTANTS
 ========================================================= */
@@ -17,13 +21,15 @@ const DB_NAME =
   process.env.MONGODB_DB || "geo-shua";
 
 const MEMBERS_COLLECTION = "members";
+
 const ACCOUNTS_COLLECTION = "savingsAccounts";
+
 const COUNTERS_COLLECTION = "counters";
 
 const MEMBERSHIP_PREFIX =
   process.env.MEMBERSHIP_PREFIX || "GEO";
 
-/*
+/**
  * Temporary compatibility fallback.
  *
  * API routes should eventually pass the authenticated
@@ -35,7 +41,7 @@ const SYSTEM_ACTOR = "system";
    MONGODB DOCUMENT TYPES
 ========================================================= */
 
-/*
+/**
  * Application:
  *
  *   _id -> string
@@ -48,7 +54,7 @@ type MemberDocument = Omit<Member, "_id"> & {
   _id?: ObjectId;
 };
 
-/*
+/**
  * Every member receives exactly ONE fixed savings account.
  *
  * Financial transactions should NOT be stored directly
@@ -81,7 +87,7 @@ export type SavingsAccountDocument = {
   updatedBy?: string;
 };
 
-/*
+/**
  * Counter used for sequential numbers.
  */
 type CounterDocument = {
@@ -116,7 +122,7 @@ export type PaginatedMembers = {
   totalPages: number;
 };
 
-/*
+/**
  * Safe account object returned to application code.
  */
 export type MemberAccount = {
@@ -141,7 +147,7 @@ export type MemberAccount = {
   updatedBy?: string;
 };
 
-/*
+/**
  * Internal result used during member registration.
  *
  * createMember() continues to return only Member for
@@ -171,17 +177,17 @@ async function getCollections() {
 
     members:
       db.collection<MemberDocument>(
-        MEMBERS_COLLECTION
+        MEMBERS_COLLECTION,
       ),
 
     accounts:
       db.collection<SavingsAccountDocument>(
-        ACCOUNTS_COLLECTION
+        ACCOUNTS_COLLECTION,
       ),
 
     counters:
       db.collection<CounterDocument>(
-        COUNTERS_COLLECTION
+        COUNTERS_COLLECTION,
       ),
   };
 }
@@ -194,7 +200,7 @@ async function getCollections() {
  * Convert MongoDB member document into application Member.
  */
 function toMember(
-  document: MemberDocument
+  document: MemberDocument,
 ): Member {
   const {
     _id,
@@ -204,11 +210,13 @@ function toMember(
   return {
     ...data,
 
-    ...( _id
-      ? {
-          _id: _id.toString(),
-        }
-      : {}),
+    ...(
+      _id
+        ? {
+            _id: _id.toString(),
+          }
+        : {}
+    ),
   } as Member;
 }
 
@@ -217,11 +225,11 @@ function toMember(
  * application representation.
  */
 function toMemberAccount(
-  document: SavingsAccountDocument
+  document: SavingsAccountDocument,
 ): MemberAccount {
   if (!document._id) {
     throw new Error(
-      "Savings account has no MongoDB ID."
+      "Savings account has no MongoDB ID.",
     );
   }
 
@@ -266,11 +274,11 @@ function toMemberAccount(
  * Safely convert string to ObjectId.
  */
 function createObjectId(
-  id: string
+  id: string,
 ): ObjectId {
   if (!ObjectId.isValid(id)) {
     throw new Error(
-      "Invalid member ID."
+      "Invalid member ID.",
     );
   }
 
@@ -281,7 +289,7 @@ function createObjectId(
  * Return first validation error.
  */
 function getFirstValidationError(
-  errors: Record<string, string>
+  errors: Record<string, string>,
 ): string {
   return (
     Object.values(errors)[0] ||
@@ -296,11 +304,11 @@ function getFirstValidationError(
  * an unintended MongoDB regular expression.
  */
 function escapeRegex(
-  value: string
+  value: string,
 ): string {
   return value.replace(
     /[.*+?^${}()|[\]\\]/g,
-    "\\$&"
+    "\\$&",
   );
 }
 
@@ -311,7 +319,7 @@ function escapeRegex(
  * API routes.
  */
 function normalizeActor(
-  actor?: string
+  actor?: string,
 ): string {
   const value =
     typeof actor === "string"
@@ -325,7 +333,7 @@ function normalizeActor(
  * Detect MongoDB duplicate-key errors.
  */
 function isDuplicateKeyError(
-  error: unknown
+  error: unknown,
 ): boolean {
   return (
     typeof error === "object" &&
@@ -354,7 +362,7 @@ async function ensureIndexes(): Promise<void> {
   } = await getCollections();
 
   await Promise.all([
-    /*
+    /**
      * Membership number must always be unique.
      */
     members.createIndex(
@@ -363,12 +371,13 @@ async function ensureIndexes(): Promise<void> {
       },
       {
         unique: true,
+
         name:
           "members_membershipNumber_unique",
-      }
+      },
     ),
 
-    /*
+    /**
      * Phone number must be unique.
      */
     members.createIndex(
@@ -377,12 +386,13 @@ async function ensureIndexes(): Promise<void> {
       },
       {
         unique: true,
+
         name:
           "members_phone_unique",
-      }
+      },
     ),
 
-    /*
+    /**
      * Email is optional.
      *
      * Partial index means members without an email
@@ -403,10 +413,10 @@ async function ensureIndexes(): Promise<void> {
 
         name:
           "members_email_unique",
-      }
+      },
     ),
 
-    /*
+    /**
      * National ID is optional.
      */
     members.createIndex(
@@ -424,24 +434,25 @@ async function ensureIndexes(): Promise<void> {
 
         name:
           "members_nationalId_unique",
-      }
+      },
     ),
 
-    /*
+    /**
      * Deterministic member ordering.
      */
     members.createIndex(
       {
         createdAt: -1,
+
         _id: -1,
       },
       {
         name:
           "members_createdAt_id_desc",
-      }
+      },
     ),
 
-    /*
+    /**
      * CRITICAL:
      *
      * A member may have exactly ONE savings account.
@@ -452,12 +463,13 @@ async function ensureIndexes(): Promise<void> {
       },
       {
         unique: true,
+
         name:
           "savingsAccounts_memberId_unique",
-      }
+      },
     ),
 
-    /*
+    /**
      * Account number must also be globally unique.
      */
     accounts.createIndex(
@@ -466,9 +478,10 @@ async function ensureIndexes(): Promise<void> {
       },
       {
         unique: true,
+
         name:
           "savingsAccounts_accountNumber_unique",
-      }
+      },
     ),
   ]);
 }
@@ -484,7 +497,7 @@ async function ensureIndexes(): Promise<void> {
  * receive different sequence numbers.
  */
 async function getNextSequence(
-  counterId: string
+  counterId: string,
 ): Promise<number> {
   const {
     counters,
@@ -498,7 +511,6 @@ async function getNextSequence(
       {
         _id: counterId,
       },
-
       {
         $inc: {
           sequence: 1,
@@ -508,17 +520,16 @@ async function getNextSequence(
           updatedAt: now,
         },
       },
-
       {
         upsert: true,
 
         returnDocument: "after",
-      }
+      },
     );
 
   if (!result) {
     throw new Error(
-      "Unable to generate the next sequence number."
+      "Unable to generate the next sequence number.",
     );
   }
 
@@ -535,14 +546,14 @@ async function getNextSequence(
 async function generateMembershipNumber(): Promise<string> {
   const sequence =
     await getNextSequence(
-      "membershipNumber"
+      "membershipNumber",
     );
 
   return (
     `${MEMBERSHIP_PREFIX}-` +
     String(sequence).padStart(
       6,
-      "0"
+      "0",
     )
   );
 }
@@ -557,14 +568,14 @@ async function generateMembershipNumber(): Promise<string> {
 async function generateAccountNumber(): Promise<string> {
   const sequence =
     await getNextSequence(
-      "savingsAccountNumber"
+      "savingsAccountNumber",
     );
 
   return (
     "SAV-" +
     String(sequence).padStart(
       6,
-      "0"
+      "0",
     )
   );
 }
@@ -602,12 +613,12 @@ async function generateAccountNumber(): Promise<string> {
  */
 export async function createMember(
   data: Partial<Member>,
-  createdBy?: string
+  createdBy?: string,
 ): Promise<Member> {
   const actor =
     normalizeActor(createdBy);
 
-  /*
+  /**
    * Never trust client-controlled system fields.
    */
   const {
@@ -635,21 +646,21 @@ export async function createMember(
     ...registrationData
   } = data;
 
-  /*
+  /**
    * Normalize user-provided fields.
    */
   const normalized =
     normalizeMember(
-      registrationData
+      registrationData,
     );
 
-  /*
+  /**
    * Generate membership number on server.
    */
   const membershipNumber =
     await generateMembershipNumber();
 
-  /*
+  /**
    * Generate savings account number on server.
    *
    * A failed transaction may create a sequence gap.
@@ -664,7 +675,7 @@ export async function createMember(
   const now =
     new Date().toISOString();
 
-  /*
+  /**
    * Build complete member for validation.
    */
   const memberForValidation:
@@ -682,23 +693,23 @@ export async function createMember(
     updatedAt: now,
   };
 
-  /*
+  /**
    * Validate complete member.
    */
   const validation =
     validateMember(
-      memberForValidation
+      memberForValidation,
     );
 
   if (!validation.valid) {
     throw new Error(
       getFirstValidationError(
-        validation.errors
-      )
+        validation.errors,
+      ),
     );
   }
 
-  /*
+  /**
    * Ensure database indexes exist.
    */
   await ensureIndexes();
@@ -709,7 +720,7 @@ export async function createMember(
     accounts,
   } = await getCollections();
 
-  /*
+  /**
    * Preliminary duplicate checks.
    *
    * These are mainly for friendly error messages.
@@ -747,29 +758,29 @@ export async function createMember(
 
   if (duplicateChecks[0]) {
     throw new Error(
-      "A member with this membership number already exists."
+      "A member with this membership number already exists.",
     );
   }
 
   if (duplicateChecks[1]) {
     throw new Error(
-      "A member with this phone number already exists."
+      "A member with this phone number already exists.",
     );
   }
 
   if (duplicateChecks[2]) {
     throw new Error(
-      "A member with this email already exists."
+      "A member with this email already exists.",
     );
   }
 
   if (duplicateChecks[3]) {
     throw new Error(
-      "A member with this national ID already exists."
+      "A member with this national ID already exists.",
     );
   }
 
-  /*
+  /**
    * Build member document.
    *
    * We intentionally do NOT provide _id.
@@ -781,7 +792,7 @@ export async function createMember(
     ...normalized,
 
     membershipNumber,
-    
+
     status: "active",
 
     createdBy: actor,
@@ -794,14 +805,14 @@ export async function createMember(
     "_id"
   >;
 
-  /*
+  /**
    * Start MongoDB transaction.
    */
   const session =
     client.startSession();
 
   try {
-    /*
+    /**
      * Return the transaction result directly.
      *
      * This avoids TypeScript's "never" narrowing problem
@@ -810,7 +821,7 @@ export async function createMember(
     const result =
       await session.withTransaction(
         async (): Promise<MemberRegistrationResult> => {
-          /*
+          /**
            * ==========================================
            * 1. CREATE MEMBER
            * ==========================================
@@ -820,16 +831,16 @@ export async function createMember(
               memberDocument,
               {
                 session,
-              }
+              },
             );
 
-          /*
+          /**
            * MongoDB-generated member ID.
            */
           const memberId =
             memberInsert.insertedId;
 
-          /*
+          /**
            * ==========================================
            * 2. CREATE SAVINGS ACCOUNT AUTOMATICALLY
            * ==========================================
@@ -847,7 +858,6 @@ export async function createMember(
 
             accountNumber,
 
-
             accountType: "fixed",
 
             balance: 0,
@@ -861,7 +871,7 @@ export async function createMember(
             createdBy: actor,
           };
 
-          /*
+          /**
            * insertOne generates the account _id.
            */
           const accountInsert =
@@ -869,15 +879,14 @@ export async function createMember(
               accountDocument,
               {
                 session,
-              }
+              },
             );
 
-          /*
+          /**
            * ==========================================
            * 3. BUILD RETURN OBJECTS
            * ==========================================
            */
-
           const createdMember:
             Member = {
             ...memberDocument,
@@ -918,13 +927,11 @@ export async function createMember(
             account:
               createdAccount,
           };
-        }
+        },
       );
 
-    /*
+    /**
      * Transaction completed successfully.
-     *
-     * IMPORTANT:
      *
      * At this point both documents exist:
      *
@@ -933,14 +940,13 @@ export async function createMember(
      */
     if (!result.member) {
       throw new Error(
-        "Member registration could not be completed."
+        "Member registration could not be completed.",
       );
     }
 
     return result.member;
-
   } catch (error) {
-    /*
+    /**
      * Convert MongoDB duplicate errors into a clean
      * application-level error.
      */
@@ -948,12 +954,11 @@ export async function createMember(
       isDuplicateKeyError(error)
     ) {
       throw new Error(
-        "A member with one of the supplied unique details already exists."
+        "A member with one of the supplied unique details already exists.",
       );
     }
 
     throw error;
-
   } finally {
     await session.endSession();
   }
@@ -964,7 +969,7 @@ export async function createMember(
 ========================================================= */
 
 export async function getMemberById(
-  id: string
+  id: string,
 ): Promise<Member | null> {
   if (!ObjectId.isValid(id)) {
     return null;
@@ -996,7 +1001,7 @@ export async function getMemberById(
  * to a member.
  */
 export async function getMemberAccount(
-  memberId: string
+  memberId: string,
 ): Promise<MemberAccount | null> {
   if (!ObjectId.isValid(memberId)) {
     return null;
@@ -1017,7 +1022,7 @@ export async function getMemberAccount(
   }
 
   return toMemberAccount(
-    account
+    account,
   );
 }
 
@@ -1026,13 +1031,13 @@ export async function getMemberAccount(
 ========================================================= */
 
 export async function getMembers(
-  options: GetMembersOptions = {}
+  options: GetMembersOptions = {},
 ): Promise<PaginatedMembers> {
   const {
     members,
   } = await getCollections();
 
-  /*
+  /**
    * PAGE
    */
   const requestedPage =
@@ -1040,15 +1045,15 @@ export async function getMembers(
 
   const page =
     Number.isFinite(
-      requestedPage
+      requestedPage,
     ) &&
     requestedPage >= 1
       ? Math.floor(
-          requestedPage
+          requestedPage,
         )
       : 1;
 
-  /*
+  /**
    * LIMIT
    */
   const requestedLimit =
@@ -1056,18 +1061,18 @@ export async function getMembers(
 
   const limit =
     Number.isFinite(
-      requestedLimit
+      requestedLimit,
     ) &&
     requestedLimit >= 1
       ? Math.min(
           100,
           Math.floor(
-            requestedLimit
-          )
+            requestedLimit,
+          ),
         )
       : 25;
 
-  /*
+  /**
    * SEARCH
    */
   const search =
@@ -1076,7 +1081,7 @@ export async function getMembers(
       ? options.search.trim()
       : "";
 
-  /*
+  /**
    * FILTER
    */
   const filter: Record<
@@ -1088,7 +1093,7 @@ export async function getMembers(
     const regex =
       new RegExp(
         escapeRegex(search),
-        "i"
+        "i",
       );
 
     filter.$or = [
@@ -1129,43 +1134,43 @@ export async function getMembers(
     ];
   }
 
-  /*
+  /**
    * COUNT
    */
   const total =
     await members.countDocuments(
-      filter
+      filter,
     );
 
-  /*
+  /**
    * TOTAL PAGES
    */
   const totalPages =
     total === 0
       ? 0
       : Math.ceil(
-          total / limit
+          total / limit,
         );
 
-  /*
+  /**
    * SAFE PAGE
    */
   const safePage =
     totalPages > 0
       ? Math.min(
           page,
-          totalPages
+          totalPages,
         )
       : 1;
 
-  /*
+  /**
    * SKIP
    */
   const skip =
     (safePage - 1) *
     limit;
 
-  /*
+  /**
    * FETCH
    */
   const documents =
@@ -1174,7 +1179,7 @@ export async function getMembers(
       .sort({
         createdAt: -1,
 
-        /*
+        /**
          * Deterministic ordering if two members
          * have the same createdAt.
          */
@@ -1184,11 +1189,104 @@ export async function getMembers(
       .limit(limit)
       .toArray();
 
+  /**
+   * Convert MongoDB documents to application members.
+   */
+  const pageMembers =
+    documents.map(toMember);
+
+  /**
+   * =======================================================
+   * FINANCIAL ENRICHMENT
+   * =======================================================
+   *
+   * IMPORTANT:
+   *
+   * We only request financial summaries for members
+   * actually present on this page.
+   *
+   * Example:
+   *
+   *   25 members on page
+   *       ↓
+   *   25 member IDs
+   *       ↓
+   *   one batched financial projection
+   *
+   * This avoids an N+1 query pattern.
+   *
+   * The financial projection is READ ONLY.
+   *
+   * It does not modify:
+   *
+   * - members
+   * - savings accounts
+   * - savings transactions
+   * - loans
+   * - repayments
+   * - fines
+   */
+  const financialSummaries =
+    await getMemberFinancialSummaries(
+      pageMembers
+        .map(
+          (member) =>
+            member._id,
+        )
+        .filter(
+          (
+            id,
+          ): id is string =>
+            Boolean(id),
+        ),
+    );
+
+  /**
+   * Attach the financial summary to each member.
+   *
+   * Members without a valid ID or without financial
+   * activity still receive a safe zero-value summary.
+   */
+  const enrichedMembers =
+    pageMembers.map(
+      (member) => {
+        const memberId =
+          member._id;
+
+        if (!memberId) {
+          return {
+            ...member,
+
+            financialSummary: {
+              savingsBalance: 0,
+
+              totalDeposits: 0,
+
+              totalWithdrawals: 0,
+            },
+          };
+        }
+
+        return {
+          ...member,
+
+          financialSummary:
+            financialSummaries[
+              memberId
+            ] ?? {
+              savingsBalance: 0,
+
+              totalDeposits: 0,
+
+              totalWithdrawals: 0,
+            },
+        };
+      },
+    );
+
   return {
     members:
-      documents.map(
-        toMember
-      ),
+      enrichedMembers,
 
     total,
 
@@ -1222,11 +1320,11 @@ export async function getMembers(
 export async function updateMember(
   id: string,
   data: Partial<Member>,
-  updatedBy?: string
+  updatedBy?: string,
 ): Promise<Member> {
   if (!ObjectId.isValid(id)) {
     throw new Error(
-      "Invalid member ID."
+      "Invalid member ID.",
     );
   }
 
@@ -1240,7 +1338,7 @@ export async function updateMember(
     members,
   } = await getCollections();
 
-  /*
+  /**
    * GET EXISTING
    */
   const existing =
@@ -1250,11 +1348,11 @@ export async function updateMember(
 
   if (!existing) {
     throw new Error(
-      "Member not found."
+      "Member not found.",
     );
   }
 
-  /*
+  /**
    * Remove protected fields.
    */
   const {
@@ -1279,15 +1377,15 @@ export async function updateMember(
     ...editableData
   } = data;
 
-  /*
+  /**
    * Normalize editable fields.
    */
   const normalized =
     normalizeMember(
-      editableData
+      editableData,
     );
 
-  /*
+  /**
    * Existing application member.
    */
   const existingMember =
@@ -1296,7 +1394,7 @@ export async function updateMember(
   const now =
     new Date().toISOString();
 
-  /*
+  /**
    * Build complete member for validation.
    */
   const merged: Member = {
@@ -1304,7 +1402,7 @@ export async function updateMember(
 
     ...normalized,
 
-    /*
+    /**
      * Protected identity.
      */
     _id:
@@ -1326,23 +1424,23 @@ export async function updateMember(
       actor,
   };
 
-  /*
+  /**
    * VALIDATE
    */
   const validation =
     validateMember(
-      merged
+      merged,
     );
 
   if (!validation.valid) {
     throw new Error(
       getFirstValidationError(
-        validation.errors
-      )
+        validation.errors,
+      ),
     );
   }
 
-  /*
+  /**
    * DUPLICATE PHONE
    */
   if (normalized.phone) {
@@ -1359,12 +1457,12 @@ export async function updateMember(
 
     if (duplicate) {
       throw new Error(
-        "Another member already uses this phone number."
+        "Another member already uses this phone number.",
       );
     }
   }
 
-  /*
+  /**
    * DUPLICATE EMAIL
    */
   if (normalized.email) {
@@ -1381,12 +1479,12 @@ export async function updateMember(
 
     if (duplicate) {
       throw new Error(
-        "Another member already uses this email."
+        "Another member already uses this email.",
       );
     }
   }
 
-  /*
+  /**
    * DUPLICATE NATIONAL ID
    */
   if (normalized.nationalId) {
@@ -1403,12 +1501,12 @@ export async function updateMember(
 
     if (duplicate) {
       throw new Error(
-        "Another member already uses this national ID."
+        "Another member already uses this national ID.",
       );
     }
   }
 
-  /*
+  /**
    * Remove protected fields before MongoDB update.
    */
   const {
@@ -1442,7 +1540,7 @@ export async function updateMember(
       actor,
   };
 
-  /*
+  /**
    * UPDATE
    */
   try {
@@ -1456,30 +1554,29 @@ export async function updateMember(
         {
           $set:
             updateData,
-        }
+        },
       );
 
     if (
       result.matchedCount === 0
     ) {
       throw new Error(
-        "Member not found."
+        "Member not found.",
       );
     }
-
   } catch (error) {
     if (
       isDuplicateKeyError(error)
     ) {
       throw new Error(
-        "A member with one of the supplied unique details already exists."
+        "A member with one of the supplied unique details already exists.",
       );
     }
 
     throw error;
   }
 
-  /*
+  /**
    * GET UPDATED MEMBER
    */
   const updated =
@@ -1490,12 +1587,12 @@ export async function updateMember(
 
   if (!updated) {
     throw new Error(
-      "Member was updated but could not be retrieved."
+      "Member was updated but could not be retrieved.",
     );
   }
 
   return toMember(
-    updated
+    updated,
   );
 }
 
@@ -1514,11 +1611,11 @@ export async function updateMember(
  */
 export async function deactivateMember(
   id: string,
-  updatedBy?: string
+  updatedBy?: string,
 ): Promise<Member> {
   if (!ObjectId.isValid(id)) {
     throw new Error(
-      "Invalid member ID."
+      "Invalid member ID.",
     );
   }
 
@@ -1540,11 +1637,11 @@ export async function deactivateMember(
 
   if (!existing) {
     throw new Error(
-      "Member not found."
+      "Member not found.",
     );
   }
 
-  /*
+  /**
    * Already inactive.
    */
   if (
@@ -1552,7 +1649,7 @@ export async function deactivateMember(
     "inactive"
   ) {
     return toMember(
-      existing
+      existing,
     );
   }
 
@@ -1577,14 +1674,14 @@ export async function deactivateMember(
           updatedBy:
             actor,
         },
-      }
+      },
     );
 
   if (
     result.matchedCount === 0
   ) {
     throw new Error(
-      "Member could not be deactivated."
+      "Member could not be deactivated.",
     );
   }
 
@@ -1596,18 +1693,18 @@ export async function deactivateMember(
 
   if (!updated) {
     throw new Error(
-      "Member was deactivated but could not be retrieved."
+      "Member was deactivated but could not be retrieved.",
     );
   }
 
-  /*
+  /**
    * DO NOT deactivate/delete the savings account here.
    *
    * Member lifecycle and financial-account lifecycle
    * are deliberately separate.
    */
   return toMember(
-    updated
+    updated,
   );
 }
 
@@ -1634,11 +1731,11 @@ export async function deactivateMember(
  */
 export async function deleteMember(
   id: string,
-  updatedBy?: string
+  updatedBy?: string,
 ): Promise<boolean> {
   await deactivateMember(
     id,
-    updatedBy
+    updatedBy,
   );
 
   return true;
@@ -1656,11 +1753,11 @@ export async function deleteMember(
  */
 export async function reactivateMember(
   id: string,
-  updatedBy?: string
+  updatedBy?: string,
 ): Promise<Member> {
   if (!ObjectId.isValid(id)) {
     throw new Error(
-      "Invalid member ID."
+      "Invalid member ID.",
     );
   }
 
@@ -1682,11 +1779,11 @@ export async function reactivateMember(
 
   if (!existing) {
     throw new Error(
-      "Member not found."
+      "Member not found.",
     );
   }
 
-  /*
+  /**
    * Already active.
    */
   if (
@@ -1694,7 +1791,7 @@ export async function reactivateMember(
     "active"
   ) {
     return toMember(
-      existing
+      existing,
     );
   }
 
@@ -1719,14 +1816,14 @@ export async function reactivateMember(
           updatedBy:
             actor,
         },
-      }
+      },
     );
 
   if (
     result.matchedCount === 0
   ) {
     throw new Error(
-      "Member could not be reactivated."
+      "Member could not be reactivated.",
     );
   }
 
@@ -1738,12 +1835,12 @@ export async function reactivateMember(
 
   if (!updated) {
     throw new Error(
-      "Member was reactivated but could not be retrieved."
+      "Member was reactivated but could not be retrieved.",
     );
   }
 
   return toMember(
-    updated
+    updated,
   );
 }
 
@@ -1756,11 +1853,11 @@ export async function reactivateMember(
  */
 export async function suspendMember(
   id: string,
-  updatedBy?: string
+  updatedBy?: string,
 ): Promise<Member> {
   if (!ObjectId.isValid(id)) {
     throw new Error(
-      "Invalid member ID."
+      "Invalid member ID.",
     );
   }
 
@@ -1782,11 +1879,11 @@ export async function suspendMember(
 
   if (!existing) {
     throw new Error(
-      "Member not found."
+      "Member not found.",
     );
   }
 
-  /*
+  /**
    * Already suspended.
    */
   if (
@@ -1794,7 +1891,7 @@ export async function suspendMember(
     "suspended"
   ) {
     return toMember(
-      existing
+      existing,
     );
   }
 
@@ -1819,14 +1916,14 @@ export async function suspendMember(
           updatedBy:
             actor,
         },
-      }
+      },
     );
 
   if (
     result.matchedCount === 0
   ) {
     throw new Error(
-      "Member could not be suspended."
+      "Member could not be suspended.",
     );
   }
 
@@ -1838,12 +1935,12 @@ export async function suspendMember(
 
   if (!updated) {
     throw new Error(
-      "Member was suspended but could not be retrieved."
+      "Member was suspended but could not be retrieved.",
     );
   }
 
   return toMember(
-    updated
+    updated,
   );
 }
 
@@ -1856,7 +1953,7 @@ export async function searchMembers(
   options: Omit<
     GetMembersOptions,
     "search"
-  > = {}
+  > = {},
 ): Promise<PaginatedMembers> {
   return getMembers({
     ...options,
