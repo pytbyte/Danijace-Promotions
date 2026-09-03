@@ -13,11 +13,17 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Fingerprint,
   HandCoins,
+  LayoutDashboard,
   RefreshCw,
+  ShieldCheck,
+  Sparkles,
   Users,
   Wallet,
 } from "lucide-react";
+
+import { useRouter } from "next/navigation";
 
 import SmsInboxMonitor from "@/components/sms/SmsInboxMonitor";
 import TopBar from "@/components/dashboard/TopBar";
@@ -125,6 +131,46 @@ type NotificationRecord = {
 
   read?: boolean;
   status?: string;
+};
+
+type SecurityMethod = "pin" | "device";
+
+type SecurityStatusResponse = {
+  success?: boolean;
+  authenticated?: boolean;
+  configured?: boolean;
+  verified?: boolean;
+  error?: string;
+};
+
+type SecuritySetupResponse = {
+  success?: boolean;
+  error?: string;
+};
+
+type SecurityVerifyResponse = {
+  success?: boolean;
+  verified?: boolean;
+  error?: string;
+  retryAfterSeconds?: number;
+};
+
+type WebAuthnOptionsResponse = {
+  success?: boolean;
+  error?: string;
+  publicKey?: PublicKeyCredentialRequestOptionsJSON;
+};
+
+type PublicKeyCredentialRequestOptionsJSON = {
+  challenge: string;
+  timeout?: number;
+  rpId?: string;
+  allowCredentials?: Array<{
+    id: string;
+    type: PublicKeyCredentialType;
+    transports?: AuthenticatorTransport[];
+  }>;
+  userVerification?: UserVerificationRequirement;
 };
 
 /* =========================================================
@@ -289,10 +335,1209 @@ function extractRecords<T>(
 }
 
 /* =========================================================
-   DASHBOARD
+   BASE64URL HELPERS
+========================================================= */
+
+function base64UrlToUint8Array(
+  value: string,
+): Uint8Array {
+  const normalized = value
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+
+  const padded =
+    normalized +
+    "=".repeat(
+      (4 - (normalized.length % 4)) % 4,
+    );
+
+  const binary = window.atob(padded);
+  const bytes = new Uint8Array(
+    binary.length,
+  );
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
+}
+
+function toArrayBuffer(
+  value: Uint8Array,
+): ArrayBuffer {
+  const buffer = new ArrayBuffer(
+    value.byteLength,
+  );
+
+  new Uint8Array(buffer).set(value);
+
+  return buffer;
+}
+
+function uint8ArrayToNumberArray(
+  value: ArrayBuffer | Uint8Array,
+): number[] {
+  return Array.from(
+    value instanceof Uint8Array
+      ? value
+      : new Uint8Array(value),
+  );
+}
+
+/* =========================================================
+   SECURITY LOADING
+========================================================= */
+
+function SecurityLoading() {
+  return (
+    <main className="flex min-h-[100dvh] w-full items-center justify-center bg-[#050505] px-5 text-white">
+      <div className="w-full max-w-sm text-center">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.03]">
+          <div className="text-xl font-bold tracking-tight text-yellow-400">
+            GS
+          </div>
+        </div>
+
+        <p className="mt-5 text-sm font-medium text-white/70">
+          GEO-SHUA
+        </p>
+
+        <p className="mt-1 text-xs text-white/25">
+          Preparing your secure workspace
+        </p>
+
+        <div className="mx-auto mt-5 h-1 w-32 overflow-hidden rounded-full bg-white/[0.06]">
+          <div className="h-full w-1/2 animate-pulse rounded-full bg-yellow-500" />
+        </div>
+      </div>
+    </main>
+  );
+}
+
+/* =========================================================
+   PIN SETUP
+========================================================= */
+
+function PinSetupScreen({
+  onSuccess,
+}: {
+  onSuccess: () => void;
+}) {
+  const [pin, setPin] = useState("");
+  const [confirmPin, setConfirmPin] =
+    useState("");
+
+  const [showPin, setShowPin] =
+    useState(false);
+
+  const [showConfirmPin, setShowConfirmPin] =
+    useState(false);
+
+  const [checking, setChecking] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const submit = async () => {
+    setError("");
+
+    if (!/^\d{4,6}$/.test(pin)) {
+      setError(
+        "Your PIN must contain 4 to 6 digits.",
+      );
+      return;
+    }
+
+    if (pin !== confirmPin) {
+      setError(
+        "The PINs do not match.",
+      );
+      return;
+    }
+
+    setChecking(true);
+
+    try {
+      const response = await fetch(
+        "/api/auth/security/setup",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: {
+            "Content-Type":
+              "application/json",
+            Accept:
+              "application/json",
+          },
+          body: JSON.stringify({
+            pin,
+            confirmPin,
+          }),
+        },
+      );
+
+      const json =
+        (await response.json()) as SecuritySetupResponse;
+
+      if (
+        !response.ok ||
+        json.success !== true
+      ) {
+        throw new Error(
+          json.error ||
+            "Unable to create your security PIN.",
+        );
+      }
+
+      setPin("");
+      setConfirmPin("");
+
+      onSuccess();
+    } catch (setupError) {
+      setError(
+        setupError instanceof Error
+          ? setupError.message
+          : "Unable to create your security PIN.",
+      );
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const handlePinChange = (
+    value: string,
+    setter: (value: string) => void,
+  ) => {
+    setter(
+      value
+        .replace(/\D/g, "")
+        .slice(0, 6),
+    );
+  };
+
+  return (
+    <main className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-[#050505] px-4 py-6 text-white">
+      <div className="w-full max-w-md">
+        <div className="rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 shadow-2xl sm:p-7">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
+              <ShieldCheck
+                size={21}
+                strokeWidth={1.8}
+              />
+            </div>
+
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-yellow-500/60">
+                Identity
+              </p>
+
+              <h1 className="mt-1 text-lg font-semibold text-white">
+                Create security PIN
+              </h1>
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-2 rounded-full bg-[#1683ff]" />
+
+              <p className="text-xs font-medium text-white/65">
+                Google identity verified
+              </p>
+            </div>
+
+            <p className="mt-2 text-[11px] leading-5 text-white/30">
+              Create your GEO-SHUA security
+              PIN. It will be securely hashed
+              on the server and will never be
+              stored as plain text.
+            </p>
+          </div>
+
+          {/* PIN */}
+
+          <div className="mt-5">
+            <label
+              htmlFor="security-pin"
+              className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
+            >
+              Security PIN
+            </label>
+
+            <div className="relative mt-2">
+              <input
+                id="security-pin"
+                type={
+                  showPin
+                    ? "text"
+                    : "password"
+                }
+                inputMode="numeric"
+                autoComplete="new-password"
+                maxLength={6}
+                value={pin}
+                onChange={(event) =>
+                  handlePinChange(
+                    event.target.value,
+                    setPin,
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter"
+                  ) {
+                    void submit();
+                  }
+                }}
+                placeholder="4–6 digits"
+                className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
+              />
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowPin(
+                    (current) =>
+                      !current,
+                  )
+                }
+                aria-label={
+                  showPin
+                    ? "Hide PIN"
+                    : "Show PIN"
+                }
+                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 transition hover:bg-white/[0.05] hover:text-white/60"
+              >
+                {showPin ? (
+                  <EyeOff size={17} />
+                ) : (
+                  <Eye size={17} />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* CONFIRM PIN */}
+
+          <div className="mt-4">
+            <label
+              htmlFor="confirm-security-pin"
+              className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
+            >
+              Confirm PIN
+            </label>
+
+            <div className="relative mt-2">
+              <input
+                id="confirm-security-pin"
+                type={
+                  showConfirmPin
+                    ? "text"
+                    : "password"
+                }
+                inputMode="numeric"
+                autoComplete="new-password"
+                maxLength={6}
+                value={confirmPin}
+                onChange={(event) =>
+                  handlePinChange(
+                    event.target.value,
+                    setConfirmPin,
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter"
+                  ) {
+                    void submit();
+                  }
+                }}
+                placeholder="Repeat your PIN"
+                className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
+              />
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowConfirmPin(
+                    (current) =>
+                      !current,
+                  )
+                }
+                aria-label={
+                  showConfirmPin
+                    ? "Hide confirmation PIN"
+                    : "Show confirmation PIN"
+                }
+                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 transition hover:bg-white/[0.05] hover:text-white/60"
+              >
+                {showConfirmPin ? (
+                  <EyeOff size={17} />
+                ) : (
+                  <Eye size={17} />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div className="mt-4 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs leading-5 text-red-300/80">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={checking}
+            className="mt-5 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {checking ? (
+              <>
+                <RefreshCw
+                  size={16}
+                  className="animate-spin"
+                />
+
+                Creating PIN...
+              </>
+            ) : (
+              <>
+                Create security PIN
+
+                <ArrowRight size={16} />
+              </>
+            )}
+          </button>
+
+          <p className="mt-4 text-center text-[10px] leading-5 text-white/20">
+            Your PIN is verified by the
+            GEO-SHUA security service.
+          </p>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+/* =========================================================
+   IDENTITY SCREEN
+========================================================= */
+
+function IdentityScreen({
+  onSuccess,
+}: {
+  onSuccess: () => void;
+}) {
+  const [method, setMethod] =
+    useState<SecurityMethod>("pin");
+
+  const [pin, setPin] = useState("");
+
+  const [showPin, setShowPin] =
+    useState(false);
+
+  const [checking, setChecking] =
+    useState(false);
+
+  const [deviceAvailable, setDeviceAvailable] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const [attempts, setAttempts] =
+    useState(0);
+
+  const MAX_CLIENT_ATTEMPTS = 5;
+
+  useEffect(() => {
+    let active = true;
+
+    const checkDevice = async () => {
+      try {
+        if (
+          typeof window ===
+            "undefined" ||
+          !("PublicKeyCredential" in
+            window)
+        ) {
+          if (active) {
+            setDeviceAvailable(false);
+          }
+
+          return;
+        }
+
+        const credential =
+          window.PublicKeyCredential;
+
+        if (
+          typeof credential
+            .isUserVerifyingPlatformAuthenticatorAvailable !==
+          "function"
+        ) {
+          if (active) {
+            setDeviceAvailable(false);
+          }
+
+          return;
+        }
+
+        const available =
+          await credential.isUserVerifyingPlatformAuthenticatorAvailable();
+
+        if (active) {
+          setDeviceAvailable(
+            available,
+          );
+        }
+      } catch {
+        if (active) {
+          setDeviceAvailable(false);
+        }
+      }
+    };
+
+    void checkDevice();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const verifyPin = async () => {
+    setError("");
+
+    if (
+      !/^\d{4,6}$/.test(pin)
+    ) {
+      setError(
+        "Enter a valid 4 to 6 digit PIN.",
+      );
+      return;
+    }
+
+    if (
+      attempts >=
+      MAX_CLIENT_ATTEMPTS
+    ) {
+      setError(
+        "Too many unsuccessful attempts. Please wait and try again.",
+      );
+      return;
+    }
+
+    setChecking(true);
+
+    try {
+      const response = await fetch(
+        "/api/auth/security/verify",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: {
+            "Content-Type":
+              "application/json",
+            Accept:
+              "application/json",
+          },
+          body: JSON.stringify({
+            method: "pin",
+            pin,
+          }),
+        },
+      );
+
+      const json =
+        (await response.json()) as SecurityVerifyResponse;
+
+      if (
+        response.ok &&
+        json.success === true &&
+        json.verified === true
+      ) {
+        setPin("");
+        setAttempts(0);
+
+        onSuccess();
+
+        return;
+      }
+
+      setAttempts(
+        (current) => current + 1,
+      );
+
+      if (
+        json.retryAfterSeconds &&
+        json.retryAfterSeconds > 0
+      ) {
+        setError(
+          `Too many attempts. Try again in ${json.retryAfterSeconds} seconds.`,
+        );
+      } else {
+        setError(
+          json.error ||
+            "Incorrect security PIN.",
+        );
+      }
+
+      setPin("");
+    } catch {
+      setError(
+        "Unable to verify your PIN. Please try again.",
+      );
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const verifyDevice = async () => {
+    setError("");
+    setChecking(true);
+
+    try {
+      const optionsResponse =
+        await fetch(
+          "/api/auth/security/webauthn/options",
+          {
+            method: "POST",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: {
+              Accept:
+                "application/json",
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({}),
+          },
+        );
+
+      const optionsJson =
+        (await optionsResponse.json()) as WebAuthnOptionsResponse;
+
+      if (
+        !optionsResponse.ok ||
+        optionsJson.success !== true ||
+        !optionsJson.publicKey
+      ) {
+        throw new Error(
+          optionsJson.error ||
+            "Unable to start device verification.",
+        );
+      }
+
+      if (
+        typeof navigator ===
+          "undefined" ||
+        !navigator.credentials
+      ) {
+        throw new Error(
+          "Device security is not available on this device.",
+        );
+      }
+
+      const publicKey =
+        optionsJson.publicKey;
+
+      const credential =
+        (await navigator.credentials.get(
+          {
+            publicKey: {
+             challenge: toArrayBuffer(
+  base64UrlToUint8Array(
+    publicKey.challenge,
+  ),
+),
+
+timeout:
+  publicKey.timeout,
+
+rpId:
+  publicKey.rpId,
+
+userVerification:
+  publicKey.userVerification ||
+  "required",
+
+allowCredentials:
+  publicKey.allowCredentials?.map(
+    (item) => ({
+      id: toArrayBuffer(
+        base64UrlToUint8Array(
+          item.id,
+        ),
+      ),
+      type: item.type,
+      transports:
+        item.transports,
+    }),
+  ),
+            },
+          },
+        )) as PublicKeyCredential | null;
+
+      if (!credential) {
+        throw new Error(
+          "Device verification was cancelled.",
+        );
+      }
+
+      const response =
+        credential.response as AuthenticatorAssertionResponse;
+
+      const verifyResponse =
+        await fetch(
+          "/api/auth/security/webauthn/verify",
+          {
+            method: "POST",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: {
+              "Content-Type":
+                "application/json",
+              Accept:
+                "application/json",
+            },
+            body: JSON.stringify({
+              id: credential.id,
+              rawId:
+                uint8ArrayToNumberArray(
+                  credential.rawId,
+                ),
+              type: credential.type,
+              response: {
+                authenticatorData:
+                  uint8ArrayToNumberArray(
+                    response.authenticatorData,
+                  ),
+                clientDataJSON:
+                  uint8ArrayToNumberArray(
+                    response.clientDataJSON,
+                  ),
+                signature:
+                  uint8ArrayToNumberArray(
+                    response.signature,
+                  ),
+                userHandle:
+                  response.userHandle
+                    ? uint8ArrayToNumberArray(
+                        response.userHandle,
+                      )
+                    : null,
+              },
+            }),
+          },
+        );
+
+      const verifyJson =
+        (await verifyResponse.json()) as SecurityVerifyResponse;
+
+      if (
+        !verifyResponse.ok ||
+        verifyJson.success !== true ||
+        verifyJson.verified !== true
+      ) {
+        throw new Error(
+          verifyJson.error ||
+            "Device verification failed.",
+        );
+      }
+
+      onSuccess();
+    } catch (deviceError) {
+      if (
+        deviceError instanceof
+          DOMException &&
+        deviceError.name ===
+          "NotAllowedError"
+      ) {
+        setError(
+          "Device verification was cancelled or timed out.",
+        );
+      } else {
+        setError(
+          deviceError instanceof Error
+            ? deviceError.message
+            : "Device verification failed.",
+        );
+      }
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <main className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-[#050505] px-4 py-5 text-white">
+      <div className="w-full max-w-md">
+        <div className="rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 shadow-2xl sm:p-7">
+          {/* HEADER */}
+
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
+              <ShieldCheck
+                size={21}
+                strokeWidth={1.8}
+              />
+            </div>
+
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-yellow-500/60">
+                Identity
+              </p>
+
+              <h1 className="mt-1 text-lg font-semibold text-white">
+                Verify your identity
+              </h1>
+            </div>
+          </div>
+
+          {/* GOOGLE STATUS */}
+
+          <div className="mt-5 flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3">
+            <span className="h-2 w-2 rounded-full bg-[#1683ff]" />
+
+            <span className="text-xs text-white/55">
+              Google identity verified
+            </span>
+          </div>
+
+          {/* METHOD SELECTOR */}
+
+          <div className="mt-5 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                setMethod("pin")
+              }
+              className={`rounded-2xl border p-3 text-left transition ${
+                method === "pin"
+                  ? "border-yellow-500/30 bg-yellow-500/[0.07]"
+                  : "border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <ShieldCheck
+                  size={17}
+                  className={
+                    method === "pin"
+                      ? "text-yellow-400"
+                      : "text-white/35"
+                  }
+                />
+
+                <span
+                  className={`text-xs font-medium ${
+                    method === "pin"
+                      ? "text-white"
+                      : "text-white/45"
+                  }`}
+                >
+                  PIN
+                </span>
+              </div>
+
+              <p className="mt-1 text-[9px] text-white/20">
+                Use your security PIN
+              </p>
+            </button>
+
+            <button
+              type="button"
+              disabled={
+                !deviceAvailable
+              }
+              onClick={() =>
+                setMethod("device")
+              }
+              className={`rounded-2xl border p-3 text-left transition ${
+                method === "device"
+                  ? "border-yellow-500/30 bg-yellow-500/[0.07]"
+                  : "border-white/[0.07] bg-white/[0.02]"
+              } ${
+                !deviceAvailable
+                  ? "cursor-not-allowed opacity-40"
+                  : "hover:bg-white/[0.04]"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Fingerprint
+                  size={17}
+                  className={
+                    method === "device"
+                      ? "text-yellow-400"
+                      : "text-white/35"
+                  }
+                />
+
+                <span
+                  className={`text-xs font-medium ${
+                    method === "device"
+                      ? "text-white"
+                      : "text-white/45"
+                  }`}
+                >
+                  Device
+                </span>
+              </div>
+
+              <p className="mt-1 text-[9px] text-white/20">
+                Fingerprint or device security
+              </p>
+            </button>
+          </div>
+
+          {/* PIN */}
+
+          {method === "pin" && (
+            <div className="mt-5">
+              <label
+                htmlFor="identity-pin"
+                className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
+              >
+                Security PIN
+              </label>
+
+              <div className="relative mt-2">
+                <input
+                  id="identity-pin"
+                  type={
+                    showPin
+                      ? "text"
+                      : "password"
+                  }
+                  inputMode="numeric"
+                  autoComplete="current-password"
+                  maxLength={6}
+                  value={pin}
+                  onChange={(event) =>
+                    setPin(
+                      event.target.value
+                        .replace(
+                          /\D/g,
+                          "",
+                        )
+                        .slice(0, 6),
+                    )
+                  }
+                  onKeyDown={(event) => {
+                    if (
+                      event.key ===
+                      "Enter"
+                    ) {
+                      void verifyPin();
+                    }
+                  }}
+                  placeholder="Enter 4–6 digit PIN"
+                  className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
+                />
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowPin(
+                      (current) =>
+                        !current,
+                    )
+                  }
+                  aria-label={
+                    showPin
+                      ? "Hide PIN"
+                      : "Show PIN"
+                  }
+                  className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 hover:bg-white/[0.05]"
+                >
+                  {showPin ? (
+                    <EyeOff size={17} />
+                  ) : (
+                    <Eye size={17} />
+                  )}
+                </button>
+              </div>
+
+              {error && (
+                <div className="mt-3 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs text-red-300/80">
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() =>
+                  void verifyPin()
+                }
+                disabled={checking}
+                className="mt-4 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {checking ? (
+                  <>
+                    <RefreshCw
+                      size={16}
+                      className="animate-spin"
+                    />
+
+                    Verifying...
+                  </>
+                ) : (
+                  <>
+                    Continue
+
+                    <ArrowRight size={16} />
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* DEVICE */}
+
+          {method === "device" && (
+            <div className="mt-5">
+              <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5 text-center">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-yellow-500/10 text-yellow-400">
+                  <Fingerprint
+                    size={27}
+                    strokeWidth={1.6}
+                  />
+                </div>
+
+                <p className="mt-4 text-sm font-medium text-white/70">
+                  Device security
+                </p>
+
+                <p className="mx-auto mt-2 max-w-xs text-[11px] leading-5 text-white/25">
+                  Use your device fingerprint,
+                  face recognition, screen lock,
+                  or other supported biometric
+                  security.
+                </p>
+              </div>
+
+              {error && (
+                <div className="mt-3 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs text-red-300/80">
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() =>
+                  void verifyDevice()
+                }
+                disabled={checking}
+                className="mt-4 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {checking ? (
+                  <>
+                    <RefreshCw
+                      size={16}
+                      className="animate-spin"
+                    />
+
+                    Verifying...
+                  </>
+                ) : (
+                  <>
+                    <Fingerprint
+                      size={17}
+                    />
+
+                    Verify device
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          <p className="mt-4 text-center text-[9px] leading-5 text-white/15">
+            Identity verification protects
+            access to the GEO-SHUA workspace.
+          </p>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+/* =========================================================
+   GEO-SHUA LAUNCHER
+========================================================= */
+
+function GeoShuaLauncher({
+  onDashboard,
+}: {
+  onDashboard: () => void;
+}) {
+  const router = useRouter();
+
+  const open = (
+    href: string,
+  ) => {
+    router.push(href);
+  };
+
+  return (
+    <main className="min-h-[100dvh] w-full overflow-x-hidden bg-[#050505] px-4 py-6 text-white sm:px-6 sm:py-10">
+      <div className="mx-auto flex min-h-[calc(100dvh-3rem)] w-full max-w-3xl flex-col justify-center">
+        <div className="text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-yellow-500/20 bg-yellow-500/[0.07] text-xl font-bold tracking-tight text-yellow-400 shadow-[0_0_45px_rgba(234,179,8,0.08)]">
+            GS
+          </div>
+
+          <div className="mt-5 flex items-center justify-center gap-2">
+            <Sparkles
+              size={14}
+              className="text-yellow-400"
+            />
+
+            <span className="text-[10px] font-semibold uppercase tracking-[0.25em] text-yellow-500/60">
+              GEO-SHUA
+            </span>
+          </div>
+
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+            Your workspace
+          </h1>
+
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-white/30">
+            Choose where you want to go.
+          </p>
+        </div>
+
+        <div className="mt-8 grid gap-3 sm:grid-cols-2">
+          <LauncherCard
+            title="Dashboard"
+            description="SACCO overview and live activity"
+            icon={
+              <LayoutDashboard
+                size={20}
+                strokeWidth={1.8}
+              />
+            }
+            onClick={onDashboard}
+          />
+
+          <LauncherCard
+            title="Members"
+            description="Manage GEO-SHUA membership"
+            icon={
+              <Users
+                size={20}
+                strokeWidth={1.8}
+              />
+            }
+            onClick={() =>
+              open("/dashboard/members")
+            }
+          />
+
+          <LauncherCard
+            title="Savings"
+            description="View savings and ledger records"
+            icon={
+              <Wallet
+                size={20}
+                strokeWidth={1.8}
+              />
+            }
+            onClick={() =>
+              open("/dashboard/savings")
+            }
+          />
+
+          <LauncherCard
+            title="Loans"
+            description="Manage lending and repayments"
+            icon={
+              <HandCoins
+                size={20}
+                strokeWidth={1.8}
+              />
+            }
+            onClick={() =>
+              open("/dashboard/loans")
+            }
+          />
+        </div>
+
+        <p className="mt-8 text-center text-[9px] text-white/15">
+          GEO-SHUA SACCO Management
+        </p>
+      </div>
+    </main>
+  );
+}
+
+/* =========================================================
+   LAUNCHER CARD
+========================================================= */
+
+function LauncherCard({
+  title,
+  description,
+  icon,
+  onClick,
+}: {
+  title: string;
+  description: string;
+  icon: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex min-w-0 items-center gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition hover:border-yellow-500/20 hover:bg-white/[0.045] active:scale-[0.99]"
+    >
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/[0.04] text-white/45 transition group-hover:bg-yellow-500/10 group-hover:text-yellow-400">
+        {icon}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-white/75 group-hover:text-white">
+          {title}
+        </p>
+
+        <p className="mt-1 text-[10px] text-white/25">
+          {description}
+        </p>
+      </div>
+
+      <ArrowRight
+        size={16}
+        className="shrink-0 text-white/15 transition group-hover:translate-x-0.5 group-hover:text-yellow-400"
+      />
+    </button>
+  );
+}
+
+/* =========================================================
+   DASHBOARD PAGE
 ========================================================= */
 
 export default function DashboardPage() {
+  const [mounted, setMounted] =
+    useState(false);
+
+  const [securityChecked, setSecurityChecked] =
+    useState(false);
+
+  const [pinConfigured, setPinConfigured] =
+    useState(false);
+
+  const [identityVerified, setIdentityVerified] =
+    useState(false);
+
+  const [showDashboard, setShowDashboard] =
+    useState(false);
+
   const [stats, setStats] =
     useState<DashboardStats>(
       DEFAULT_STATS,
@@ -307,8 +1552,133 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] =
     useState(false);
 
-  const [mounted, setMounted] =
-    useState(false);
+  /* =======================================================
+     SECURITY STATUS
+  ======================================================= */
+
+  const checkSecurityStatus =
+    useCallback(async () => {
+      try {
+        const response =
+          await fetch(
+            "/api/auth/security/status",
+            {
+              method: "GET",
+              credentials: "same-origin",
+              cache: "no-store",
+              headers: {
+                Accept:
+                  "application/json",
+              },
+            },
+          );
+
+        if (
+          response.status === 401
+        ) {
+          setPinConfigured(false);
+          setIdentityVerified(false);
+          setShowDashboard(false);
+
+          return;
+        }
+
+        const json =
+          (await response.json()) as SecurityStatusResponse;
+
+        if (
+          json.authenticated ===
+          false
+        ) {
+          setPinConfigured(false);
+          setIdentityVerified(false);
+          setShowDashboard(false);
+
+          return;
+        }
+
+        const configured =
+          json.configured === true;
+
+        const verified =
+          json.verified === true;
+
+        setPinConfigured(
+          configured,
+        );
+
+        setIdentityVerified(
+          verified,
+        );
+
+        if (verified) {
+          setShowDashboard(true);
+        } else {
+          setShowDashboard(false);
+        }
+      } catch (error) {
+        console.error(
+          "Failed to check security status:",
+          error,
+        );
+
+        /*
+         * Fail closed.
+         *
+         * If the security service cannot be
+         * reached, do not expose the dashboard.
+         */
+        setPinConfigured(false);
+        setIdentityVerified(false);
+        setShowDashboard(false);
+      } finally {
+        setSecurityChecked(true);
+      }
+    }, []);
+
+  /* =======================================================
+     MOUNT
+  ======================================================= */
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  /* =======================================================
+     SECURITY STATUS LOAD
+  ======================================================= */
+
+  useEffect(() => {
+    if (!mounted) {
+      return;
+    }
+
+    void checkSecurityStatus();
+  }, [
+    mounted,
+    checkSecurityStatus,
+  ]);
+
+  /* =======================================================
+     PIN SETUP SUCCESS
+  ======================================================= */
+
+  const handlePinSetupSuccess =
+    useCallback(() => {
+      setPinConfigured(true);
+      setIdentityVerified(false);
+      setShowDashboard(false);
+    }, []);
+
+  /* =======================================================
+     IDENTITY SUCCESS
+  ======================================================= */
+
+  const handleIdentitySuccess =
+    useCallback(() => {
+      setIdentityVerified(true);
+      setShowDashboard(false);
+    }, []);
 
   /* =======================================================
      LOAD DASHBOARD
@@ -317,6 +1687,14 @@ export default function DashboardPage() {
   const loadDashboard =
     useCallback(
       async (isRefresh = false) => {
+        if (!identityVerified) {
+          return;
+        }
+
+        if (!showDashboard) {
+          return;
+        }
+
         if (isRefresh) {
           setRefreshing(true);
         } else {
@@ -329,60 +1707,71 @@ export default function DashboardPage() {
             membersResponse,
             loansResponse,
             notificationsResponse,
-          ] = await Promise.allSettled([
-            fetch(
-              "/api/savings/summary",
-              {
-                method: "GET",
-                cache: "no-store",
-                credentials: "same-origin",
-                headers: {
-                  Accept:
-                    "application/json",
+          ] =
+            await Promise.allSettled([
+              fetch(
+                "/api/savings/summary",
+                {
+                  method: "GET",
+                  cache: "no-store",
+                  credentials:
+                    "same-origin",
+                  headers: {
+                    Accept:
+                      "application/json",
+                  },
                 },
-              },
-            ),
+              ),
 
-            fetch("/api/members", {
-              method: "GET",
-              cache: "no-store",
-              credentials: "same-origin",
-              headers: {
-                Accept:
-                  "application/json",
-              },
-            }),
-
-            fetch("/api/loans", {
-              method: "GET",
-              cache: "no-store",
-              credentials: "same-origin",
-              headers: {
-                Accept:
-                  "application/json",
-              },
-            }),
-
-            fetch(
-              "/api/notifications",
-              {
-                method: "GET",
-                cache: "no-store",
-                credentials:
-                  "same-origin",
-                headers: {
-                  Accept:
-                    "application/json",
+              fetch(
+                "/api/members",
+                {
+                  method: "GET",
+                  cache: "no-store",
+                  credentials:
+                    "same-origin",
+                  headers: {
+                    Accept:
+                      "application/json",
+                  },
                 },
-              },
-            ),
-          ]);
+              ),
+
+              fetch(
+                "/api/loans",
+                {
+                  method: "GET",
+                  cache: "no-store",
+                  credentials:
+                    "same-origin",
+                  headers: {
+                    Accept:
+                      "application/json",
+                  },
+                },
+              ),
+
+              fetch(
+                "/api/notifications",
+                {
+                  method: "GET",
+                  cache: "no-store",
+                  credentials:
+                    "same-origin",
+                  headers: {
+                    Accept:
+                      "application/json",
+                  },
+                },
+              ),
+            ]);
 
           /* =================================================
              SAVINGS
           ================================================= */
 
-          let savings: SavingsSummary = {};
+          let savings: SavingsSummary =
+            {};
 
           if (
             savingsResponse.status ===
@@ -411,7 +1800,8 @@ export default function DashboardPage() {
              MEMBERS
           ================================================= */
 
-          let members: MemberRecord[] = [];
+          let members: MemberRecord[] =
+            [];
 
           if (
             membersResponse.status ===
@@ -442,7 +1832,8 @@ export default function DashboardPage() {
              LOANS
           ================================================= */
 
-          let loans: LoanRecord[] = [];
+          let loans: LoanRecord[] =
+            [];
 
           if (
             loansResponse.status ===
@@ -606,7 +1997,7 @@ export default function DashboardPage() {
             ).length;
 
           /* =================================================
-             SAVINGS FINANCIAL VALUES
+             SAVINGS VALUES
           ================================================= */
 
           const savingsBalance =
@@ -638,17 +2029,33 @@ export default function DashboardPage() {
           ================================================= */
 
           setStats({
-            members: totalMembers,
-            activeMembers,
-            savings: savingsBalance,
-            deposits: savingsDeposits,
+            members:
+              totalMembers,
+
+            activeMembers:
+              activeMembers,
+
+            savings:
+              savingsBalance,
+
+            deposits:
+              savingsDeposits,
+
             withdrawals:
               savingsWithdrawals,
+
             reversals:
               savingsReversals,
-            loans: loanCount,
-            outstandingLoans,
-            defaulters,
+
+            loans:
+              loanCount,
+
+            outstandingLoans:
+              outstandingLoans,
+
+            defaulters:
+              defaulters,
+
             notifications:
               notificationCount,
           });
@@ -709,7 +2116,8 @@ export default function DashboardPage() {
                       date,
                     ),
 
-                  type: "member",
+                  type:
+                    "member",
 
                   sortTimestamp:
                     new Date(
@@ -755,7 +2163,8 @@ export default function DashboardPage() {
                       date,
                     ),
 
-                  type: "loan",
+                  type:
+                    "loan",
 
                   sortTimestamp:
                     new Date(
@@ -844,17 +2253,34 @@ export default function DashboardPage() {
           setRefreshing(false);
         }
       },
-      [],
+      [
+        identityVerified,
+        showDashboard,
+      ],
     );
 
   /* =======================================================
-     INITIAL LOAD
+     DASHBOARD LOAD
   ======================================================= */
 
   useEffect(() => {
-    setMounted(true);
+    if (
+      !mounted ||
+      !securityChecked ||
+      !identityVerified ||
+      !showDashboard
+    ) {
+      return;
+    }
+
     void loadDashboard();
-  }, [loadDashboard]);
+  }, [
+    mounted,
+    securityChecked,
+    identityVerified,
+    showDashboard,
+    loadDashboard,
+  ]);
 
   /* =======================================================
      REFRESH
@@ -877,25 +2303,66 @@ export default function DashboardPage() {
     ]);
 
   /* =======================================================
-     HYDRATION GUARD
+     HYDRATION / SECURITY LOADING
   ======================================================= */
 
-  if (mounted === false) {
-    return (
-      <main className="min-h-[100dvh] w-full overflow-x-clip bg-[#050505] text-white">
-        <TopBar />
+  if (
+    mounted === false ||
+    securityChecked === false
+  ) {
+    return <SecurityLoading />;
+  }
 
-        <div className="w-full pt-16">
-          <div className="mx-auto w-full max-w-[1800px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-            <DashboardLoading />
-          </div>
-        </div>
-      </main>
+  /* =======================================================
+     PIN SETUP
+  ======================================================= */
+
+  if (
+    pinConfigured === false
+  ) {
+    return (
+      <PinSetupScreen
+        onSuccess={
+          handlePinSetupSuccess
+        }
+      />
     );
   }
 
   /* =======================================================
-     MAIN
+     IDENTITY
+  ======================================================= */
+
+  if (
+    identityVerified === false
+  ) {
+    return (
+      <IdentityScreen
+        onSuccess={
+          handleIdentitySuccess
+        }
+      />
+    );
+  }
+
+  /* =======================================================
+     LAUNCHER
+  ======================================================= */
+
+  if (
+    showDashboard === false
+  ) {
+    return (
+      <GeoShuaLauncher
+        onDashboard={() =>
+          setShowDashboard(true)
+        }
+      />
+    );
+  }
+
+  /* =======================================================
+     MAIN DASHBOARD
   ======================================================= */
 
   return (
@@ -904,7 +2371,6 @@ export default function DashboardPage() {
 
       <div className="w-full pt-16">
         <div className="mx-auto w-full max-w-[1800px] px-4 py-5 sm:px-6 sm:py-8 lg:px-8 lg:py-10 xl:px-10 2xl:px-12">
-
           {/* =================================================
               MOBILE DASHBOARD
           ================================================= */}
@@ -915,7 +2381,9 @@ export default function DashboardPage() {
             ) : (
               <MobileDashboard
                 stats={stats}
-                activities={activities}
+                activities={
+                  activities
+                }
                 onRefresh={
                   handleRefresh
                 }
@@ -989,9 +2457,7 @@ export default function DashboardPage() {
               <DashboardLoading />
             ) : (
               <>
-                {/* =================================================
-                    STATS
-                ================================================= */}
+                {/* STATS */}
 
                 <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
                   <StatCard
@@ -1057,9 +2523,7 @@ export default function DashboardPage() {
                   />
                 </section>
 
-                {/* =================================================
-                    FINANCIAL BREAKDOWN
-                ================================================= */}
+                {/* FINANCIAL BREAKDOWN */}
 
                 <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <MetricCard
@@ -1091,9 +2555,7 @@ export default function DashboardPage() {
                   />
                 </section>
 
-                {/* =================================================
-                    MAIN GRID
-                ================================================= */}
+                {/* MAIN GRID */}
 
                 <section className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
                   {/* RECENT ACTIVITY */}
@@ -1228,9 +2690,7 @@ export default function DashboardPage() {
                   </div>
                 </section>
 
-                {/* =================================================
-                    MEMBER + SAVINGS
-                ================================================= */}
+                {/* MEMBER + SAVINGS */}
 
                 <section className="mt-5 grid gap-5 md:grid-cols-2">
                   <OverviewCard
@@ -1249,10 +2709,9 @@ export default function DashboardPage() {
                       stats.members > 0
                         ? Math.min(
                             100,
-                            (
-                              stats.activeMembers /
-                              stats.members
-                            ) * 100,
+                            (stats.activeMembers /
+                              stats.members) *
+                              100,
                           )
                         : 0
                     }
@@ -1260,10 +2719,9 @@ export default function DashboardPage() {
                     progressValue={
                       stats.members > 0
                         ? `${Math.round(
-                            (
-                              stats.activeMembers /
-                              stats.members
-                            ) * 100,
+                            (stats.activeMembers /
+                              stats.members) *
+                              100,
                           )}%`
                         : "0%"
                     }
@@ -1312,9 +2770,7 @@ export default function DashboardPage() {
                   />
                 </section>
 
-                {/* =================================================
-                    LOANS
-                ================================================= */}
+                {/* LOANS */}
 
                 <section className="mt-5">
                   <LoanOverviewCard
@@ -1330,9 +2786,7 @@ export default function DashboardPage() {
                   />
                 </section>
 
-                {/* =================================================
-                    FOOTER
-                ================================================= */}
+                {/* FOOTER */}
 
                 <div className="mt-5 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-[10px] text-white/20">
@@ -1373,6 +2827,13 @@ function MobileDashboard({
   const [amountsHidden, setAmountsHidden] =
     useState(false);
 
+  /*
+   * This is a client-side reconciliation
+   * indicator only.
+   *
+   * stats.savings remains the authoritative
+   * backend balance.
+   */
   const calculatedSavings =
     stats.deposits -
     stats.withdrawals -
@@ -1412,7 +2873,8 @@ function MobileDashboard({
             type="button"
             onClick={() =>
               setAmountsHidden(
-                (current) => !current,
+                (current) =>
+                  !current,
               )
             }
             aria-label={
@@ -1533,10 +2995,9 @@ function MobileDashboard({
                   stats.members > 0
                     ? Math.min(
                         100,
-                        (
-                          stats.activeMembers /
-                          stats.members
-                        ) * 100,
+                        (stats.activeMembers /
+                          stats.members) *
+                          100,
                       )
                     : 0
                 }%`,
@@ -1552,10 +3013,9 @@ function MobileDashboard({
             <span className="text-[9px] font-medium text-white/40">
               {stats.members > 0
                 ? `${Math.round(
-                    (
-                      stats.activeMembers /
-                      stats.members
-                    ) * 100,
+                    (stats.activeMembers /
+                      stats.members) *
+                      100,
                   )}%`
                 : "0%"}
             </span>
@@ -1833,7 +3293,7 @@ function MobileDashboard({
         )}
       </section>
 
-      {/* MOBILE FOOTER */}
+      {/* FOOTER */}
 
       <div className="px-1 pb-3 pt-1 text-center">
         <p className="text-[9px] text-white/15">
@@ -1962,7 +3422,8 @@ function OverviewCard({
         </div>
       </div>
 
-      {progress !== undefined && (
+      {progress !==
+        undefined && (
         <div className="mt-5">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-[10px] text-white/25">
