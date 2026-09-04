@@ -1,14 +1,658 @@
 import { NextResponse } from "next/server";
+import {
+  createHash,
+  timingSafeEqual,
+} from "crypto";
+import bcrypt from "bcryptjs";
+
+import { auth } from "@/auth";
+import clientPromise from "@/lib/mongodb";
+
+import {
+  getDeviceRecoveryAuthorizationCollection,
+} from "@/lib/security/deviceRecovery";
+
+import {
+  getSecurityCollection,
+} from "@/lib/security/pin";
+
+import {
+  clearSecuritySession,
+  SECURITY_SESSION_COLLECTION,
+} from "@/lib/security/session";
 
 export const runtime = "nodejs";
 
-export async function POST() {
-  return NextResponse.json(
-    {
-      success: false,
-      reset: false,
-      error: "Device PIN reset is not implemented yet.",
-    },
-    { status: 501 },
+/* =========================================================
+   SECURITY SETTINGS
+========================================================= */
+
+const MIN_PIN_LENGTH = 4;
+const MAX_PIN_LENGTH = 6;
+
+/* =========================================================
+   REQUEST TYPE
+========================================================= */
+
+type ResetPinRequest = {
+  authorizationToken?: unknown;
+  pin?: unknown;
+  confirmPin?: unknown;
+};
+
+/* =========================================================
+   SESSION TYPES
+========================================================= */
+
+type SessionUser = {
+  id?: string | null;
+  email?: string | null;
+};
+
+type AuthenticatedSession = {
+  user?: SessionUser | null;
+};
+
+/* =========================================================
+   HASH AUTHORIZATION TOKEN
+========================================================= */
+
+function hashAuthorizationToken(
+  token: string,
+): string {
+  return createHash("sha256")
+    .update(token, "utf8")
+    .digest("hex");
+}
+
+/* =========================================================
+   CONSTANT-TIME HASH COMPARISON
+========================================================= */
+
+function safeHashEquals(
+  expected: string,
+  supplied: string,
+): boolean {
+  const expectedBuffer =
+    Buffer.from(expected, "utf8");
+
+  const suppliedBuffer =
+    Buffer.from(supplied, "utf8");
+
+  if (
+    expectedBuffer.length !==
+    suppliedBuffer.length
+  ) {
+    return false;
+  }
+
+  return timingSafeEqual(
+    expectedBuffer,
+    suppliedBuffer,
   );
+}
+
+/* =========================================================
+   PIN VALIDATION
+========================================================= */
+
+function isValidPin(
+  pin: unknown,
+): pin is string {
+  if (typeof pin !== "string") {
+    return false;
+  }
+
+  if (
+    pin.length < MIN_PIN_LENGTH ||
+    pin.length > MAX_PIN_LENGTH
+  ) {
+    return false;
+  }
+
+  return /^\d+$/.test(pin);
+}
+
+/* =========================================================
+   POST
+========================================================= */
+
+export async function POST(
+  request: Request,
+) {
+  try {
+    /* =====================================================
+       1. REQUIRE GOOGLE AUTHENTICATION
+    ===================================================== */
+
+    const session =
+      (await auth()) as
+        | AuthenticatedSession
+        | null;
+
+    const email =
+      typeof session?.user?.email ===
+      "string"
+        ? session.user.email
+            .trim()
+            .toLowerCase()
+        : "";
+
+    if (!email) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Authentication required.",
+        },
+        { status: 401 },
+      );
+    }
+
+    const userId =
+      typeof session?.user?.id ===
+        "string" &&
+      session.user.id.trim()
+        ? session.user.id.trim()
+        : undefined;
+
+    /* =====================================================
+       2. PARSE REQUEST
+    ===================================================== */
+
+    let body: ResetPinRequest;
+
+    try {
+      body =
+        (await request.json()) as
+          ResetPinRequest;
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Invalid request body.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const authorizationToken =
+      typeof body.authorizationToken ===
+      "string"
+        ? body.authorizationToken.trim()
+        : "";
+
+    const pin =
+      typeof body.pin === "string"
+        ? body.pin
+        : "";
+
+    const confirmPin =
+      typeof body.confirmPin === "string"
+        ? body.confirmPin
+        : "";
+
+    /* =====================================================
+       3. VALIDATE AUTHORIZATION TOKEN
+    ===================================================== */
+
+    if (!authorizationToken) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Android recovery authorization is required.",
+        },
+        { status: 400 },
+      );
+    }
+
+    /*
+     * Authorization tokens generated by the
+     * recovery verification endpoint are
+     * 32 random bytes encoded as base64url.
+     *
+     * 32 bytes -> normally 43 characters.
+     */
+
+    if (
+      authorizationToken.length < 32 ||
+      authorizationToken.length > 128 ||
+      !/^[A-Za-z0-9_-]+$/.test(
+        authorizationToken,
+      )
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Invalid Android recovery authorization.",
+        },
+        { status: 401 },
+      );
+    }
+
+    /* =====================================================
+       4. VALIDATE NEW PIN
+    ===================================================== */
+
+    if (!isValidPin(pin)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "PIN must contain 4 to 6 digits.",
+        },
+        { status: 400 },
+      );
+    }
+
+    /* =====================================================
+       5. VALIDATE PIN CONFIRMATION
+    ===================================================== */
+
+    if (!isValidPin(confirmPin)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "PIN confirmation must contain 4 to 6 digits.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (pin !== confirmPin) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "PINs do not match.",
+        },
+        { status: 400 },
+      );
+    }
+
+    /* =====================================================
+       6. HASH AUTHORIZATION TOKEN
+    ===================================================== */
+
+    const authorizationHash =
+      hashAuthorizationToken(
+        authorizationToken,
+      );
+
+    /* =====================================================
+       7. DATABASE
+    ===================================================== */
+
+    const client =
+      await clientPromise;
+
+    const db = client.db();
+
+    /* =====================================================
+       8. GET AUTHORIZATION COLLECTION
+    ===================================================== */
+
+    const authorizations =
+      await getDeviceRecoveryAuthorizationCollection(
+        db,
+      );
+
+    /* =====================================================
+       9. LOAD RECOVERY AUTHORIZATION
+    ===================================================== */
+
+    const authorization =
+      await authorizations.findOne({
+        email,
+        tokenHash:
+          authorizationHash,
+      });
+
+    if (!authorization) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Invalid Android recovery authorization.",
+        },
+        { status: 401 },
+      );
+    }
+
+    /* =====================================================
+       10. VERIFY USER BINDING
+    ===================================================== */
+
+    if (
+      authorization.userId &&
+      userId &&
+      authorization.userId !==
+        userId
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Recovery authorization does not belong to this account.",
+        },
+        { status: 403 },
+      );
+    }
+
+    /*
+     * If the authorization has a userId,
+     * the current authenticated session
+     * must also have a matching userId.
+     */
+
+    if (
+      authorization.userId &&
+      !userId
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Recovery authorization cannot be verified for this account.",
+        },
+        { status: 403 },
+      );
+    }
+
+    /* =====================================================
+       11. REJECT ALREADY USED AUTHORIZATION
+    ===================================================== */
+
+    if (authorization.usedAt) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "This recovery authorization has already been used.",
+        },
+        { status: 409 },
+      );
+    }
+
+    /* =====================================================
+       12. CHECK EXPIRATION
+    ===================================================== */
+
+    const now =
+      new Date();
+
+    if (
+      authorization.expiresAt.getTime() <=
+      now.getTime()
+    ) {
+      await authorizations.updateOne(
+        {
+          _id:
+            authorization._id,
+          email,
+          tokenHash:
+            authorizationHash,
+          usedAt: null,
+        },
+        {
+          $set: {
+            usedAt: now,
+          },
+        },
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Android recovery authorization has expired.",
+        },
+        { status: 410 },
+      );
+    }
+
+    /* =====================================================
+       13. GET SECURITY COLLECTION
+    ===================================================== */
+
+    const securityCollection =
+      await getSecurityCollection(
+        db,
+      );
+
+    /*
+     * email has already been normalized
+     * above.
+     */
+
+    const normalizedSecurityEmail =
+      email;
+
+    /* =====================================================
+       14. LOAD EXISTING SECURITY RECORD
+    ===================================================== */
+
+    const existingSecurity =
+      await securityCollection.findOne({
+        email:
+          normalizedSecurityEmail,
+      });
+
+    if (!existingSecurity) {
+      /*
+       * Do not silently create a security
+       * record during recovery.
+       *
+       * Recovery is only for replacing
+       * an existing PIN.
+       */
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Security PIN is not configured for this account.",
+        },
+        { status: 404 },
+      );
+    }
+
+    /* =====================================================
+       15. HASH NEW PIN
+    ===================================================== */
+
+    const pinHash =
+      await bcrypt.hash(
+        pin,
+        12,
+      );
+
+    /* =====================================================
+       16. ATOMICALLY CONSUME AUTHORIZATION
+       
+       We consume the authorization only
+       immediately before changing the PIN.
+
+       This prevents the token from being
+       reused concurrently.
+    ===================================================== */
+
+    const consumed =
+      await authorizations.findOneAndUpdate(
+        {
+          _id:
+            authorization._id,
+
+          email,
+
+          tokenHash:
+            authorizationHash,
+
+          usedAt: null,
+
+          expiresAt: {
+            $gt: now,
+          },
+        },
+        {
+          $set: {
+            usedAt: now,
+          },
+        },
+        {
+          returnDocument:
+            "after",
+        },
+      );
+
+    if (!consumed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Recovery authorization is no longer valid.",
+        },
+        { status: 409 },
+      );
+    }
+
+    /* =====================================================
+       17. UPDATE PIN
+    ===================================================== */
+
+    const pinUpdate =
+      await securityCollection.updateOne(
+        {
+          _id:
+            existingSecurity._id,
+
+          email:
+            normalizedSecurityEmail,
+        },
+        {
+          $set: {
+            pinHash,
+
+            failedAttempts: 0,
+
+            lockedUntil: null,
+
+            lastPinVerifiedAt: null,
+
+            updatedAt: now,
+          },
+        },
+      );
+
+    /* =====================================================
+       18. CONFIRM PIN UPDATE
+    ===================================================== */
+
+    if (
+      pinUpdate.matchedCount !== 1 ||
+      pinUpdate.modifiedCount !== 1
+    ) {
+      /*
+       * The authorization has already been
+       * consumed at this point.
+       *
+       * We deliberately do not restore it,
+       * because doing so could create a
+       * replay condition.
+       *
+       * Log the failure for operational
+       * investigation.
+       */
+
+      console.error(
+        "ANDROID PIN RESET UPDATE FAILED:",
+        {
+          email,
+          userId,
+          securityMatched:
+            pinUpdate.matchedCount,
+          securityModified:
+            pinUpdate.modifiedCount,
+        },
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "The recovery authorization was accepted, but the PIN could not be updated.",
+        },
+        { status: 500 },
+      );
+    }
+
+    /* =====================================================
+       19. INVALIDATE ALL SECURITY SESSIONS
+       
+       IMPORTANT:
+       Do this by EMAIL.
+
+       This catches both:
+       - userId-bound sessions
+       - older email-bound sessions
+    ===================================================== */
+
+    const securitySessions =
+      db.collection(
+        SECURITY_SESSION_COLLECTION,
+      );
+
+    await securitySessions.deleteMany(
+      {
+        email:
+          normalizedSecurityEmail,
+      },
+    );
+
+    /* =====================================================
+       20. CLEAR CURRENT SECURITY SESSION COOKIE
+    ===================================================== */
+
+    await clearSecuritySession(
+      db,
+    );
+
+    /* =====================================================
+       21. SUCCESS
+    ===================================================== */
+
+    return NextResponse.json({
+      success: true,
+
+      reset: true,
+
+      method:
+        "android-device-recovery",
+
+      platform: "android",
+
+      message:
+        "Security PIN reset successfully.",
+
+      requiresVerification: true,
+    });
+  } catch (error) {
+    console.error(
+      "ANDROID DEVICE PIN RESET ERROR:",
+      error,
+    );
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          "Unable to reset the security PIN.",
+      },
+      { status: 500 },
+    );
+  }
 }

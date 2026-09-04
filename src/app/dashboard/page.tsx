@@ -24,9 +24,17 @@ import {
 } from "lucide-react";
 
 import { useRouter } from "next/navigation";
+import { Capacitor } from "@capacitor/core";
 
 import SmsInboxMonitor from "@/components/sms/SmsInboxMonitor";
 import TopBar from "@/components/dashboard/TopBar";
+
+import {
+  createAndroidRecoveryKey,
+  getAndroidRecoveryPublicKey,
+  hasAndroidRecoveryKey,
+  signAndroidRecoveryChallenge,
+} from "@/lib/auth/androidDeviceSecurity";
 
 /* =========================================================
    TYPES
@@ -171,6 +179,49 @@ type PublicKeyCredentialRequestOptionsJSON = {
     transports?: AuthenticatorTransport[];
   }>;
   userVerification?: UserVerificationRequirement;
+};
+
+/* =========================================================
+   ANDROID DEVICE RECOVERY TYPES
+========================================================= */
+
+type DeviceRecoveryOptionsResponse = {
+  success?: boolean;
+  registered?: boolean;
+  platform?: string;
+  algorithm?: string;
+  error?: string;
+};
+
+type DeviceRecoveryChallengeResponse = {
+  success?: boolean;
+  challenge?: string;
+  challengeId?: string;
+  expiresAt?: string;
+  expiresInSeconds?: number;
+  platform?: string;
+  algorithm?: string;
+  error?: string;
+};
+
+type DeviceRecoveryVerifyResponse = {
+  success?: boolean;
+  authorizationToken?: string;
+  expiresAt?: string;
+  expiresInSeconds?: number;
+  platform?: string;
+  algorithm?: string;
+  error?: string;
+};
+
+type DeviceRecoveryResetResponse = {
+  success?: boolean;
+  reset?: boolean;
+  method?: string;
+  platform?: string;
+  message?: string;
+  requiresVerification?: boolean;
+  error?: string;
 };
 
 /* =========================================================
@@ -356,7 +407,11 @@ function base64UrlToUint8Array(
     binary.length,
   );
 
-  for (let index = 0; index < binary.length; index += 1) {
+  for (
+    let index = 0;
+    index < binary.length;
+    index += 1
+  ) {
     bytes[index] = binary.charCodeAt(index);
   }
 
@@ -725,6 +780,340 @@ function PinSetupScreen({
 }
 
 /* =========================================================
+   ANDROID DEVICE RECOVERY RESET SCREEN
+========================================================= */
+
+function DeviceRecoveryResetScreen({
+  authorizationToken,
+  onSuccess,
+  onCancel,
+}: {
+  authorizationToken: string;
+  onSuccess: () => void;
+  onCancel: () => void;
+}) {
+  const [pin, setPin] = useState("");
+  const [confirmPin, setConfirmPin] =
+    useState("");
+
+  const [showPin, setShowPin] =
+    useState(false);
+
+  const [showConfirmPin, setShowConfirmPin] =
+    useState(false);
+
+  const [checking, setChecking] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const submit = async () => {
+    setError("");
+
+    if (!/^\d{4,6}$/.test(pin)) {
+      setError(
+        "Your PIN must contain 4 to 6 digits.",
+      );
+      return;
+    }
+
+    if (pin !== confirmPin) {
+      setError(
+        "The PINs do not match.",
+      );
+      return;
+    }
+
+    if (!authorizationToken) {
+      setError(
+        "The recovery authorization is missing. Please start again.",
+      );
+      return;
+    }
+
+    setChecking(true);
+
+    try {
+      const response = await fetch(
+        "/api/auth/security/device-recovery/reset-pin",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: {
+            "Content-Type":
+              "application/json",
+            Accept:
+              "application/json",
+          },
+          body: JSON.stringify({
+            authorizationToken,
+            pin,
+            confirmPin,
+          }),
+        },
+      );
+
+      const json =
+        (await response.json()) as DeviceRecoveryResetResponse;
+
+      if (
+        !response.ok ||
+        json.success !== true ||
+        json.reset !== true
+      ) {
+        throw new Error(
+          json.error ||
+            "Unable to reset your security PIN.",
+        );
+      }
+
+      setPin("");
+      setConfirmPin("");
+
+      onSuccess();
+    } catch (resetError) {
+      setError(
+        resetError instanceof Error
+          ? resetError.message
+          : "Unable to reset your security PIN.",
+      );
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const handlePinChange = (
+    value: string,
+    setter: (value: string) => void,
+  ) => {
+    setter(
+      value
+        .replace(/\D/g, "")
+        .slice(0, 6),
+    );
+  };
+
+  return (
+    <main className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-[#050505] px-4 py-6 text-white">
+      <div className="w-full max-w-md">
+        <div className="rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 shadow-2xl sm:p-7">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
+              <ShieldCheck
+                size={21}
+                strokeWidth={1.8}
+              />
+            </div>
+
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-yellow-500/60">
+                Identity
+              </p>
+
+              <h1 className="mt-1 text-lg font-semibold text-white">
+                Create a new security PIN
+              </h1>
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-[#1683ff]/10 bg-[#1683ff]/[0.035] p-4">
+            <div className="flex items-center gap-2">
+              <Fingerprint
+                size={16}
+                className="text-[#4da3ff]"
+              />
+
+              <p className="text-xs font-medium text-white/65">
+                Android device recovery verified
+              </p>
+            </div>
+
+            <p className="mt-2 text-[11px] leading-5 text-white/30">
+              Your device security has
+              authorized this PIN reset.
+              Create a new 4 to 6 digit PIN
+              below.
+            </p>
+          </div>
+
+          {/* NEW PIN */}
+
+          <div className="mt-5">
+            <label
+              htmlFor="recovery-new-pin"
+              className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
+            >
+              New security PIN
+            </label>
+
+            <div className="relative mt-2">
+              <input
+                id="recovery-new-pin"
+                type={
+                  showPin
+                    ? "text"
+                    : "password"
+                }
+                inputMode="numeric"
+                autoComplete="new-password"
+                maxLength={6}
+                value={pin}
+                onChange={(event) =>
+                  handlePinChange(
+                    event.target.value,
+                    setPin,
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter"
+                  ) {
+                    void submit();
+                  }
+                }}
+                placeholder="4–6 digits"
+                className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
+              />
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowPin(
+                    (current) =>
+                      !current,
+                  )
+                }
+                aria-label={
+                  showPin
+                    ? "Hide PIN"
+                    : "Show PIN"
+                }
+                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 transition hover:bg-white/[0.05] hover:text-white/60"
+              >
+                {showPin ? (
+                  <EyeOff size={17} />
+                ) : (
+                  <Eye size={17} />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* CONFIRM PIN */}
+
+          <div className="mt-4">
+            <label
+              htmlFor="recovery-confirm-pin"
+              className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
+            >
+              Confirm new PIN
+            </label>
+
+            <div className="relative mt-2">
+              <input
+                id="recovery-confirm-pin"
+                type={
+                  showConfirmPin
+                    ? "text"
+                    : "password"
+                }
+                inputMode="numeric"
+                autoComplete="new-password"
+                maxLength={6}
+                value={confirmPin}
+                onChange={(event) =>
+                  handlePinChange(
+                    event.target.value,
+                    setConfirmPin,
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter"
+                  ) {
+                    void submit();
+                  }
+                }}
+                placeholder="Repeat your PIN"
+                className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
+              />
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowConfirmPin(
+                    (current) =>
+                      !current,
+                  )
+                }
+                aria-label={
+                  showConfirmPin
+                    ? "Hide confirmation PIN"
+                    : "Show confirmation PIN"
+                }
+                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 transition hover:bg-white/[0.05] hover:text-white/60"
+              >
+                {showConfirmPin ? (
+                  <EyeOff size={17} />
+                ) : (
+                  <Eye size={17} />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div className="mt-4 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs leading-5 text-red-300/80">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={checking}
+            className="mt-5 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {checking ? (
+              <>
+                <RefreshCw
+                  size={16}
+                  className="animate-spin"
+                />
+
+                Updating PIN...
+              </>
+            ) : (
+              <>
+                Update security PIN
+
+                <ArrowRight size={16} />
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={checking}
+            className="mt-3 flex h-11 w-full items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.02] px-4 text-xs font-medium text-white/45 transition hover:bg-white/[0.04] hover:text-white/65 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Back to Identity
+          </button>
+
+          <p className="mt-4 text-center text-[10px] leading-5 text-white/20">
+            Your old security sessions are
+            invalidated after the PIN is changed.
+          </p>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+/* =========================================================
    IDENTITY SCREEN
 ========================================================= */
 
@@ -753,7 +1142,28 @@ function IdentityScreen({
   const [attempts, setAttempts] =
     useState(0);
 
+  const [forgotPin, setForgotPin] =
+    useState(false);
+
+  const [recoveryToken, setRecoveryToken] =
+    useState("");
+
+  const [recoveryBusy, setRecoveryBusy] =
+    useState(false);
+
+  const [isAndroid, setIsAndroid] =
+    useState(false);
+
   const MAX_CLIENT_ATTEMPTS = 5;
+
+  useEffect(() => {
+    const android =
+      Capacitor.isNativePlatform() &&
+      Capacitor.getPlatform() ===
+        "android";
+
+    setIsAndroid(android);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -898,472 +1308,692 @@ function IdentityScreen({
     }
   };
 
+  /* =======================================================
+     ANDROID FORGOT PIN
+  ======================================================= */
+
+  const startAndroidPinRecovery =
+    async () => {
+      if (!isAndroid) {
+        return;
+      }
+
+      setError("");
+      setRecoveryBusy(true);
+
+      try {
+        /*
+         * The native Android recovery key is
+         * device-bound. Create it once if it
+         * does not already exist.
+         */
+        let hasKey =
+          await hasAndroidRecoveryKey();
+
+        if (!hasKey.success) {
+          throw new Error(
+            hasKey.error ||
+              "Unable to check Android device recovery.",
+          );
+        }
+
+        if (!hasKey.exists) {
+          const created =
+            await createAndroidRecoveryKey();
+
+          if (
+            !created.success ||
+            !created.publicKey
+          ) {
+            throw new Error(
+              created.error ||
+                "Unable to create secure Android recovery access.",
+            );
+          }
+        }
+
+        const publicKey =
+          await getAndroidRecoveryPublicKey();
+
+        if (
+          !publicKey.success ||
+          !publicKey.publicKey
+        ) {
+          throw new Error(
+            publicKey.error ||
+              "Unable to access the Android recovery key.",
+          );
+        }
+
+        /*
+         * Register/update the public key on the
+         * server. The private key never leaves
+         * Android Keystore.
+         */
+        const optionsResponse =
+          await fetch(
+            "/api/auth/security/device-recovery/options",
+            {
+              method: "POST",
+              credentials: "same-origin",
+              cache: "no-store",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Accept:
+                  "application/json",
+              },
+              body: JSON.stringify({
+                publicKey:
+                  publicKey.publicKey,
+              }),
+            },
+          );
+
+        const optionsJson =
+          (await optionsResponse.json()) as DeviceRecoveryOptionsResponse;
+
+        if (
+          !optionsResponse.ok ||
+          optionsJson.success !== true
+        ) {
+          throw new Error(
+            optionsJson.error ||
+              "Unable to register Android recovery.",
+          );
+        }
+
+        /*
+         * Ask the server for a fresh,
+         * short-lived challenge.
+         */
+        const challengeResponse =
+          await fetch(
+            "/api/auth/security/device-recovery/challenge",
+            {
+              method: "POST",
+              credentials: "same-origin",
+              cache: "no-store",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Accept:
+                  "application/json",
+              },
+              body: JSON.stringify({}),
+            },
+          );
+
+        const challengeJson =
+          (await challengeResponse.json()) as DeviceRecoveryChallengeResponse;
+
+        if (
+          !challengeResponse.ok ||
+          challengeJson.success !== true ||
+          !challengeJson.challenge ||
+          !challengeJson.challengeId
+        ) {
+          throw new Error(
+            challengeJson.error ||
+              "Unable to start PIN recovery.",
+          );
+        }
+
+        /*
+         * Native Android signs the challenge.
+         * The private key remains inside the
+         * Android Keystore.
+         */
+        const signed =
+          await signAndroidRecoveryChallenge(
+            challengeJson.challenge,
+          );
+
+        if (
+          !signed.success ||
+          !signed.signature
+        ) {
+          throw new Error(
+            signed.error ||
+              "Android device authorization failed.",
+          );
+        }
+
+        /*
+         * Server verifies the ECDSA signature
+         * using the previously registered public
+         * key.
+         */
+        const verifyResponse =
+          await fetch(
+            "/api/auth/security/device-recovery/verify",
+            {
+              method: "POST",
+              credentials: "same-origin",
+              cache: "no-store",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Accept:
+                  "application/json",
+              },
+              body: JSON.stringify({
+                challengeId:
+                  challengeJson.challengeId,
+                challenge:
+                  challengeJson.challenge,
+                signature:
+                  signed.signature,
+              }),
+            },
+          );
+
+        const verifyJson =
+          (await verifyResponse.json()) as DeviceRecoveryVerifyResponse;
+
+        if (
+          !verifyResponse.ok ||
+          verifyJson.success !== true ||
+          !verifyJson.authorizationToken
+        ) {
+          throw new Error(
+            verifyJson.error ||
+              "Android recovery verification failed.",
+          );
+        }
+
+        /*
+         * We now have a short-lived,
+         * single-use server authorization token.
+         *
+         * Do not store it in localStorage,
+         * sessionStorage, or any persistent
+         * browser storage.
+         */
+        setRecoveryToken(
+          verifyJson.authorizationToken,
+        );
+
+        setPin("");
+        setError("");
+        setForgotPin(true);
+      } catch (recoveryError) {
+        setError(
+          recoveryError instanceof Error
+            ? recoveryError.message
+            : "Unable to recover your security PIN.",
+        );
+      } finally {
+        setRecoveryBusy(false);
+      }
+    };
+
+  const cancelRecovery = () => {
+    setRecoveryToken("");
+    setForgotPin(false);
+    setRecoveryBusy(false);
+    setChecking(false);
+    setPin("");
+    setError("");
+    setMethod("pin");
+  };
+
+  const handleRecoverySuccess =
+    () => {
+      /*
+       * The reset route has already invalidated
+       * all existing security sessions.
+       *
+       * Do not authenticate automatically.
+       * Return to Identity and require the
+       * newly created PIN.
+       */
+      setRecoveryToken("");
+      setForgotPin(false);
+      setRecoveryBusy(false);
+      setChecking(false);
+      setPin("");
+      setAttempts(0);
+      setError("");
+      setMethod("pin");
+    };
+
+  if (
+    forgotPin &&
+    recoveryToken
+  ) {
+    return (
+      <DeviceRecoveryResetScreen
+        authorizationToken={
+          recoveryToken
+        }
+        onSuccess={
+          handleRecoverySuccess
+        }
+        onCancel={
+          cancelRecovery
+        }
+      />
+    );
+  }
+  
+
+
   const verifyDevice = async () => {
     setError("");
+
+    if (!deviceAvailable) {
+      setError(
+        "Device verification is not available.",
+      );
+      return;
+    }
+
     setChecking(true);
 
     try {
-      const optionsResponse =
-        await fetch(
-          "/api/auth/security/webauthn/options",
-          {
-            method: "POST",
-            credentials: "same-origin",
-            cache: "no-store",
-            headers: {
-              Accept:
-                "application/json",
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify({}),
+      const response = await fetch(
+        "/api/auth/security/verify",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: {
+            "Content-Type":
+              "application/json",
+            Accept:
+              "application/json",
           },
-        );
+          body: JSON.stringify({
+            method: "device",
+          }),
+        },
+      );
 
-      const optionsJson =
-        (await optionsResponse.json()) as WebAuthnOptionsResponse;
-
-      if (
-        !optionsResponse.ok ||
-        optionsJson.success !== true ||
-        !optionsJson.publicKey
-      ) {
-        throw new Error(
-          optionsJson.error ||
-            "Unable to start device verification.",
-        );
-      }
+      const json =
+        (await response.json()) as SecurityVerifyResponse;
 
       if (
-        typeof navigator ===
-          "undefined" ||
-        !navigator.credentials
+        response.ok &&
+        json.success === true &&
+        json.verified === true
       ) {
-        throw new Error(
-          "Device security is not available on this device.",
-        );
+        setAttempts(0);
+
+        onSuccess();
+
+        return;
       }
 
-      const publicKey =
-        optionsJson.publicKey;
+      setAttempts(
+        (current) => current + 1,
+      );
 
-      const credential =
-        (await navigator.credentials.get(
-          {
-            publicKey: {
-             challenge: toArrayBuffer(
-  base64UrlToUint8Array(
-    publicKey.challenge,
-  ),
-),
-
-timeout:
-  publicKey.timeout,
-
-rpId:
-  publicKey.rpId,
-
-userVerification:
-  publicKey.userVerification ||
-  "required",
-
-allowCredentials:
-  publicKey.allowCredentials?.map(
-    (item) => ({
-      id: toArrayBuffer(
-        base64UrlToUint8Array(
-          item.id,
-        ),
-      ),
-      type: item.type,
-      transports:
-        item.transports,
-    }),
-  ),
-            },
-          },
-        )) as PublicKeyCredential | null;
-
-      if (!credential) {
-        throw new Error(
-          "Device verification was cancelled.",
-        );
-      }
-
-      const response =
-        credential.response as AuthenticatorAssertionResponse;
-
-      const verifyResponse =
-        await fetch(
-          "/api/auth/security/webauthn/verify",
-          {
-            method: "POST",
-            credentials: "same-origin",
-            cache: "no-store",
-            headers: {
-              "Content-Type":
-                "application/json",
-              Accept:
-                "application/json",
-            },
-            body: JSON.stringify({
-              id: credential.id,
-              rawId:
-                uint8ArrayToNumberArray(
-                  credential.rawId,
-                ),
-              type: credential.type,
-              response: {
-                authenticatorData:
-                  uint8ArrayToNumberArray(
-                    response.authenticatorData,
-                  ),
-                clientDataJSON:
-                  uint8ArrayToNumberArray(
-                    response.clientDataJSON,
-                  ),
-                signature:
-                  uint8ArrayToNumberArray(
-                    response.signature,
-                  ),
-                userHandle:
-                  response.userHandle
-                    ? uint8ArrayToNumberArray(
-                        response.userHandle,
-                      )
-                    : null,
-              },
-            }),
-          },
-        );
-
-      const verifyJson =
-        (await verifyResponse.json()) as SecurityVerifyResponse;
-
-      if (
-        !verifyResponse.ok ||
-        verifyJson.success !== true ||
-        verifyJson.verified !== true
-      ) {
-        throw new Error(
-          verifyJson.error ||
-            "Device verification failed.",
-        );
-      }
-
-      onSuccess();
-    } catch (deviceError) {
-      if (
-        deviceError instanceof
-          DOMException &&
-        deviceError.name ===
-          "NotAllowedError"
-      ) {
-        setError(
-          "Device verification was cancelled or timed out.",
-        );
-      } else {
-        setError(
-          deviceError instanceof Error
-            ? deviceError.message
-            : "Device verification failed.",
-        );
-      }
+      setError(
+        json.error ||
+          "Device verification failed. Please try again.",
+      );
+    } catch {
+      setError(
+        "Unable to verify your device. Please try again.",
+      );
     } finally {
       setChecking(false);
     }
   };
 
-  return (
-    <main className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-[#050505] px-4 py-5 text-white">
-      <div className="w-full max-w-md">
-        <div className="rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 shadow-2xl sm:p-7">
-          {/* HEADER */}
+return (
+  <main className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-[#050505] px-4 py-5 text-white">
+    <div className="w-full max-w-md">
+      <div className="rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 shadow-2xl sm:p-7">
 
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
+        {/* =====================================================
+            HEADER
+        ====================================================== */}
+
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
+            <ShieldCheck
+              size={21}
+              strokeWidth={1.8}
+            />
+          </div>
+
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-yellow-500/60">
+              Identity
+            </p>
+
+            <h1 className="mt-1 text-lg font-semibold text-white">
+              Verify your identity
+            </h1>
+          </div>
+        </div>
+
+        {/* =====================================================
+            GOOGLE IDENTITY STATUS
+        ====================================================== */}
+
+        <div className="mt-5 flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3">
+          <span className="h-2 w-2 rounded-full bg-[#1683ff]" />
+
+          <span className="text-xs text-white/55">
+            Google identity verified
+          </span>
+        </div>
+
+        {/* =====================================================
+            VERIFICATION METHOD
+        ====================================================== */}
+
+        <div className="mt-5 grid grid-cols-2 gap-2">
+
+          {/* PIN METHOD */}
+
+          <button
+            type="button"
+            onClick={() => {
+              setMethod("pin");
+              setError("");
+            }}
+            className={`rounded-2xl border p-3 text-left transition ${
+              method === "pin"
+                ? "border-yellow-500/30 bg-yellow-500/[0.07]"
+                : "border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]"
+            }`}
+          >
+            <div className="flex items-center gap-2">
               <ShieldCheck
-                size={21}
-                strokeWidth={1.8}
+                size={17}
+                className={
+                  method === "pin"
+                    ? "text-yellow-400"
+                    : "text-white/35"
+                }
               />
-            </div>
 
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-yellow-500/60">
-                Identity
-              </p>
-
-              <h1 className="mt-1 text-lg font-semibold text-white">
-                Verify your identity
-              </h1>
-            </div>
-          </div>
-
-          {/* GOOGLE STATUS */}
-
-          <div className="mt-5 flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3">
-            <span className="h-2 w-2 rounded-full bg-[#1683ff]" />
-
-            <span className="text-xs text-white/55">
-              Google identity verified
-            </span>
-          </div>
-
-          {/* METHOD SELECTOR */}
-
-          <div className="mt-5 grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                setMethod("pin")
-              }
-              className={`rounded-2xl border p-3 text-left transition ${
-                method === "pin"
-                  ? "border-yellow-500/30 bg-yellow-500/[0.07]"
-                  : "border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <ShieldCheck
-                  size={17}
-                  className={
-                    method === "pin"
-                      ? "text-yellow-400"
-                      : "text-white/35"
-                  }
-                />
-
-                <span
-                  className={`text-xs font-medium ${
-                    method === "pin"
-                      ? "text-white"
-                      : "text-white/45"
-                  }`}
-                >
-                  PIN
-                </span>
-              </div>
-
-              <p className="mt-1 text-[9px] text-white/20">
-                Use your security PIN
-              </p>
-            </button>
-
-            <button
-              type="button"
-              disabled={
-                !deviceAvailable
-              }
-              onClick={() =>
-                setMethod("device")
-              }
-              className={`rounded-2xl border p-3 text-left transition ${
-                method === "device"
-                  ? "border-yellow-500/30 bg-yellow-500/[0.07]"
-                  : "border-white/[0.07] bg-white/[0.02]"
-              } ${
-                !deviceAvailable
-                  ? "cursor-not-allowed opacity-40"
-                  : "hover:bg-white/[0.04]"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Fingerprint
-                  size={17}
-                  className={
-                    method === "device"
-                      ? "text-yellow-400"
-                      : "text-white/35"
-                  }
-                />
-
-                <span
-                  className={`text-xs font-medium ${
-                    method === "device"
-                      ? "text-white"
-                      : "text-white/45"
-                  }`}
-                >
-                  Device
-                </span>
-              </div>
-
-              <p className="mt-1 text-[9px] text-white/20">
-                Fingerprint or device security
-              </p>
-            </button>
-          </div>
-
-          {/* PIN */}
-
-          {method === "pin" && (
-            <div className="mt-5">
-              <label
-                htmlFor="identity-pin"
-                className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
+              <span
+                className={`text-xs font-medium ${
+                  method === "pin"
+                    ? "text-white"
+                    : "text-white/45"
+                }`}
               >
-                Security PIN
-              </label>
+                PIN
+              </span>
+            </div>
 
-              <div className="relative mt-2">
-                <input
-                  id="identity-pin"
-                  type={
-                    showPin
-                      ? "text"
-                      : "password"
+            <p className="mt-1 text-[9px] text-white/20">
+              Use your security PIN
+            </p>
+          </button>
+
+          {/* DEVICE METHOD */}
+
+          <button
+            type="button"
+            disabled={!deviceAvailable}
+            onClick={() => {
+              setMethod("device");
+              setError("");
+            }}
+            className={`rounded-2xl border p-3 text-left transition ${
+              method === "device"
+                ? "border-yellow-500/30 bg-yellow-500/[0.07]"
+                : "border-white/[0.07] bg-white/[0.02]"
+            } ${
+              !deviceAvailable
+                ? "cursor-not-allowed opacity-40"
+                : "hover:bg-white/[0.04]"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Fingerprint
+                size={17}
+                className={
+                  method === "device"
+                    ? "text-yellow-400"
+                    : "text-white/35"
+                }
+              />
+
+              <span
+                className={`text-xs font-medium ${
+                  method === "device"
+                    ? "text-white"
+                    : "text-white/45"
+                }`}
+              >
+                Device
+              </span>
+            </div>
+
+            <p className="mt-1 text-[9px] text-white/20">
+              Fingerprint or device security
+            </p>
+          </button>
+        </div>
+
+        {/* =====================================================
+            PIN VERIFICATION
+        ====================================================== */}
+
+        {method === "pin" && (
+          <div className="mt-5">
+
+            <label
+              htmlFor="identity-pin"
+              className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
+            >
+              Security PIN
+            </label>
+
+            <div className="relative mt-2">
+              <input
+                id="identity-pin"
+                type={showPin ? "text" : "password"}
+                inputMode="numeric"
+                autoComplete="current-password"
+                maxLength={6}
+                value={pin}
+                onChange={(event) => {
+                  setPin(
+                    event.target.value
+                      .replace(/\D/g, "")
+                      .slice(0, 6),
+                  );
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void verifyPin();
                   }
-                  inputMode="numeric"
-                  autoComplete="current-password"
-                  maxLength={6}
-                  value={pin}
-                  onChange={(event) =>
-                    setPin(
-                      event.target.value
-                        .replace(
-                          /\D/g,
-                          "",
-                        )
-                        .slice(0, 6),
-                    )
-                  }
-                  onKeyDown={(event) => {
-                    if (
-                      event.key ===
-                      "Enter"
-                    ) {
-                      void verifyPin();
-                    }
-                  }}
-                  placeholder="Enter 4–6 digit PIN"
-                  className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
-                />
+                }}
+                placeholder="Enter 4–6 digit PIN"
+                className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
+              />
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPin((current) => !current);
+                }}
+                aria-label={
+                  showPin
+                    ? "Hide PIN"
+                    : "Show PIN"
+                }
+                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 hover:bg-white/[0.05]"
+              >
+                {showPin ? (
+                  <EyeOff size={17} />
+                ) : (
+                  <Eye size={17} />
+                )}
+              </button>
+            </div>
+
+            {/* PIN ERROR */}
+
+            {error && (
+              <div className="mt-3 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs text-red-300/80">
+                {error}
+              </div>
+            )}
+
+            {/* CONTINUE */}
+
+            <button
+              type="button"
+              onClick={() => {
+                void verifyPin();
+              }}
+              disabled={
+                checking ||
+                recoveryBusy
+              }
+              className="mt-4 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {checking ? (
+                <>
+                  <RefreshCw
+                    size={16}
+                    className="animate-spin"
+                  />
+
+                  Verifying...
+                </>
+              ) : (
+                <>
+                  Continue
+                  <ArrowRight size={16} />
+                </>
+              )}
+            </button>
+
+            {/* =================================================
+                ANDROID-ONLY PIN RECOVERY
+            ================================================== */}
+
+            {isAndroid && (
+              <div className="mt-3">
 
                 <button
                   type="button"
-                  onClick={() =>
-                    setShowPin(
-                      (current) =>
-                        !current,
-                    )
+                  onClick={() => {
+                    void startAndroidPinRecovery();
+                  }}
+                  disabled={
+                    checking ||
+                    recoveryBusy
                   }
-                  aria-label={
-                    showPin
-                      ? "Hide PIN"
-                      : "Show PIN"
-                  }
-                  className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 hover:bg-white/[0.05]"
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] px-4 text-xs font-medium text-white/45 transition hover:border-yellow-500/20 hover:bg-white/[0.04] hover:text-white/70 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {showPin ? (
-                    <EyeOff size={17} />
+                  {recoveryBusy ? (
+                    <>
+                      <RefreshCw
+                        size={15}
+                        className="animate-spin"
+                      />
+
+                      Verifying device...
+                    </>
                   ) : (
-                    <Eye size={17} />
+                    <>
+                      <Fingerprint size={15} />
+                      Forgot PIN?
+                    </>
                   )}
                 </button>
+
+                <p className="mt-2 text-center text-[9px] leading-4 text-white/15">
+                  Use your Android device
+                  security to create a new PIN.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* =====================================================
+            DEVICE VERIFICATION
+        ====================================================== */}
+        
+
+        {method === "device" && (
+          <div className="mt-5">
+
+            <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5 text-center">
+
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-yellow-500/10 text-yellow-400">
+                <Fingerprint
+                  size={27}
+                  strokeWidth={1.6}
+                />
               </div>
 
-              {error && (
-                <div className="mt-3 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs text-red-300/80">
-                  {error}
-                </div>
-              )}
+              <p className="mt-4 text-sm font-medium text-white/70">
+                Device security
+              </p>
 
-              <button
-                type="button"
-                onClick={() =>
-                  void verifyPin()
-                }
-                disabled={checking}
-                className="mt-4 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {checking ? (
-                  <>
-                    <RefreshCw
-                      size={16}
-                      className="animate-spin"
-                    />
-
-                    Verifying...
-                  </>
-                ) : (
-                  <>
-                    Continue
-
-                    <ArrowRight size={16} />
-                  </>
-                )}
-              </button>
+              <p className="mx-auto mt-2 max-w-xs text-[11px] leading-5 text-white/25">
+                Use your device fingerprint,
+                face recognition, screen lock,
+                or other supported biometric
+                security.
+              </p>
             </div>
-          )}
 
-          {/* DEVICE */}
+            {/* DEVICE ERROR */}
 
-          {method === "device" && (
-            <div className="mt-5">
-              <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5 text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-yellow-500/10 text-yellow-400">
-                  <Fingerprint
-                    size={27}
-                    strokeWidth={1.6}
+            {error && (
+              <div className="mt-3 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs text-red-300/80">
+                {error}
+              </div>
+            )}
+
+            {/* VERIFY DEVICE */}
+
+            <button
+              type="button"
+              onClick={() => {
+                void verifyDevice();
+              }}
+              disabled={checking}
+              className="mt-4 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {checking ? (
+                <>
+                  <RefreshCw
+                    size={16}
+                    className="animate-spin"
                   />
-                </div>
 
-                <p className="mt-4 text-sm font-medium text-white/70">
-                  Device security
-                </p>
-
-                <p className="mx-auto mt-2 max-w-xs text-[11px] leading-5 text-white/25">
-                  Use your device fingerprint,
-                  face recognition, screen lock,
-                  or other supported biometric
-                  security.
-                </p>
-              </div>
-
-              {error && (
-                <div className="mt-3 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs text-red-300/80">
-                  {error}
-                </div>
+                  Verifying...
+                </>
+              ) : (
+                <>
+                  <Fingerprint size={17} />
+                  Verify device
+                </>
               )}
+            </button>
+          </div>
+        )}
 
-              <button
-                type="button"
-                onClick={() =>
-                  void verifyDevice()
-                }
-                disabled={checking}
-                className="mt-4 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {checking ? (
-                  <>
-                    <RefreshCw
-                      size={16}
-                      className="animate-spin"
-                    />
+        {/* =====================================================
+            FOOTER
+        ====================================================== */}
 
-                    Verifying...
-                  </>
-                ) : (
-                  <>
-                    <Fingerprint
-                      size={17}
-                    />
+        <p className="mt-4 text-center text-[9px] leading-5 text-white/15">
+          Identity verification protects
+          access to the GEO-SHUA workspace.
+        </p>
 
-                    Verify device
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-
-          <p className="mt-4 text-center text-[9px] leading-5 text-white/15">
-            Identity verification protects
-            access to the GEO-SHUA workspace.
-          </p>
-        </div>
       </div>
-    </main>
-  );
+    </div>
+  </main>
+);
+
 }
 
 /* =========================================================
