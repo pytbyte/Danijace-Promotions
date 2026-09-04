@@ -1,14 +1,14 @@
+
 "use client";
 
 import {
   AlertCircle,
+  Bug,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  CircleDollarSign,
   FileSearch,
   Inbox,
-  Info,
   Loader2,
   RefreshCw,
   ShieldCheck,
@@ -59,10 +59,8 @@ const FINANCIAL_TERMS = [
 ];
 
 /*
- * Maximum number of locally filtered messages retained
- * for diagnostics during one scan.
- *
- * We do not send these messages to the server.
+ * Only a small sample of locally filtered messages
+ * is retained for developer diagnostics.
  */
 const MAX_FILTERED_DIAGNOSTICS = 10;
 
@@ -103,36 +101,63 @@ type ProcessResult = {
 
 type ProcessStats = {
   inbox: number;
+
   candidates: number;
+
   filtered: number;
+
   submitted: number;
+
   processed: number;
+
   duplicate: number;
+
   ignored: number;
+
   failed: number;
+
+  loanUpdated: number;
+
+  savingsUpdated: number;
 };
 
 type ReaderError = {
   message: string;
+
   code?: string;
+
   data?: unknown;
+
   raw?: unknown;
 };
 
 type ScanProgress = {
   current: number;
+
   total: number;
+
   submitted: number;
+
   processed: number;
+
   duplicate: number;
+
   ignored: number;
+
   failed: number;
+
+  loanUpdated: number;
+
+  savingsUpdated: number;
+
   currentAddress?: string;
+
   currentSmsId?: string;
 };
 
 type FilteredDiagnostic = {
   sms: SmsMessage;
+
   reason: string;
 };
 
@@ -160,8 +185,6 @@ function isFinancialCandidate(
  * If Android does not provide one, we use:
  *
  * address + date + body
- *
- * This protects only the current foreground run.
  *
  * The SERVER remains responsible for permanent
  * financial idempotency.
@@ -302,28 +325,10 @@ function getString(
   return undefined;
 }
 
-function getBoolean(
-  value: unknown,
-): boolean | undefined {
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  return undefined;
-}
-
 /* =========================================================
    API DIAGNOSTIC HELPERS
 ========================================================= */
 
-/*
- * Searches the API response for a useful human-readable
- * explanation.
- *
- * This intentionally supports several possible response
- * shapes because different API stages may expose their
- * diagnostic under different keys.
- */
 function getApiReason(
   value: unknown,
 ): string | undefined {
@@ -355,9 +360,7 @@ function getApiReason(
   if (diagnostic) {
     for (const key of directKeys) {
       const text =
-        getString(
-          diagnostic[key],
-        );
+        getString(diagnostic[key]);
 
       if (text) {
         return text;
@@ -379,13 +382,27 @@ function getApiReason(
     }
   }
 
+  const parser =
+    toRecord(root.parser);
+
+  if (parser) {
+    for (const key of directKeys) {
+      const text =
+        getString(parser[key]);
+
+      if (text) {
+        return text;
+      }
+    }
+  }
+
   return undefined;
 }
 
-/*
- * Extract a likely reference from whatever API object
- * the server returns.
- */
+/* =========================================================
+   API REFERENCE
+========================================================= */
+
 function getApiReference(
   value: unknown,
 ): string | undefined {
@@ -416,6 +433,20 @@ function getApiReference(
 
     if (parsedReference) {
       return parsedReference;
+    }
+
+    const parserData =
+      toRecord(parsed.data);
+
+    if (parserData) {
+      const parserReference =
+        getString(
+          parserData.reference,
+        );
+
+      if (parserReference) {
+        return parserReference;
+      }
     }
   }
 
@@ -456,9 +487,10 @@ function getApiReference(
   return undefined;
 }
 
-/*
- * Extract amount from API response.
- */
+/* =========================================================
+   API AMOUNT
+========================================================= */
+
 function getApiAmount(
   value: unknown,
 ): string | undefined {
@@ -512,10 +544,11 @@ function getApiAmount(
   return undefined;
 }
 
-/*
- * Extract account number.
- */
-function getApiAccountNumber(
+/* =========================================================
+   API DESTINATION ACCOUNT
+========================================================= */
+
+function getApiDestinationAccountNumber(
   value: unknown,
 ): string | undefined {
   const root =
@@ -526,7 +559,9 @@ function getApiAccountNumber(
   }
 
   const direct =
-    getString(root.accountNumber);
+    getString(
+      root.destinationAccountNumber,
+    );
 
   if (direct) {
     return direct;
@@ -538,20 +573,44 @@ function getApiAccountNumber(
   if (parsed) {
     const account =
       getString(
-        parsed.accountNumber,
+        parsed.destinationAccountNumber,
       );
 
     if (account) {
       return account;
+    }
+
+    /*
+     * Compatibility with nested parser diagnostic:
+     *
+     * parsed: {
+     *   data: {
+     *     destinationAccountNumber: ...
+     *   }
+     * }
+     */
+    const parserData =
+      toRecord(parsed.data);
+
+    if (parserData) {
+      const parserAccount =
+        getString(
+          parserData.destinationAccountNumber,
+        );
+
+      if (parserAccount) {
+        return parserAccount;
+      }
     }
   }
 
   return undefined;
 }
 
-/*
- * Extract sender/member name.
- */
+/* =========================================================
+   API SENDER / MEMBER
+========================================================= */
+
 function getApiSenderName(
   value: unknown,
 ): string | undefined {
@@ -582,6 +641,20 @@ function getApiSenderName(
     if (sender) {
       return sender;
     }
+
+    const parserData =
+      toRecord(parsed.data);
+
+    if (parserData) {
+      const parserSender =
+        getString(
+          parserData.senderName,
+        );
+
+      if (parserSender) {
+        return parserSender;
+      }
+    }
   }
 
   const member =
@@ -600,9 +673,10 @@ function getApiSenderName(
   return undefined;
 }
 
-/*
- * Extract transaction date returned by parser/API.
- */
+/* =========================================================
+   API TRANSACTION DATE
+========================================================= */
+
 function getApiTransactionDate(
   value: unknown,
 ): string | undefined {
@@ -636,14 +710,30 @@ function getApiTransactionDate(
     ) {
       return String(parsedDate);
     }
+
+    const parserData =
+      toRecord(parsed.data);
+
+    if (parserData) {
+      const parserDate =
+        parserData.transactionDate;
+
+      if (
+        typeof parserDate === "string" ||
+        typeof parserDate === "number"
+      ) {
+        return String(parserDate);
+      }
+    }
   }
 
   return undefined;
 }
 
-/*
- * Extract loan information.
- */
+/* =========================================================
+   API LOAN
+========================================================= */
+
 function getApiLoan(
   value: unknown,
 ): ApiRecord | null {
@@ -676,9 +766,10 @@ function getApiLoan(
   return null;
 }
 
-/*
- * Extract savings account information.
- */
+/* =========================================================
+   API SAVINGS ACCOUNT
+========================================================= */
+
 function getApiSavingsAccount(
   value: unknown,
 ): ApiRecord | null {
@@ -699,9 +790,10 @@ function getApiSavingsAccount(
   );
 }
 
-/*
- * Safely serializes API/native diagnostic objects.
- */
+/* =========================================================
+   SERIALIZE
+========================================================= */
+
 function serializeValue(
   value: unknown,
 ): string {
@@ -720,7 +812,7 @@ function serializeValue(
 }
 
 /* =========================================================
-   RESULT PRESENTATION HELPERS
+   RESULT HELPERS
 ========================================================= */
 
 function getResultKind(
@@ -865,6 +957,8 @@ export default function SmsInboxMonitor() {
       duplicate: 0,
       ignored: 0,
       failed: 0,
+      loanUpdated: 0,
+      savingsUpdated: 0,
     });
 
   const [results, setResults] =
@@ -876,6 +970,11 @@ export default function SmsInboxMonitor() {
   const [lastSync, setLastSync] =
     useState<number | null>(null);
 
+  /*
+   * Developer diagnostics panel.
+   *
+   * Closed by default.
+   */
   const [expanded, setExpanded] =
     useState(false);
 
@@ -920,6 +1019,14 @@ export default function SmsInboxMonitor() {
       setStatus("scanning");
       setReaderError(null);
       setProgress(null);
+
+      /*
+       * Reset visible run data.
+       *
+       * This keeps every scan independent.
+       */
+      setResults([]);
+      setFilteredDiagnostics([]);
 
       console.log(
         "=================================================",
@@ -1063,6 +1170,10 @@ export default function SmsInboxMonitor() {
           }
         }
 
+        const filteredCount =
+          uniqueMessages.length -
+          candidates.length;
+
         console.log(
           "GEO-SHUA SMS: candidates:",
           candidates.length,
@@ -1070,8 +1181,7 @@ export default function SmsInboxMonitor() {
 
         console.log(
           "GEO-SHUA SMS: locally filtered:",
-          uniqueMessages.length -
-            candidates.length,
+          filteredCount,
         );
 
         setFilteredDiagnostics(
@@ -1090,8 +1200,7 @@ export default function SmsInboxMonitor() {
             candidates.length,
 
           filtered:
-            uniqueMessages.length -
-            candidates.length,
+            filteredCount,
 
           submitted: 0,
 
@@ -1102,6 +1211,10 @@ export default function SmsInboxMonitor() {
           ignored: 0,
 
           failed: 0,
+
+          loanUpdated: 0,
+
+          savingsUpdated: 0,
         };
 
         setStats(
@@ -1110,12 +1223,23 @@ export default function SmsInboxMonitor() {
 
         setProgress({
           current: 0,
-          total: candidates.length,
+
+          total:
+            uniqueMessages.length,
+
           submitted: 0,
+
           processed: 0,
+
           duplicate: 0,
+
           ignored: 0,
+
           failed: 0,
+
+          loanUpdated: 0,
+
+          savingsUpdated: 0,
         });
 
         /* =================================================
@@ -1126,28 +1250,51 @@ export default function SmsInboxMonitor() {
           [];
 
         let processed = 0;
+
         let duplicate = 0;
+
         let ignored = 0;
+
         let failed = 0;
+
         let submitted = 0;
 
+        let loanUpdated = 0;
+
+        let savingsUpdated = 0;
+
+        /*
+         * The progress number represents the position
+         * inside the ENTIRE inbox, not merely the candidate
+         * subset.
+         *
+         * Example:
+         *
+         * Processing SMS 1 of 200
+         * Processing SMS 2 of 200
+         *
+         * This is the number the administrator sees.
+         */
         for (
           let index = 0;
-          index < candidates.length;
+          index < uniqueMessages.length;
           index += 1
         ) {
           const sms =
-            candidates[index];
+            uniqueMessages[index];
 
           const currentNumber =
             index + 1;
 
+          /*
+           * Immediately update visible progress.
+           */
           setProgress({
             current:
               currentNumber,
 
             total:
-              candidates.length,
+              uniqueMessages.length,
 
             submitted,
 
@@ -1159,6 +1306,10 @@ export default function SmsInboxMonitor() {
 
             failed,
 
+            loanUpdated,
+
+            savingsUpdated,
+
             currentAddress:
               sms.address ??
               undefined,
@@ -1168,6 +1319,24 @@ export default function SmsInboxMonitor() {
                 ? String(sms.id)
                 : undefined,
           });
+
+          /* ===============================================
+             LOCAL FILTER
+          =============================================== */
+
+          if (
+            !isFinancialCandidate(
+              sms,
+            )
+          ) {
+            /*
+             * This SMS does not reach the API.
+             *
+             * It counts toward the overall scan but is
+             * represented by stats.filtered.
+             */
+            continue;
+          }
 
           /* ===============================================
              LOCAL VALIDATION
@@ -1197,9 +1366,12 @@ export default function SmsInboxMonitor() {
               "GEO-SHUA SMS: local validation failed:",
               {
                 smsId: sms.id,
+
                 address:
                   sms.address,
-                date: sms.date,
+
+                date:
+                  sms.date,
               },
             );
 
@@ -1211,8 +1383,7 @@ export default function SmsInboxMonitor() {
                 candidates.length,
 
               filtered:
-                uniqueMessages.length -
-                candidates.length,
+                filteredCount,
 
               submitted,
 
@@ -1223,6 +1394,10 @@ export default function SmsInboxMonitor() {
               ignored,
 
               failed,
+
+              loanUpdated,
+
+              savingsUpdated,
             });
 
             continue;
@@ -1241,18 +1416,26 @@ export default function SmsInboxMonitor() {
           console.log(
             "GEO-SHUA SMS: PROCESSING CANDIDATE",
             {
-              number: currentNumber,
+              number:
+                currentNumber,
+
               total:
-                candidates.length,
-              id: sms.id,
+                uniqueMessages.length,
+
+              id:
+                sms.id,
+
               address:
                 sms.address,
+
               date:
                 sms.date,
+
               dateFormatted:
                 formatFullDateTime(
                   sms.date,
                 ),
+
               body:
                 sms.body,
             },
@@ -1365,8 +1548,8 @@ export default function SmsInboxMonitor() {
                 data,
               );
 
-            const apiAccount =
-              getApiAccountNumber(
+            const apiDestinationAccount =
+              getApiDestinationAccountNumber(
                 data,
               );
 
@@ -1409,8 +1592,8 @@ export default function SmsInboxMonitor() {
                 amount:
                   apiAmount,
 
-                accountNumber:
-                  apiAccount,
+                destinationAccountNumber:
+                  apiDestinationAccount,
 
                 senderName:
                   apiSender,
@@ -1437,6 +1620,24 @@ export default function SmsInboxMonitor() {
               response.ok
             ) {
               processed += 1;
+
+              /*
+               * IMPORTANT:
+               *
+               * We count the actual financial destination
+               * returned by the server.
+               *
+               * This is NOT based on the local SMS filter.
+               */
+              if (
+                apiType === "loan"
+              ) {
+                loanUpdated += 1;
+              } else if (
+                apiType === "savings"
+              ) {
+                savingsUpdated += 1;
+              }
             } else {
               failed += 1;
             }
@@ -1517,8 +1718,7 @@ export default function SmsInboxMonitor() {
                 candidates.length,
 
               filtered:
-                uniqueMessages.length -
-                candidates.length,
+                filteredCount,
 
               submitted,
 
@@ -1529,6 +1729,10 @@ export default function SmsInboxMonitor() {
               ignored,
 
               failed,
+
+              loanUpdated,
+
+              savingsUpdated,
             });
 
             setProgress({
@@ -1536,7 +1740,7 @@ export default function SmsInboxMonitor() {
                 currentNumber,
 
               total:
-                candidates.length,
+                uniqueMessages.length,
 
               submitted,
 
@@ -1547,6 +1751,10 @@ export default function SmsInboxMonitor() {
               ignored,
 
               failed,
+
+              loanUpdated,
+
+              savingsUpdated,
 
               currentAddress:
                 sms.address ??
@@ -1597,8 +1805,7 @@ export default function SmsInboxMonitor() {
                 candidates.length,
 
               filtered:
-                uniqueMessages.length -
-                candidates.length,
+                filteredCount,
 
               submitted,
 
@@ -1609,6 +1816,10 @@ export default function SmsInboxMonitor() {
               ignored,
 
               failed,
+
+              loanUpdated,
+
+              savingsUpdated,
             });
           }
         }
@@ -1625,8 +1836,7 @@ export default function SmsInboxMonitor() {
             candidates.length,
 
           filtered:
-            uniqueMessages.length -
-            candidates.length,
+            filteredCount,
 
           submitted,
 
@@ -1637,6 +1847,10 @@ export default function SmsInboxMonitor() {
           ignored,
 
           failed,
+
+          loanUpdated,
+
+          savingsUpdated,
         };
 
         console.log(
@@ -1669,10 +1883,10 @@ export default function SmsInboxMonitor() {
 
         setProgress({
           current:
-            candidates.length,
+            uniqueMessages.length,
 
           total:
-            candidates.length,
+            uniqueMessages.length,
 
           submitted,
 
@@ -1683,6 +1897,10 @@ export default function SmsInboxMonitor() {
           ignored,
 
           failed,
+
+          loanUpdated,
+
+          savingsUpdated,
         });
 
         if (failed > 0) {
@@ -1760,7 +1978,7 @@ export default function SmsInboxMonitor() {
   }, [processInbox]);
 
   /* =======================================================
-     PRESENTATION
+     PRESENTATION STATE
   ======================================================= */
 
   const hasReaderError =
@@ -1774,39 +1992,19 @@ export default function SmsInboxMonitor() {
   const isScanning =
     status === "scanning";
 
-  const statusLabel =
+  /*
+   * Visible administrator summary.
+   */
+  const scanSummary =
     isScanning
-      ? "Processing messages…"
-      : hasReaderError
-        ? "SMS reader unavailable"
-        : hasAttention
-          ? "Needs attention"
-          : status === "synced"
-            ? "Processing complete"
-            : "Ready";
-
-  const statusDescription =
-    isScanning
-      ? progress
-        ? `Processing ${progress.current} of ${progress.total} candidates`
-        : "Reading the Android inbox…"
-      : hasReaderError
-        ? "Android could not read the SMS inbox"
-        : hasAttention
-          ? `${stats.failed} message${stats.failed === 1 ? "" : "s"} need attention`
-          : status === "synced"
-            ? stats.processed > 0
-              ? `${stats.processed} payment${stats.processed === 1 ? "" : "s"} processed`
-              : stats.duplicate > 0
-                ? "Payments already synchronized"
-                : stats.ignored > 0
-                  ? `${stats.ignored} message${stats.ignored === 1 ? "" : "s"} ignored`
-                  : "Inbox checked"
+      ? `${progress?.current ?? 0} of ${progress?.total ?? stats.inbox}`
+      : status === "synced"
+        ? `${stats.loanUpdated} loan${stats.loanUpdated === 1 ? "" : "s"} updated · ${stats.savingsUpdated} saving${stats.savingsUpdated === 1 ? "" : "s"} updated · ${stats.filtered} didn't match filters`
+        : hasReaderError
+          ? "Unable to read Android SMS inbox"
+          : hasAttention
+            ? `${stats.failed} message${stats.failed === 1 ? "" : "s"} need attention`
             : "SMS payments are checked when the app opens";
-
-  const successfulCount =
-    stats.processed +
-    stats.duplicate;
 
   const latestResults =
     useMemo(
@@ -1817,7 +2015,7 @@ export default function SmsInboxMonitor() {
               b.sms.date -
               a.sms.date,
           )
-          .slice(0, 5),
+          .slice(0, 10),
       [results],
     );
 
@@ -1842,72 +2040,71 @@ export default function SmsInboxMonitor() {
       className="
         relative
         overflow-hidden
-        rounded-[28px]
-        border
-        border-slate-800/80
+        rounded-[24px]
+        border border-slate-800/80
         bg-[#0b1118]
-        px-4
-        py-4
+        px-3.5
+        py-3.5
         shadow-[0_12px_40px_rgba(0,0,0,0.18)]
       "
     >
       {/* =================================================
-          HEADER
+          COMPACT HEADER
       ================================================= */}
 
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div
-            className="
-              flex h-11 w-11 shrink-0
-              items-center justify-center
-              rounded-2xl
-              bg-blue-500/10
-              text-blue-400
-              ring-1 ring-blue-400/10
-            "
-          >
-            {isScanning ? (
-              <Loader2
-                size={21}
-                className="animate-spin"
-              />
-            ) : (
-              <Smartphone
-                size={21}
-                strokeWidth={1.8}
-              />
-            )}
+      <div className="flex items-center gap-3">
+        <div
+          className="
+            flex h-9 w-9 shrink-0
+            items-center justify-center
+            rounded-xl
+            bg-blue-500/10
+            text-blue-400
+            ring-1 ring-blue-400/10
+          "
+        >
+          {isScanning ? (
+            <Loader2
+              size={17}
+              className="animate-spin"
+            />
+          ) : (
+            <Smartphone
+              size={17}
+              strokeWidth={1.8}
+            />
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="text-[13px] font-semibold tracking-tight text-white">
+              SMS Processing
+            </h3>
+
+            <span
+              className={`
+                h-1.5 w-1.5 rounded-full
+                ${
+                  hasAttention
+                    ? "bg-amber-400"
+                    : isScanning
+                      ? "bg-blue-400"
+                      : "bg-emerald-400"
+                }
+              `}
+            />
           </div>
 
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="truncate text-[15px] font-semibold tracking-tight text-white">
-                SMS Payments
-              </h3>
-
-              <span
-                className={`
-                  h-1.5 w-1.5 rounded-full
-                  ${
-                    hasAttention
-                      ? "bg-amber-400"
-                      : isScanning
-                        ? "bg-blue-400"
-                        : "bg-emerald-400"
-                  }
-                `}
-              />
-            </div>
-
-            <p className="mt-0.5 text-[12px] text-slate-500">
-              App-open foreground processing
-            </p>
-          </div>
+          <p className="mt-0.5 truncate text-[10px] text-slate-500">
+            {isScanning
+              ? `Processing SMS ${scanSummary}`
+              : scanSummary}
+          </p>
         </div>
 
         {/* =================================================
-            MANUAL BUTTON
+            MANUAL PROCESS
         ================================================= */}
 
         <button
@@ -1917,131 +2114,96 @@ export default function SmsInboxMonitor() {
           }
           disabled={isScanning}
           aria-label="Process SMS payments"
+          title="Process SMS"
           className="
-            flex h-9 shrink-0
-            items-center gap-1.5
+            flex h-8 w-8 shrink-0
+            items-center justify-center
             rounded-xl
-            border border-blue-500/30
+            border border-blue-500/25
             bg-blue-500/10
-            px-3
-            text-[11px]
-            font-medium
             text-blue-400
             transition
-            hover:border-blue-400/50
+            hover:border-blue-400/40
             hover:bg-blue-500/15
-            hover:text-blue-300
-            active:scale-[0.98]
+            active:scale-[0.96]
             disabled:cursor-not-allowed
-            disabled:opacity-50
+            disabled:opacity-40
           "
         >
           <RefreshCw
-            size={14}
+            size={13}
             className={
               isScanning
                 ? "animate-spin"
                 : ""
             }
           />
+        </button>
 
-          <span>
-            {isScanning
-              ? "Processing"
-              : "Process SMS"}
-          </span>
+        {/* =================================================
+            DEVELOPER DIAGNOSTIC TOGGLE
+        ================================================= */}
+
+        <button
+          type="button"
+          onClick={() =>
+            setExpanded(
+              (value) => !value,
+            )
+          }
+          aria-label={
+            expanded
+              ? "Hide SMS developer diagnostics"
+              : "Show SMS developer diagnostics"
+          }
+          title="Developer diagnostics"
+          className="
+            flex h-8 w-8 shrink-0
+            items-center justify-center
+            rounded-xl
+            border border-slate-800
+            bg-slate-950/70
+            text-slate-600
+            transition
+            hover:border-slate-700
+            hover:bg-slate-900
+            hover:text-blue-400
+            active:scale-[0.96]
+          "
+        >
+          <Bug size={13} />
         </button>
       </div>
 
       {/* =================================================
-          STATUS
-      ================================================= */}
-
-      <div
-        className="
-          mt-4 flex items-center justify-between
-          rounded-2xl
-          border border-slate-800/80
-          bg-slate-950/60
-          px-3.5 py-3
-        "
-      >
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div
-            className={`
-              flex h-8 w-8 shrink-0
-              items-center justify-center
-              rounded-xl
-              ${
-                hasAttention
-                  ? "bg-amber-400/10 text-amber-400"
-                  : isScanning
-                    ? "bg-blue-400/10 text-blue-400"
-                    : "bg-emerald-400/10 text-emerald-400"
-              }
-            `}
-          >
-            {hasAttention ? (
-              <TriangleAlert size={16} />
-            ) : isScanning ? (
-              <Loader2
-                size={16}
-                className="animate-spin"
-              />
-            ) : (
-              <ShieldCheck size={16} />
-            )}
-          </div>
-
-          <div className="min-w-0">
-            <p className="text-[12px] font-medium text-slate-200">
-              {statusLabel}
-            </p>
-
-            <p className="mt-0.5 truncate text-[11px] text-slate-500">
-              {statusDescription}
-            </p>
-          </div>
-        </div>
-
-        {lastSync && (
-          <span className="ml-2 shrink-0 text-[10px] text-slate-600">
-            {formatTime(lastSync)}
-          </span>
-        )}
-      </div>
-
-      {/* =================================================
-          LIVE PROGRESS
+          LIVE PROCESSING AREA
       ================================================= */}
 
       {isScanning &&
         progress && (
-          <div
-            className="
-              mt-3
-              rounded-2xl
-              border border-blue-400/10
-              bg-blue-400/[0.03]
-              px-3.5 py-3
-            "
-          >
+          <div className="mt-3">
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <Loader2
-                  size={13}
+                  size={12}
                   className="shrink-0 animate-spin text-blue-400"
                 />
 
-                <span className="truncate text-[10px] text-slate-400">
-                  {progress.currentAddress ||
-                    "Processing SMS"}
+                <span className="truncate text-[10px] text-slate-500">
+                  Processing SMS{" "}
+                  {progress.current} of{" "}
+                  {progress.total}
                 </span>
               </div>
 
               <span className="shrink-0 font-mono text-[10px] text-blue-400">
-                {progress.current}/
-                {progress.total}
+                {progress.total > 0
+                  ? `${Math.round(
+                      (progress.current /
+                        progress.total) *
+                        100,
+                    )}%`
+                  : "0%"}
               </span>
             </div>
 
@@ -2052,7 +2214,7 @@ export default function SmsInboxMonitor() {
                   rounded-full
                   bg-blue-400
                   transition-all
-                  duration-300
+                  duration-200
                 "
                 style={{
                   width:
@@ -2068,31 +2230,164 @@ export default function SmsInboxMonitor() {
               />
             </div>
 
-            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[9px] text-slate-600">
-              <span>
-                Submitted{" "}
-                {progress.submitted}
+            {/* =============================================
+                LIVE FINANCIAL COUNTERS
+            ============================================= */}
+
+            <div className="mt-2 flex items-center gap-3 text-[9px]">
+              <span className="text-emerald-400">
+                Loans{" "}
+                {progress.loanUpdated}
               </span>
 
-              <span>
-                Processed{" "}
-                {progress.processed}
+              <span className="text-blue-400">
+                Savings{" "}
+                {progress.savingsUpdated}
               </span>
 
-              <span>
-                Duplicate{" "}
-                {progress.duplicate}
+              <span className="text-amber-400">
+                Filtered{" "}
+                {stats.filtered}
               </span>
+            </div>
+          </div>
+        )}
 
-              <span>
-                Ignored{" "}
-                {progress.ignored}
-              </span>
+      {/* =================================================
+          COMPLETED SUMMARY
+      ================================================= */}
 
-              <span>
-                Failed{" "}
-                {progress.failed}
+      {status === "synced" && (
+        <div
+          className="
+            mt-3
+            rounded-2xl
+            border border-slate-800/70
+            bg-slate-950/50
+            px-3
+            py-2.5
+          "
+        >
+          <div className="flex items-center gap-2">
+            <CheckCircle2
+              size={14}
+              className="shrink-0 text-emerald-400"
+            />
+
+            <p className="text-[11px] font-medium text-slate-300">
+              Processing complete
+            </p>
+
+            {lastSync && (
+              <span className="ml-auto text-[9px] text-slate-700">
+                {formatTime(lastSync)}
               </span>
+            )}
+          </div>
+
+          <div className="mt-2 grid grid-cols-3 gap-1.5">
+            <div
+              className="
+                rounded-xl
+                bg-emerald-400/[0.04]
+                px-2
+                py-2
+                text-center
+              "
+            >
+              <p className="text-[8px] uppercase tracking-[0.08em] text-slate-600">
+                Loans
+              </p>
+
+              <p className="mt-0.5 text-[15px] font-semibold text-emerald-400">
+                {stats.loanUpdated}
+              </p>
+
+              <p className="text-[8px] text-slate-700">
+                updated
+              </p>
+            </div>
+
+            <div
+              className="
+                rounded-xl
+                bg-blue-400/[0.04]
+                px-2
+                py-2
+                text-center
+              "
+            >
+              <p className="text-[8px] uppercase tracking-[0.08em] text-slate-600">
+                Savings
+              </p>
+
+              <p className="mt-0.5 text-[15px] font-semibold text-blue-400">
+                {stats.savingsUpdated}
+              </p>
+
+              <p className="text-[8px] text-slate-700">
+                updated
+              </p>
+            </div>
+
+            <div
+              className="
+                rounded-xl
+                bg-amber-400/[0.04]
+                px-2
+                py-2
+                text-center
+              "
+            >
+              <p className="text-[8px] uppercase tracking-[0.08em] text-slate-600">
+                Filters
+              </p>
+
+              <p className="mt-0.5 text-[15px] font-semibold text-amber-400">
+                {stats.filtered}
+              </p>
+
+              <p className="text-[8px] text-slate-700">
+                no match
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================
+          ATTENTION
+      ================================================= */}
+
+      {hasAttention &&
+        !hasReaderError && (
+          <div
+            className="
+              mt-3
+              flex items-center gap-2.5
+              rounded-2xl
+              border border-amber-400/15
+              bg-amber-400/[0.03]
+              px-3 py-2.5
+            "
+          >
+            <TriangleAlert
+              size={14}
+              className="shrink-0 text-amber-400"
+            />
+
+            <div className="min-w-0">
+              <p className="text-[10px] font-medium text-amber-300">
+                Processing completed with attention
+              </p>
+
+              <p className="mt-0.5 text-[9px] text-slate-600">
+                {stats.failed} message
+                {stats.failed === 1
+                  ? ""
+                  : "s"} require
+                developer review.
+              </p>
             </div>
           </div>
         )}
@@ -2104,1012 +2399,922 @@ export default function SmsInboxMonitor() {
       {hasReaderError && (
         <div
           className="
-            mt-3 rounded-2xl
+            mt-3
+            rounded-2xl
             border border-amber-400/20
             bg-amber-400/[0.04]
-            px-3.5 py-3
+            px-3 py-2.5
           "
         >
           <div className="flex items-start gap-2.5">
-            <div
-              className="
-                flex h-8 w-8 shrink-0
-                items-center justify-center
-                rounded-xl
-                bg-amber-400/10
-                text-amber-400
-              "
-            >
-              <XCircle size={16} />
-            </div>
+            <XCircle
+              size={15}
+              className="mt-0.5 shrink-0 text-amber-400"
+            />
 
             <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-medium text-amber-300">
+              <p className="text-[10px] font-medium text-amber-300">
                 Android SMS reader error
               </p>
 
-              <p className="mt-1 break-words text-[11px] leading-4 text-slate-300">
+              <p className="mt-1 break-words text-[10px] leading-4 text-slate-400">
                 {readerError.message}
               </p>
 
               {readerError.code && (
-                <div className="mt-2">
-                  <p className="text-[9px] uppercase tracking-[0.12em] text-slate-600">
-                    Error code
-                  </p>
-
-                  <p className="mt-0.5 break-all font-mono text-[10px] text-amber-400">
-                    {readerError.code}
-                  </p>
-                </div>
+                <p className="mt-1 font-mono text-[9px] text-amber-400">
+                  {readerError.code}
+                </p>
               )}
-
-              {readerError.data !==
-                undefined && (
-                <div className="mt-2">
-                  <p className="text-[9px] uppercase tracking-[0.12em] text-slate-600">
-                    Native diagnostic
-                  </p>
-
-                  <pre
-                    className="
-                      mt-1 max-h-40 overflow-auto
-                      whitespace-pre-wrap break-words
-                      rounded-xl
-                      bg-black/40
-                      p-2
-                      text-[9px]
-                      leading-4
-                      text-slate-500
-                    "
-                  >
-                    {serializeValue(
-                      readerError.data,
-                    )}
-                  </pre>
-                </div>
-              )}
-
-              <details className="mt-2">
-                <summary className="cursor-pointer text-[9px] text-slate-600">
-                  Show raw native error
-                </summary>
-
-                <pre
-                  className="
-                    mt-1 max-h-40 overflow-auto
-                    whitespace-pre-wrap break-words
-                    rounded-xl
-                    bg-black/40
-                    p-2
-                    text-[9px]
-                    leading-4
-                    text-slate-600
-                  "
-                >
-                  {serializeValue(
-                    readerError.raw,
-                  )}
-                </pre>
-              </details>
             </div>
           </div>
         </div>
       )}
 
       {/* =================================================
-          METRICS
+          DEVELOPER DIAGNOSTICS
       ================================================= */}
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        {/* INBOX */}
+      {expanded && (
+        <div
+          className="
+            mt-3
+            border-t border-slate-800/70
+            pt-3
+          "
+        >
+          {/* =================================================
+              DIAGNOSTIC HEADER
+          ================================================= */}
 
-        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
-          <div className="flex items-center gap-1.5 text-slate-500">
-            <Inbox size={12} />
-
-            <span className="text-[10px]">
-              Inbox
-            </span>
-          </div>
-
-          <p className="mt-1 text-base font-semibold tracking-tight text-white">
-            {stats.inbox}
-          </p>
-        </div>
-
-        {/* CANDIDATES */}
-
-        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
-          <div className="flex items-center gap-1.5 text-slate-500">
-            <FileSearch size={12} />
-
-            <span className="text-[10px]">
-              Candidates
-            </span>
-          </div>
-
-          <p className="mt-1 text-base font-semibold tracking-tight text-white">
-            {stats.candidates}
-          </p>
-        </div>
-
-        {/* SUBMITTED */}
-
-        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
-          <div className="flex items-center gap-1.5 text-slate-500">
-            <CircleDollarSign size={12} />
-
-            <span className="text-[10px]">
-              Submitted
-            </span>
-          </div>
-
-          <p className="mt-1 text-base font-semibold tracking-tight text-white">
-            {stats.submitted}
-          </p>
-        </div>
-
-        {/* PROCESSED */}
-
-        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
-          <div className="flex items-center gap-1.5 text-emerald-500/70">
-            <CheckCircle2 size={12} />
-
-            <span className="text-[10px]">
-              Processed
-            </span>
-          </div>
-
-          <p className="mt-1 text-base font-semibold tracking-tight text-white">
-            {stats.processed}
-          </p>
-        </div>
-
-        {/* IGNORED */}
-
-        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
-          <div className="flex items-center gap-1.5 text-amber-500/70">
-            <TriangleAlert size={12} />
-
-            <span className="text-[10px]">
-              Ignored
-            </span>
-          </div>
-
-          <p className="mt-1 text-base font-semibold tracking-tight text-white">
-            {stats.ignored}
-          </p>
-        </div>
-
-        {/* FAILED */}
-
-        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
-          <div className="flex items-center gap-1.5 text-red-500/70">
-            <XCircle size={12} />
-
-            <span className="text-[10px]">
-              Failed
-            </span>
-          </div>
-
-          <p className="mt-1 text-base font-semibold tracking-tight text-white">
-            {stats.failed}
-          </p>
-        </div>
-      </div>
-
-      {/* =================================================
-          FILTER DIAGNOSTIC
-      ================================================= */}
-
-      {filteredDiagnostics.length >
-        0 && (
-        <details className="mt-3">
-          <summary
-            className="
-              flex cursor-pointer
-              list-none items-center justify-between
-              rounded-2xl
-              border border-slate-800/70
-              bg-slate-950/40
-              px-3 py-2.5
-            "
-          >
+          <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Info
+              <Bug
                 size={13}
-                className="text-slate-500"
+                className="text-blue-400"
               />
 
               <div>
-                <p className="text-[10px] font-medium text-slate-400">
-                  Local filtering
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                  Developer diagnostics
                 </p>
 
-                <p className="text-[9px] text-slate-600">
-                  {stats.filtered} message
-                  {stats.filtered === 1
-                    ? ""
-                    : "s"} did not reach the API
+                <p className="mt-0.5 text-[9px] text-slate-700">
+                  Full processing and API information
                 </p>
               </div>
             </div>
 
-            <ChevronDown
-              size={14}
-              className="text-slate-600"
-            />
-          </summary>
-
-          <div className="mt-2 space-y-2">
-            {filteredDiagnostics.map(
-              (item, index) => (
-                <div
-                  key={`${getLocalSmsKey(item.sms)}-filtered-${index}`}
-                  className="
-                    rounded-2xl
-                    border border-slate-800/60
-                    bg-black/20
-                    p-3
-                  "
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="truncate text-[10px] font-medium text-slate-400">
-                      {item.sms.address ||
-                        "Unknown sender"}
-                    </span>
-
-                    <span className="shrink-0 text-[9px] text-slate-600">
-                      {formatDate(
-                        item.sms.date,
-                      )}
-                    </span>
-                  </div>
-
-                  <p className="mt-1 text-[10px] leading-4 text-slate-600">
-                    {truncate(
-                      item.sms.body,
-                      120,
-                    )}
-                  </p>
-
-                  <p className="mt-1.5 text-[9px] text-amber-500/60">
-                    {item.reason}
-                  </p>
-                </div>
-              ),
-            )}
-
-            {stats.filtered >
-              MAX_FILTERED_DIAGNOSTICS && (
-              <p className="px-1 text-[9px] text-slate-700">
-                Showing the first{" "}
-                {MAX_FILTERED_DIAGNOSTICS}{" "}
-                locally filtered messages.
-              </p>
-            )}
+            <button
+              type="button"
+              onClick={() =>
+                setExpanded(false)
+              }
+              className="
+                flex h-7 w-7
+                items-center justify-center
+                rounded-lg
+                bg-slate-900
+                text-slate-600
+                hover:text-slate-300
+              "
+            >
+              <ChevronUp size={13} />
+            </button>
           </div>
-        </details>
+
+          {/* =================================================
+              INTERNAL METRICS
+          ================================================= */}
+
+          <div className="mt-3 grid grid-cols-4 gap-1.5">
+            <div className="rounded-xl bg-slate-950/60 px-2 py-2">
+              <p className="text-[8px] text-slate-700">
+                Inbox
+              </p>
+
+              <p className="mt-0.5 text-[12px] font-semibold text-slate-300">
+                {stats.inbox}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-950/60 px-2 py-2">
+              <p className="text-[8px] text-slate-700">
+                Candidates
+              </p>
+
+              <p className="mt-0.5 text-[12px] font-semibold text-slate-300">
+                {stats.candidates}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-950/60 px-2 py-2">
+              <p className="text-[8px] text-slate-700">
+                Submitted
+              </p>
+
+              <p className="mt-0.5 text-[12px] font-semibold text-slate-300">
+                {stats.submitted}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-950/60 px-2 py-2">
+              <p className="text-[8px] text-slate-700">
+                Processed
+              </p>
+
+              <p className="mt-0.5 text-[12px] font-semibold text-emerald-400">
+                {stats.processed}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-950/60 px-2 py-2">
+              <p className="text-[8px] text-slate-700">
+                Loans
+              </p>
+
+              <p className="mt-0.5 text-[12px] font-semibold text-emerald-400">
+                {stats.loanUpdated}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-950/60 px-2 py-2">
+              <p className="text-[8px] text-slate-700">
+                Savings
+              </p>
+
+              <p className="mt-0.5 text-[12px] font-semibold text-blue-400">
+                {stats.savingsUpdated}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-950/60 px-2 py-2">
+              <p className="text-[8px] text-slate-700">
+                Duplicate
+              </p>
+
+              <p className="mt-0.5 text-[12px] font-semibold text-slate-400">
+                {stats.duplicate}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-950/60 px-2 py-2">
+              <p className="text-[8px] text-slate-700">
+                Failed
+              </p>
+
+              <p className="mt-0.5 text-[12px] font-semibold text-red-400">
+                {stats.failed}
+              </p>
+            </div>
+          </div>
+
+          {/* =================================================
+              FILTERED SMS
+          ================================================= */}
+
+          {filteredDiagnostics.length >
+            0 && (
+            <details className="mt-3">
+              <summary
+                className="
+                  flex cursor-pointer
+                  list-none
+                  items-center
+                  justify-between
+                  rounded-xl
+                  border border-slate-800/60
+                  bg-slate-950/40
+                  px-3 py-2
+                "
+              >
+                <div className="flex items-center gap-2">
+                  <Inbox
+                    size={12}
+                    className="text-amber-400"
+                  />
+
+                  <span className="text-[9px] text-slate-500">
+                    Local filter diagnostics ·{" "}
+                    {stats.filtered}
+                  </span>
+                </div>
+
+                <ChevronDown
+                  size={12}
+                  className="text-slate-700"
+                />
+              </summary>
+
+              <div className="mt-2 space-y-1.5">
+                {filteredDiagnostics.map(
+                  (
+                    item,
+                    index,
+                  ) => (
+                    <div
+                      key={`${getLocalSmsKey(item.sms)}-filtered-${index}`}
+                      className="
+                        rounded-xl
+                        border border-slate-800/50
+                        bg-black/20
+                        p-2.5
+                      "
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="truncate text-[9px] text-slate-500">
+                          {item.sms.address ||
+                            "Unknown sender"}
+                        </span>
+
+                        <span className="shrink-0 text-[8px] text-slate-700">
+                          {formatDate(
+                            item.sms.date,
+                          )}
+                        </span>
+                      </div>
+
+                      <p className="mt-1 text-[9px] leading-4 text-slate-700">
+                        {truncate(
+                          item.sms.body,
+                          120,
+                        )}
+                      </p>
+
+                      <p className="mt-1 text-[8px] text-amber-500/60">
+                        {item.reason}
+                      </p>
+                    </div>
+                  ),
+                )}
+
+                {stats.filtered >
+                  MAX_FILTERED_DIAGNOSTICS && (
+                  <p className="px-1 text-[8px] text-slate-700">
+                    Showing the first{" "}
+                    {
+                      MAX_FILTERED_DIAGNOSTICS
+                    }{" "}
+                    locally filtered messages.
+                  </p>
+                )}
+              </div>
+            </details>
+          )}
+
+          {/* =================================================
+              RECENT API RESULTS
+          ================================================= */}
+
+          {latestResults.length >
+            0 && (
+            <div className="mt-3">
+              <div className="mb-2 flex items-center gap-2">
+                <FileSearch
+                  size={12}
+                  className="text-blue-400"
+                />
+
+                <p className="text-[9px] font-medium uppercase tracking-[0.12em] text-slate-600">
+                  API results
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {latestResults.map(
+                  (
+                    item,
+                    index,
+                  ) => {
+                    const resultKind =
+                      getResultKind(
+                        item,
+                      );
+
+                    const reason =
+                      getResultReason(
+                        item,
+                      );
+
+                    const apiReference =
+                      getApiReference(
+                        item.response,
+                      );
+
+                    const apiAmount =
+                      getApiAmount(
+                        item.response,
+                      );
+
+                    const apiDestinationAccount =
+                      getApiDestinationAccountNumber(
+                        item.response,
+                      );
+
+                    const apiSender =
+                      getApiSenderName(
+                        item.response,
+                      );
+
+                    const apiTransactionDate =
+                      getApiTransactionDate(
+                        item.response,
+                      );
+
+                    const apiLoan =
+                      getApiLoan(
+                        item.response,
+                      );
+
+                    const apiSavingsAccount =
+                      getApiSavingsAccount(
+                        item.response,
+                      );
+
+                    return (
+                      <div
+                        key={`${getLocalSmsKey(item.sms)}-${index}`}
+                        className="
+                          rounded-2xl
+                          border border-slate-800/60
+                          bg-slate-950/50
+                          p-3
+                        "
+                      >
+                        {/* =================================
+                            RESULT HEADER
+                        ================================= */}
+
+                        <div className="flex items-start gap-2">
+                          <div
+                            className={`
+                              flex h-7 w-7 shrink-0
+                              items-center justify-center
+                              rounded-lg
+                              ${
+                                resultKind ===
+                                "processed"
+                                  ? "bg-emerald-400/10 text-emerald-400"
+                                  : resultKind ===
+                                      "duplicate"
+                                    ? "bg-blue-400/10 text-blue-400"
+                                    : resultKind ===
+                                        "ignored"
+                                      ? "bg-amber-400/10 text-amber-400"
+                                      : "bg-red-400/10 text-red-400"
+                              }
+                            `}
+                          >
+                            {resultKind ===
+                            "processed" ? (
+                              <CheckCircle2
+                                size={13}
+                              />
+                            ) : resultKind ===
+                              "duplicate" ? (
+                              <ShieldCheck
+                                size={13}
+                              />
+                            ) : resultKind ===
+                              "ignored" ? (
+                              <TriangleAlert
+                                size={13}
+                              />
+                            ) : (
+                              <XCircle
+                                size={13}
+                              />
+                            )}
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="truncate text-[10px] font-medium text-slate-400">
+                                {item.sms.address ||
+                                  "Payment message"}
+                              </p>
+
+                              <span className="shrink-0 text-[8px] text-slate-700">
+                                {formatDate(
+                                  item.sms.date,
+                                )}{" "}
+                                {formatTime(
+                                  item.sms.date,
+                                )}
+                              </span>
+                            </div>
+
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              <span
+                                className={`
+                                  rounded-md
+                                  px-1.5
+                                  py-0.5
+                                  text-[8px]
+                                  font-medium
+                                  ${
+                                    resultKind ===
+                                    "processed"
+                                      ? "bg-emerald-400/10 text-emerald-400"
+                                      : resultKind ===
+                                          "duplicate"
+                                        ? "bg-blue-400/10 text-blue-400"
+                                        : resultKind ===
+                                            "ignored"
+                                          ? "bg-amber-400/10 text-amber-400"
+                                          : "bg-red-400/10 text-red-400"
+                                  }
+                                `}
+                              >
+                                {getResultLabel(
+                                  item,
+                                )}
+                              </span>
+
+                              {item.httpStatus !==
+                                undefined && (
+                                <span className="rounded-md bg-slate-900 px-1.5 py-0.5 font-mono text-[8px] text-slate-600">
+                                  HTTP{" "}
+                                  {
+                                    item.httpStatus
+                                  }
+                                </span>
+                              )}
+
+                              {item.financialChange && (
+                                <span className="rounded-md bg-blue-400/10 px-1.5 py-0.5 text-[8px] text-blue-400">
+                                  Account updated
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* =================================
+                            SERVER REASON
+                        ================================= */}
+
+                        {reason && (
+                          <div
+                            className="
+                              mt-2
+                              rounded-xl
+                              border border-slate-800/60
+                              bg-black/20
+                              px-2.5
+                              py-2
+                            "
+                          >
+                            <div className="flex items-start gap-2">
+                              <AlertCircle
+                                size={11}
+                                className={`
+                                  mt-0.5
+                                  shrink-0
+                                  ${
+                                    resultKind ===
+                                    "ignored"
+                                      ? "text-amber-400"
+                                      : "text-red-400"
+                                  }
+                                `}
+                              />
+
+                              <p className="break-words text-[9px] leading-4 text-slate-500">
+                                {reason}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* =================================
+                            PARSED DATA
+                        ================================= */}
+
+                        {(apiReference ||
+                          apiAmount ||
+                          apiDestinationAccount ||
+                          apiSender ||
+                          apiTransactionDate) && (
+                          <div className="mt-2">
+                            <p className="mb-1 text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                              Parsed
+                            </p>
+
+                            <div className="space-y-1 rounded-xl bg-black/20 p-2">
+                              {apiReference && (
+                                <div className="flex justify-between gap-3">
+                                  <span className="text-[8px] text-slate-700">
+                                    Reference
+                                  </span>
+
+                                  <span className="break-all text-right font-mono text-[8px] text-blue-400">
+                                    {
+                                      apiReference
+                                    }
+                                  </span>
+                                </div>
+                              )}
+
+                              {apiAmount && (
+                                <div className="flex justify-between gap-3">
+                                  <span className="text-[8px] text-slate-700">
+                                    Amount
+                                  </span>
+
+                                  <span className="font-mono text-[8px] text-slate-400">
+                                    KES{" "}
+                                    {
+                                      apiAmount
+                                    }
+                                  </span>
+                                </div>
+                              )}
+
+                              {apiDestinationAccount && (
+                                <div className="flex justify-between gap-3">
+                                  <span className="text-[8px] text-slate-700">
+                                    Bank destination
+                                  </span>
+
+                                  <span className="font-mono text-[8px] text-slate-400">
+                                    {
+                                      apiDestinationAccount
+                                    }
+                                  </span>
+                                </div>
+                              )}
+
+                              {apiSender && (
+                                <div className="flex justify-between gap-3">
+                                  <span className="text-[8px] text-slate-700">
+                                    Sender
+                                  </span>
+
+                                  <span className="max-w-[65%] text-right text-[8px] text-slate-400">
+                                    {
+                                      apiSender
+                                    }
+                                  </span>
+                                </div>
+                              )}
+
+                              {apiTransactionDate && (
+                                <div className="flex justify-between gap-3">
+                                  <span className="text-[8px] text-slate-700">
+                                    Transaction date
+                                  </span>
+
+                                  <span className="max-w-[65%] break-all text-right font-mono text-[8px] text-slate-400">
+                                    {
+                                      apiTransactionDate
+                                    }
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* =================================
+                            LOAN
+                        ================================= */}
+
+                        {apiLoan && (
+                          <details className="mt-2">
+                            <summary className="cursor-pointer text-[8px] text-slate-600">
+                              Show loan response
+                            </summary>
+
+                            <pre
+                              className="
+                                mt-1
+                                max-h-48
+                                overflow-auto
+                                whitespace-pre-wrap
+                                break-words
+                                rounded-xl
+                                bg-black/30
+                                p-2
+                                text-[8px]
+                                leading-4
+                                text-slate-600
+                              "
+                            >
+                              {serializeValue(
+                                apiLoan,
+                              )}
+                            </pre>
+                          </details>
+                        )}
+
+                        {/* =================================
+                            SAVINGS
+                        ================================= */}
+
+                        {apiSavingsAccount && (
+                          <details className="mt-2">
+                            <summary className="cursor-pointer text-[8px] text-slate-600">
+                              Show savings response
+                            </summary>
+
+                            <pre
+                              className="
+                                mt-1
+                                max-h-48
+                                overflow-auto
+                                whitespace-pre-wrap
+                                break-words
+                                rounded-xl
+                                bg-black/30
+                                p-2
+                                text-[8px]
+                                leading-4
+                                text-slate-600
+                              "
+                            >
+                              {serializeValue(
+                                apiSavingsAccount,
+                              )}
+                            </pre>
+                          </details>
+                        )}
+
+                        {/* =================================
+                            FULL API DIAGNOSTIC
+                        ================================= */}
+
+                        <details className="mt-2">
+                          <summary
+                            className="
+                              flex cursor-pointer
+                              items-center gap-2
+                              text-[8px]
+                              font-medium
+                              uppercase
+                              tracking-[0.1em]
+                              text-blue-400/70
+                            "
+                          >
+                            <FileSearch
+                              size={10}
+                            />
+
+                            Show full API response
+                          </summary>
+
+                          <div className="mt-2 space-y-2">
+                            <div>
+                              <p className="mb-1 text-[7px] uppercase tracking-[0.1em] text-slate-700">
+                                Endpoint
+                              </p>
+
+                              <p className="rounded-lg bg-black/30 p-2 font-mono text-[8px] text-slate-600">
+                                POST{" "}
+                                {
+                                  PROCESS_URL
+                                }
+                              </p>
+                            </div>
+
+                            <div>
+                              <p className="mb-1 text-[7px] uppercase tracking-[0.1em] text-slate-700">
+                                HTTP status
+                              </p>
+
+                              <p className="rounded-lg bg-black/30 p-2 font-mono text-[8px] text-slate-600">
+                                {item.httpStatus ??
+                                  "No response"}
+                              </p>
+                            </div>
+
+                            <div>
+                              <p className="mb-1 text-[7px] uppercase tracking-[0.1em] text-slate-700">
+                                Full server response
+                              </p>
+
+                              <pre
+                                className="
+                                  max-h-72
+                                  overflow-auto
+                                  whitespace-pre-wrap
+                                  break-words
+                                  rounded-xl
+                                  bg-black/40
+                                  p-2
+                                  text-[8px]
+                                  leading-4
+                                  text-slate-600
+                                "
+                              >
+                                {serializeValue(
+                                  item.response,
+                                )}
+                              </pre>
+                            </div>
+
+                            <div>
+                              <p className="mb-1 text-[7px] uppercase tracking-[0.1em] text-slate-700">
+                                Raw Android SMS
+                              </p>
+
+                              <pre
+                                className="
+                                  max-h-48
+                                  overflow-auto
+                                  whitespace-pre-wrap
+                                  break-words
+                                  rounded-xl
+                                  bg-black/40
+                                  p-2
+                                  text-[8px]
+                                  leading-4
+                                  text-slate-600
+                                "
+                              >
+                                {serializeValue(
+                                  {
+                                    id:
+                                      item
+                                        .sms
+                                        .id,
+
+                                    address:
+                                      item
+                                        .sms
+                                        .address,
+
+                                    date:
+                                      item
+                                        .sms
+                                        .date,
+
+                                    dateFormatted:
+                                      formatFullDateTime(
+                                        item
+                                          .sms
+                                          .date,
+                                      ),
+
+                                    body:
+                                      item
+                                        .sms
+                                        .body,
+                                  },
+                                )}
+                              </pre>
+                            </div>
+
+                            <div>
+                              <p className="mb-1 text-[7px] uppercase tracking-[0.1em] text-slate-700">
+                                API request payload
+                              </p>
+
+                              <pre
+                                className="
+                                  max-h-48
+                                  overflow-auto
+                                  whitespace-pre-wrap
+                                  break-words
+                                  rounded-xl
+                                  bg-black/40
+                                  p-2
+                                  text-[8px]
+                                  leading-4
+                                  text-slate-600
+                                "
+                              >
+                                {serializeValue(
+                                  {
+                                    smsId:
+                                      item
+                                        .sms
+                                        .id,
+
+                                    address:
+                                      item
+                                        .sms
+                                        .address,
+
+                                    body:
+                                      item
+                                        .sms
+                                        .body,
+
+                                    date:
+                                      item
+                                        .sms
+                                        .date,
+                                  },
+                                )}
+                              </pre>
+                            </div>
+                          </div>
+                        </details>
+                      </div>
+                    );
+                  },
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* =================================================
+              NATIVE DIAGNOSTIC
+          ================================================= */}
+
+          {readerError && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-[8px] text-slate-600">
+                Show raw native diagnostic
+              </summary>
+
+              <pre
+                className="
+                  mt-2
+                  max-h-48
+                  overflow-auto
+                  whitespace-pre-wrap
+                  break-words
+                  rounded-xl
+                  bg-black/40
+                  p-2.5
+                  text-[8px]
+                  leading-4
+                  text-slate-600
+                "
+              >
+                {serializeValue(
+                  readerError,
+                )}
+              </pre>
+            </details>
+          )}
+
+          {/* =================================================
+              NO API RESULTS
+          ================================================= */}
+
+          {results.length === 0 &&
+            status === "synced" && (
+              <div
+                className="
+                  mt-3
+                  rounded-xl
+                  border border-slate-800/50
+                  bg-black/20
+                  px-3 py-3
+                  text-center
+                "
+              >
+                <Inbox
+                  size={15}
+                  className="mx-auto text-slate-700"
+                />
+
+                <p className="mt-1.5 text-[9px] text-slate-600">
+                  No candidate SMS reached the API.
+                </p>
+              </div>
+            )}
+        </div>
       )}
 
       {/* =================================================
-          RECENT ACTIVITY
+          COLLAPSED DEVELOPER HINT
       ================================================= */}
 
-      {latestResults.length > 0 && (
-        <div className="mt-4">
+      {!expanded && (
+        <div className="mt-2 flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-slate-700">
+            <ShieldCheck size={10} />
+
+            <span className="text-[8px]">
+              Foreground only
+            </span>
+          </div>
+
           <button
             type="button"
             onClick={() =>
-              setExpanded(
-                (value) => !value,
-              )
+              setExpanded(true)
             }
-            className="flex w-full items-center justify-between text-left"
-          >
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-600">
-                Recent activity
-              </p>
-
-              <p className="mt-1 text-[12px] text-slate-400">
-                Detailed API processing results
-              </p>
-            </div>
-
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-900 text-slate-500">
-              {expanded ? (
-                <ChevronUp size={15} />
-              ) : (
-                <ChevronDown size={15} />
-              )}
-            </div>
-          </button>
-
-          {expanded && (
-            <div className="mt-3 space-y-2">
-              {latestResults.map(
-                (item, index) => {
-                  const resultKind =
-                    getResultKind(
-                      item,
-                    );
-
-                  const reason =
-                    getResultReason(
-                      item,
-                    );
-
-                  const apiReference =
-                    getApiReference(
-                      item.response,
-                    );
-
-                  const apiAmount =
-                    getApiAmount(
-                      item.response,
-                    );
-
-                  const apiAccount =
-                    getApiAccountNumber(
-                      item.response,
-                    );
-
-                  const apiSender =
-                    getApiSenderName(
-                      item.response,
-                    );
-
-                  const apiTransactionDate =
-                    getApiTransactionDate(
-                      item.response,
-                    );
-
-                  const apiLoan =
-                    getApiLoan(
-                      item.response,
-                    );
-
-                  const apiSavingsAccount =
-                    getApiSavingsAccount(
-                      item.response,
-                    );
-
-                  return (
-                    <div
-                      key={`${getLocalSmsKey(item.sms)}-${index}`}
-                      className="
-                        rounded-2xl
-                        border border-slate-800/70
-                        bg-slate-950/50
-                        px-3 py-3
-                      "
-                    >
-                      {/* =================================
-                          MESSAGE HEADER
-                      ================================= */}
-
-                      <div className="flex items-start gap-2.5">
-                        <div
-                          className={`
-                            mt-0.5 flex h-7 w-7 shrink-0
-                            items-center justify-center
-                            rounded-lg
-                            ${
-                              resultKind ===
-                              "processed"
-                                ? "bg-emerald-400/10 text-emerald-400"
-                                : resultKind ===
-                                    "duplicate"
-                                  ? "bg-blue-400/10 text-blue-400"
-                                  : resultKind ===
-                                      "ignored"
-                                    ? "bg-amber-400/10 text-amber-400"
-                                    : "bg-red-400/10 text-red-400"
-                            }
-                          `}
-                        >
-                          {resultKind ===
-                          "processed" ? (
-                            <CheckCircle2
-                              size={14}
-                            />
-                          ) : resultKind ===
-                            "duplicate" ? (
-                            <ShieldCheck
-                              size={14}
-                            />
-                          ) : resultKind ===
-                            "ignored" ? (
-                            <TriangleAlert
-                              size={14}
-                            />
-                          ) : (
-                            <XCircle
-                              size={14}
-                            />
-                          )}
-                        </div>
-
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="truncate text-[11px] font-medium text-slate-300">
-                              {item.sms.address ||
-                                "Payment message"}
-                            </p>
-
-                            <span className="shrink-0 text-[10px] text-slate-600">
-                              {formatDate(
-                                item.sms.date,
-                              )}{" "}
-                              {formatTime(
-                                item.sms.date,
-                              )}
-                            </span>
-                          </div>
-
-                          {/* =================================
-                              RESULT BADGE
-                          ================================= */}
-
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <span
-                              className={`
-                                rounded-md px-1.5 py-0.5
-                                text-[9px] font-medium
-                                ${
-                                  resultKind ===
-                                  "processed"
-                                    ? "bg-emerald-400/10 text-emerald-400"
-                                    : resultKind ===
-                                        "duplicate"
-                                      ? "bg-blue-400/10 text-blue-400"
-                                      : resultKind ===
-                                          "ignored"
-                                        ? "bg-amber-400/10 text-amber-400"
-                                        : "bg-red-400/10 text-red-400"
-                                }
-                              `}
-                            >
-                              {getResultLabel(
-                                item,
-                              )}
-                            </span>
-
-                            {item.httpStatus !==
-                              undefined && (
-                              <span className="rounded-md bg-slate-900 px-1.5 py-0.5 font-mono text-[9px] text-slate-500">
-                                HTTP{" "}
-                                {
-                                  item.httpStatus
-                                }
-                              </span>
-                            )}
-
-                            {item.financialChange && (
-                              <span className="rounded-md bg-blue-400/10 px-1.5 py-0.5 text-[9px] text-blue-400">
-                                Account updated
-                              </span>
-                            )}
-                          </div>
-
-                          {/* =================================
-                              SMS BODY
-                          ================================= */}
-
-                          <p className="mt-2 text-[11px] leading-4 text-slate-500">
-                            {truncate(
-                              item.sms.body,
-                              180,
-                            )}
-                          </p>
-
-                          {/* =================================
-                              WHY IT WAS IGNORED / FAILED
-                          ================================= */}
-
-                          {reason && (
-                            <div
-                              className={`
-                                mt-2
-                                rounded-xl
-                                border
-                                px-2.5 py-2
-                                ${
-                                  resultKind ===
-                                  "ignored"
-                                    ? "border-amber-400/10 bg-amber-400/[0.03]"
-                                    : "border-red-400/10 bg-red-400/[0.03]"
-                                }
-                              `}
-                            >
-                              <div className="flex items-start gap-2">
-                                <AlertCircle
-                                  size={12}
-                                  className={`
-                                    mt-0.5 shrink-0
-                                    ${
-                                      resultKind ===
-                                      "ignored"
-                                        ? "text-amber-400"
-                                        : "text-red-400"
-                                    }
-                                  `}
-                                />
-
-                                <div className="min-w-0">
-                                  <p className="text-[9px] uppercase tracking-[0.1em] text-slate-600">
-                                    Server decision
-                                  </p>
-
-                                  <p className="mt-0.5 break-words text-[10px] leading-4 text-slate-400">
-                                    {reason}
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* =================================
-                              API SUMMARY
-                          ================================= */}
-
-                          <div className="mt-3 grid grid-cols-2 gap-1.5">
-                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
-                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
-                                API status
-                              </p>
-
-                              <p className="mt-0.5 truncate text-[9px] text-slate-400">
-                                {item.status ||
-                                  "—"}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
-                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
-                                Type
-                              </p>
-
-                              <p className="mt-0.5 truncate text-[9px] text-slate-400">
-                                {item.type ||
-                                  "—"}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
-                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
-                                Processed
-                              </p>
-
-                              <p className="mt-0.5 text-[9px] text-slate-400">
-                                {item.processed
-                                  ? "true"
-                                  : "false"}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
-                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
-                                Ignored
-                              </p>
-
-                              <p className="mt-0.5 text-[9px] text-slate-400">
-                                {item.ignored
-                                  ? "true"
-                                  : "false"}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
-                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
-                                Duplicate
-                              </p>
-
-                              <p className="mt-0.5 text-[9px] text-slate-400">
-                                {item.duplicate
-                                  ? "true"
-                                  : "false"}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
-                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
-                                Financial change
-                              </p>
-
-                              <p className="mt-0.5 text-[9px] text-slate-400">
-                                {item.financialChange
-                                  ? "true"
-                                  : "false"}
-                              </p>
-                            </div>
-                          </div>
-
-                          {/* =================================
-                              PARSED INFORMATION
-                          ================================= */}
-
-                          {(apiReference ||
-                            apiAmount ||
-                            apiAccount ||
-                            apiSender ||
-                            apiTransactionDate) && (
-                            <div className="mt-3">
-                              <p className="mb-1.5 text-[9px] font-medium uppercase tracking-[0.12em] text-slate-600">
-                                Parsed transaction
-                              </p>
-
-                              <div className="space-y-1 rounded-xl border border-slate-800/50 bg-black/20 p-2.5">
-                                {apiReference && (
-                                  <div className="flex items-start justify-between gap-3">
-                                    <span className="text-[9px] text-slate-600">
-                                      Reference
-                                    </span>
-
-                                    <span className="break-all text-right font-mono text-[9px] text-blue-400">
-                                      {
-                                        apiReference
-                                      }
-                                    </span>
-                                  </div>
-                                )}
-
-                                {apiAmount && (
-                                  <div className="flex items-start justify-between gap-3">
-                                    <span className="text-[9px] text-slate-600">
-                                      Amount
-                                    </span>
-
-                                    <span className="text-right font-mono text-[9px] text-slate-300">
-                                      KES{" "}
-                                      {
-                                        apiAmount
-                                      }
-                                    </span>
-                                  </div>
-                                )}
-
-                                {apiAccount && (
-                                  <div className="flex items-start justify-between gap-3">
-                                    <span className="text-[9px] text-slate-600">
-                                      Account
-                                    </span>
-
-                                    <span className="text-right font-mono text-[9px] text-slate-300">
-                                      {
-                                        apiAccount
-                                      }
-                                    </span>
-                                  </div>
-                                )}
-
-                                {apiSender && (
-                                  <div className="flex items-start justify-between gap-3">
-                                    <span className="text-[9px] text-slate-600">
-                                      Sender
-                                    </span>
-
-                                    <span className="max-w-[65%] text-right text-[9px] text-slate-300">
-                                      {
-                                        apiSender
-                                      }
-                                    </span>
-                                  </div>
-                                )}
-
-                                {apiTransactionDate && (
-                                  <div className="flex items-start justify-between gap-3">
-                                    <span className="text-[9px] text-slate-600">
-                                      Transaction date
-                                    </span>
-
-                                    <span className="max-w-[65%] break-all text-right font-mono text-[9px] text-slate-300">
-                                      {
-                                        apiTransactionDate
-                                      }
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* =================================
-                              LOAN INFORMATION
-                          ================================= */}
-
-                          {apiLoan && (
-                            <div className="mt-3">
-                              <p className="mb-1.5 text-[9px] font-medium uppercase tracking-[0.12em] text-slate-600">
-                                Loan returned by API
-                              </p>
-
-                              <pre
-                                className="
-                                  max-h-48 overflow-auto
-                                  whitespace-pre-wrap break-words
-                                  rounded-xl
-                                  border border-slate-800/50
-                                  bg-black/30
-                                  p-2.5
-                                  text-[9px]
-                                  leading-4
-                                  text-slate-500
-                                "
-                              >
-                                {serializeValue(
-                                  apiLoan,
-                                )}
-                              </pre>
-                            </div>
-                          )}
-
-                          {/* =================================
-                              SAVINGS INFORMATION
-                          ================================= */}
-
-                          {apiSavingsAccount && (
-                            <div className="mt-3">
-                              <p className="mb-1.5 text-[9px] font-medium uppercase tracking-[0.12em] text-slate-600">
-                                Savings account returned by API
-                              </p>
-
-                              <pre
-                                className="
-                                  max-h-48 overflow-auto
-                                  whitespace-pre-wrap break-words
-                                  rounded-xl
-                                  border border-slate-800/50
-                                  bg-black/30
-                                  p-2.5
-                                  text-[9px]
-                                  leading-4
-                                  text-slate-500
-                                "
-                              >
-                                {serializeValue(
-                                  apiSavingsAccount,
-                                )}
-                              </pre>
-                            </div>
-                          )}
-
-                          {/* =================================
-                              RAW API RESPONSE
-                          ================================= */}
-
-                          <details className="mt-3">
-                            <summary
-                              className="
-                                flex cursor-pointer
-                                items-center gap-2
-                                text-[9px]
-                                font-medium
-                                uppercase
-                                tracking-[0.1em]
-                                text-blue-400/70
-                              "
-                            >
-                              <FileSearch
-                                size={11}
-                              />
-
-                              Show full API diagnostic
-                            </summary>
-
-                            <div className="mt-2 space-y-2">
-                              <div>
-                                <p className="mb-1 text-[8px] uppercase tracking-[0.1em] text-slate-700">
-                                  API endpoint
-                                </p>
-
-                                <p className="rounded-lg bg-black/30 p-2 font-mono text-[9px] text-slate-500">
-                                  POST{" "}
-                                  {
-                                    PROCESS_URL
-                                  }
-                                </p>
-                              </div>
-
-                              <div>
-                                <p className="mb-1 text-[8px] uppercase tracking-[0.1em] text-slate-700">
-                                  HTTP status
-                                </p>
-
-                                <p className="rounded-lg bg-black/30 p-2 font-mono text-[9px] text-slate-500">
-                                  {item.httpStatus ??
-                                    "No response"}
-                                </p>
-                              </div>
-
-                              <div>
-                                <p className="mb-1 text-[8px] uppercase tracking-[0.1em] text-slate-700">
-                                  Full server response
-                                </p>
-
-                                <pre
-                                  className="
-                                    max-h-72
-                                    overflow-auto
-                                    whitespace-pre-wrap
-                                    break-words
-                                    rounded-xl
-                                    bg-black/40
-                                    p-2.5
-                                    text-[9px]
-                                    leading-4
-                                    text-slate-500
-                                  "
-                                >
-                                  {serializeValue(
-                                    item.response,
-                                  )}
-                                </pre>
-                              </div>
-
-                              {/* =========================
-                                  RAW SMS
-                              ========================= */}
-
-                              <div>
-                                <p className="mb-1 text-[8px] uppercase tracking-[0.1em] text-slate-700">
-                                  Raw Android SMS
-                                </p>
-
-                                <pre
-                                  className="
-                                    max-h-48
-                                    overflow-auto
-                                    whitespace-pre-wrap
-                                    break-words
-                                    rounded-xl
-                                    bg-black/40
-                                    p-2.5
-                                    text-[9px]
-                                    leading-4
-                                    text-slate-500
-                                  "
-                                >
-                                  {serializeValue(
-                                    {
-                                      id:
-                                        item.sms
-                                          .id,
-
-                                      address:
-                                        item.sms
-                                          .address,
-
-                                      date:
-                                        item.sms
-                                          .date,
-
-                                      dateFormatted:
-                                        formatFullDateTime(
-                                          item.sms
-                                            .date,
-                                        ),
-
-                                      body:
-                                        item.sms
-                                          .body,
-                                    },
-                                  )}
-                                </pre>
-                              </div>
-
-                              {/* =========================
-                                  REQUEST PAYLOAD
-                              ========================= */}
-
-                              <div>
-                                <p className="mb-1 text-[8px] uppercase tracking-[0.1em] text-slate-700">
-                                  API request payload
-                                </p>
-
-                                <pre
-                                  className="
-                                    max-h-48
-                                    overflow-auto
-                                    whitespace-pre-wrap
-                                    break-words
-                                    rounded-xl
-                                    bg-black/40
-                                    p-2.5
-                                    text-[9px]
-                                    leading-4
-                                    text-slate-500
-                                  "
-                                >
-                                  {serializeValue(
-                                    {
-                                      smsId:
-                                        item
-                                          .sms
-                                          .id,
-
-                                      address:
-                                        item
-                                          .sms
-                                          .address,
-
-                                      body:
-                                        item
-                                          .sms
-                                          .body,
-
-                                      date:
-                                        item
-                                          .sms
-                                          .date,
-                                    },
-                                  )}
-                                </pre>
-                              </div>
-                            </div>
-                          </details>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                },
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* =================================================
-          NO RESULTS
-      ================================================= */}
-
-      {status === "synced" &&
-        results.length === 0 && (
-          <div
             className="
-              mt-4
-              rounded-2xl
-              border border-slate-800/60
-              bg-slate-950/30
-              px-3 py-4
-              text-center
+              flex items-center gap-1
+              text-[8px]
+              text-slate-700
+              transition
+              hover:text-blue-400
             "
           >
-            <Inbox
-              size={18}
-              className="mx-auto text-slate-700"
-            />
+            <Bug size={9} />
 
-            <p className="mt-2 text-[11px] text-slate-500">
-              No financial candidate messages were submitted.
-            </p>
+            Diagnostics
 
-            <p className="mt-1 text-[9px] text-slate-700">
-              Inbox: {stats.inbox} · Filtered:{" "}
-              {stats.filtered}
-            </p>
-          </div>
-        )}
-
-      {/* =================================================
-          FOOTER
-      ================================================= */}
-
-      <div className="mt-4 flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-slate-600">
-          <ShieldCheck size={11} />
-
-          <span className="text-[10px]">
-            GEO-SHUA secure sync
-          </span>
+            <ChevronDown size={9} />
+          </button>
         </div>
-
-        <span className="text-[10px] text-slate-700">
-          Foreground only
-        </span>
-      </div>
+      )}
     </section>
   );
 }
