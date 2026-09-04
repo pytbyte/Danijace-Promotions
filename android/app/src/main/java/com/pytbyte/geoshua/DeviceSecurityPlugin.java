@@ -66,8 +66,6 @@ public class DeviceSecurityPlugin extends Plugin {
 
     /**
      * Versioned recovery-key alias.
-     *
-     * V2 is intentionally separate from any previous recovery key.
      */
     private static final String RECOVERY_KEY_ALIAS =
             "geoshua_device_recovery_key_v2";
@@ -88,11 +86,10 @@ public class DeviceSecurityPlugin extends Plugin {
             "SHA256withECDSA";
 
     /**
-     * Short authentication validity period for device-credential
-     * recovery.
+     * Short authentication validity period.
      *
-     * After successful device authentication, the Keystore permits
-     * the signing operation for this period.
+     * After successful device authentication, Android Keystore
+     * permits the signing operation for this period.
      */
     private static final int DEVICE_AUTH_VALIDITY_SECONDS = 30;
 
@@ -203,166 +200,207 @@ public class DeviceSecurityPlugin extends Plugin {
         FragmentActivity fragmentActivity =
                 (FragmentActivity) activity;
 
-        BiometricManager biometricManager =
-                BiometricManager.from(
-                        fragmentActivity
-                );
+        /*
+         * All FragmentActivity / BiometricPrompt interaction is
+         * explicitly placed on the Android main thread.
+         */
+        fragmentActivity.runOnUiThread(
+                () -> {
 
-        int availability =
-                biometricManager.canAuthenticate(
-                        BiometricManager.Authenticators.BIOMETRIC_STRONG
-                                | BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                );
+                    try {
 
-        if (availability !=
-                BiometricManager.BIOMETRIC_SUCCESS) {
+                        if (fragmentActivity.isFinishing()) {
 
-            JSObject response =
-                    new JSObject();
+                            call.reject(
+                                    "GEO-SHUA Android activity is finishing."
+                            );
 
-            response.put(
-                    "success",
-                    false
-            );
+                            return;
+                        }
 
-            response.put(
-                    "code",
-                    getAvailabilityCode(
-                            availability
-                    )
-            );
+                        if (Build.VERSION.SDK_INT >=
+                                Build.VERSION_CODES.JELLY_BEAN_MR1
+                                && fragmentActivity.isDestroyed()) {
 
-            response.put(
-                    "message",
-                    getAvailabilityMessage(
-                            availability
-                    )
-            );
+                            call.reject(
+                                    "GEO-SHUA Android activity has been destroyed."
+                            );
 
-            call.resolve(
-                    response
-            );
+                            return;
+                        }
 
-            return;
-        }
+                        BiometricManager biometricManager =
+                                BiometricManager.from(
+                                        fragmentActivity
+                                );
 
-        Executor executor =
-                ContextCompat.getMainExecutor(
-                        fragmentActivity
-                );
+                        int availability =
+                                biometricManager.canAuthenticate(
+                                        BiometricManager.Authenticators.BIOMETRIC_STRONG
+                                                | BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                                );
 
-        BiometricPrompt.AuthenticationCallback callback =
-                new BiometricPrompt.AuthenticationCallback() {
+                        if (availability !=
+                                BiometricManager.BIOMETRIC_SUCCESS) {
 
-                    @Override
-                    public void onAuthenticationSucceeded(
-                            @NonNull BiometricPrompt.AuthenticationResult result
-                    ) {
+                            JSObject response =
+                                    new JSObject();
 
-                        super.onAuthenticationSucceeded(
-                                result
+                            response.put(
+                                    "success",
+                                    false
+                            );
+
+                            response.put(
+                                    "code",
+                                    getAvailabilityCode(
+                                            availability
+                                    )
+                            );
+
+                            response.put(
+                                    "message",
+                                    getAvailabilityMessage(
+                                            availability
+                                    )
+                            );
+
+                            call.resolve(
+                                    response
+                            );
+
+                            return;
+                        }
+
+                        Executor executor =
+                                ContextCompat.getMainExecutor(
+                                        fragmentActivity
+                                );
+
+                        BiometricPrompt.AuthenticationCallback callback =
+                                new BiometricPrompt.AuthenticationCallback() {
+
+                                    @Override
+                                    public void onAuthenticationSucceeded(
+                                            @NonNull BiometricPrompt.AuthenticationResult result
+                                    ) {
+
+                                        super.onAuthenticationSucceeded(
+                                                result
+                                        );
+
+                                        JSObject response =
+                                                new JSObject();
+
+                                        response.put(
+                                                "success",
+                                                true
+                                        );
+
+                                        response.put(
+                                                "method",
+                                                "android-device-security"
+                                        );
+
+                                        response.put(
+                                                "message",
+                                                "Device authentication successful."
+                                        );
+
+                                        call.resolve(
+                                                response
+                                        );
+                                    }
+
+                                    @Override
+                                    public void onAuthenticationError(
+                                            int errorCode,
+                                            @NonNull CharSequence errString
+                                    ) {
+
+                                        super.onAuthenticationError(
+                                                errorCode,
+                                                errString
+                                        );
+
+                                        JSObject response =
+                                                new JSObject();
+
+                                        response.put(
+                                                "success",
+                                                false
+                                        );
+
+                                        response.put(
+                                                "code",
+                                                getAuthenticationErrorCode(
+                                                        errorCode
+                                                )
+                                        );
+
+                                        response.put(
+                                                "errorCode",
+                                                errorCode
+                                        );
+
+                                        response.put(
+                                                "message",
+                                                errString.toString()
+                                        );
+
+                                        call.resolve(
+                                                response
+                                        );
+                                    }
+
+                                    @Override
+                                    public void onAuthenticationFailed() {
+
+                                        super.onAuthenticationFailed();
+
+                                        /*
+                                         * Do not resolve.
+                                         *
+                                         * Android may allow another attempt.
+                                         */
+                                    }
+                                };
+
+                        BiometricPrompt biometricPrompt =
+                                new BiometricPrompt(
+                                        fragmentActivity,
+                                        executor,
+                                        callback
+                                );
+
+                        BiometricPrompt.PromptInfo promptInfo =
+                                new BiometricPrompt.PromptInfo.Builder()
+                                        .setTitle(
+                                                "Verify your identity"
+                                        )
+                                        .setSubtitle(
+                                                "Use your Android device security to continue"
+                                        )
+                                        .setAllowedAuthenticators(
+                                                BiometricManager.Authenticators.BIOMETRIC_STRONG
+                                                        | BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                                        )
+                                        .build();
+
+                        biometricPrompt.authenticate(
+                                promptInfo
                         );
 
-                        JSObject response =
-                                new JSObject();
+                    } catch (Exception error) {
 
-                        response.put(
-                                "success",
-                                true
-                        );
-
-                        response.put(
-                                "method",
-                                "android-device-security"
-                        );
-
-                        response.put(
-                                "message",
-                                "Device authentication successful."
-                        );
-
-                        call.resolve(
-                                response
+                        call.reject(
+                                "Unable to start GEO-SHUA Android device authentication: "
+                                        + error.getClass().getName()
+                                        + ": "
+                                        + safeErrorMessage(error)
                         );
                     }
-
-                    @Override
-                    public void onAuthenticationError(
-                            int errorCode,
-                            @NonNull CharSequence errString
-                    ) {
-
-                        super.onAuthenticationError(
-                                errorCode,
-                                errString
-                        );
-
-                        JSObject response =
-                                new JSObject();
-
-                        response.put(
-                                "success",
-                                false
-                        );
-
-                        response.put(
-                                "code",
-                                getAuthenticationErrorCode(
-                                        errorCode
-                                )
-                        );
-
-                        response.put(
-                                "errorCode",
-                                errorCode
-                        );
-
-                        response.put(
-                                "message",
-                                errString.toString()
-                        );
-
-                        call.resolve(
-                                response
-                        );
-                    }
-
-                    @Override
-                    public void onAuthenticationFailed() {
-
-                        super.onAuthenticationFailed();
-
-                        /*
-                         * Do not resolve.
-                         *
-                         * Android may allow another attempt.
-                         */
-                    }
-                };
-
-        BiometricPrompt biometricPrompt =
-                new BiometricPrompt(
-                        fragmentActivity,
-                        executor,
-                        callback
-                );
-
-        BiometricPrompt.PromptInfo promptInfo =
-                new BiometricPrompt.PromptInfo.Builder()
-                        .setTitle(
-                                "Verify your identity"
-                        )
-                        .setSubtitle(
-                                "Use your Android device security to continue"
-                        )
-                        .setAllowedAuthenticators(
-                                BiometricManager.Authenticators.BIOMETRIC_STRONG
-                                        | BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                        )
-                        .build();
-
-        biometricPrompt.authenticate(
-                promptInfo
+                }
         );
     }
 
@@ -646,10 +684,6 @@ public class DeviceSecurityPlugin extends Plugin {
      * =========================================================
      * GET RECOVERY PUBLIC KEY
      * =========================================================
-     *
-     * This method deliberately performs each Keystore operation
-     * separately so native errors are diagnostic instead of being
-     * collapsed into a generic "unable to access key" message.
      */
     @PluginMethod
     public void getRecoveryPublicKey(
@@ -813,9 +847,6 @@ public class DeviceSecurityPlugin extends Plugin {
      *
      * CryptoObject authentication is restricted to
      * BIOMETRIC_STRONG.
-     *
-     * Device credential recovery is implemented separately in
-     * authenticateAndSignWithDeviceCredential().
      */
     @PluginMethod
     public void signChallenge(
@@ -850,313 +881,344 @@ public class DeviceSecurityPlugin extends Plugin {
         FragmentActivity fragmentActivity =
                 (FragmentActivity) activity;
 
-        try {
+        /*
+         * Explicitly run BiometricPrompt interaction on the
+         * Android main thread.
+         */
+        fragmentActivity.runOnUiThread(
+                () -> {
 
-            KeyStore keyStore =
-                    getAndroidKeyStore();
+                    try {
 
-            if (!keyStore.containsAlias(
-                    RECOVERY_KEY_ALIAS
-            )) {
+                        if (fragmentActivity.isFinishing()) {
 
-                call.reject(
-                        "GEO-SHUA Android recovery key does not exist. "
-                                + "Alias="
-                                + RECOVERY_KEY_ALIAS
-                );
-
-                return;
-            }
-
-            PrivateKey privateKey =
-                    getRecoveryPrivateKey(
-                            keyStore
-                    );
-
-            if (privateKey == null) {
-
-                call.reject(
-                        "Unable to access GEO-SHUA Android recovery private key."
-                );
-
-                return;
-            }
-
-            /*
-             * Prepare signature operation.
-             */
-            Signature signature =
-                    Signature.getInstance(
-                            SIGNATURE_ALGORITHM
-                    );
-
-            signature.initSign(
-                    privateKey
-            );
-
-            BiometricPrompt.CryptoObject cryptoObject =
-                    new BiometricPrompt.CryptoObject(
-                            signature
-                    );
-
-            Executor executor =
-                    ContextCompat.getMainExecutor(
-                            fragmentActivity
-                    );
-
-            BiometricPrompt.AuthenticationCallback callback =
-                    new BiometricPrompt.AuthenticationCallback() {
-
-                        @Override
-                        public void onAuthenticationSucceeded(
-                                @NonNull BiometricPrompt.AuthenticationResult result
-                        ) {
-
-                            super.onAuthenticationSucceeded(
-                                    result
+                            resolveFailure(
+                                    call,
+                                    "ACTIVITY_FINISHING",
+                                    "GEO-SHUA Android activity is finishing."
                             );
 
-                            try {
+                            return;
+                        }
 
-                                BiometricPrompt.CryptoObject authenticatedCrypto =
-                                        result.getCryptoObject();
+                        if (Build.VERSION.SDK_INT >=
+                                Build.VERSION_CODES.JELLY_BEAN_MR1
+                                && fragmentActivity.isDestroyed()) {
 
-                                if (authenticatedCrypto == null) {
+                            resolveFailure(
+                                    call,
+                                    "ACTIVITY_DESTROYED",
+                                    "GEO-SHUA Android activity has been destroyed."
+                            );
 
-                                    resolveFailure(
-                                            call,
-                                            "CRYPTO_OPERATION_UNAVAILABLE",
-                                            "Android did not return the authenticated cryptographic operation."
-                                    );
+                            return;
+                        }
 
-                                    return;
-                                }
+                        KeyStore keyStore =
+                                getAndroidKeyStore();
 
-                                Signature authenticatedSignature =
-                                        authenticatedCrypto.getSignature();
+                        if (!keyStore.containsAlias(
+                                RECOVERY_KEY_ALIAS
+                        )) {
 
-                                if (authenticatedSignature == null) {
+                            resolveFailure(
+                                    call,
+                                    "RECOVERY_KEY_NOT_FOUND",
+                                    "GEO-SHUA Android recovery key does not exist. Alias="
+                                            + RECOVERY_KEY_ALIAS
+                            );
 
-                                    resolveFailure(
-                                            call,
-                                            "SIGNATURE_OPERATION_UNAVAILABLE",
-                                            "Android did not return an authenticated signature operation."
-                                    );
+                            return;
+                        }
 
-                                    return;
-                                }
-
-                                authenticatedSignature.update(
-                                        challenge.getBytes(
-                                                StandardCharsets.UTF_8
-                                        )
+                        PrivateKey privateKey =
+                                getRecoveryPrivateKey(
+                                        keyStore
                                 );
 
-                                byte[] signedBytes =
-                                        authenticatedSignature.sign();
+                        if (privateKey == null) {
 
-                                KeyStore authenticatedKeyStore =
-                                        getAndroidKeyStore();
+                            resolveFailure(
+                                    call,
+                                    "PRIVATE_KEY_UNAVAILABLE",
+                                    "Unable to access GEO-SHUA Android recovery private key."
+                            );
 
-                                PublicKey publicKey =
-                                        getRecoveryPublicKeyFromKeyStore(
-                                                authenticatedKeyStore
+                            return;
+                        }
+
+                        /*
+                         * Prepare signature operation.
+                         */
+                        Signature signature =
+                                Signature.getInstance(
+                                        SIGNATURE_ALGORITHM
+                                );
+
+                        signature.initSign(
+                                privateKey
+                        );
+
+                        BiometricPrompt.CryptoObject cryptoObject =
+                                new BiometricPrompt.CryptoObject(
+                                        signature
+                                );
+
+                        Executor executor =
+                                ContextCompat.getMainExecutor(
+                                        fragmentActivity
+                                );
+
+                        BiometricPrompt.AuthenticationCallback callback =
+                                new BiometricPrompt.AuthenticationCallback() {
+
+                                    @Override
+                                    public void onAuthenticationSucceeded(
+                                            @NonNull BiometricPrompt.AuthenticationResult result
+                                    ) {
+
+                                        super.onAuthenticationSucceeded(
+                                                result
                                         );
 
-                                if (publicKey == null) {
+                                        try {
 
-                                    resolveFailure(
-                                            call,
-                                            "PUBLIC_KEY_UNAVAILABLE",
-                                            "Recovery signature succeeded, but Android could not retrieve the recovery public key."
-                                    );
+                                            BiometricPrompt.CryptoObject authenticatedCrypto =
+                                                    result.getCryptoObject();
 
-                                    return;
-                                }
+                                            if (authenticatedCrypto == null) {
 
-                                JSObject response =
-                                        new JSObject();
+                                                resolveFailure(
+                                                        call,
+                                                        "CRYPTO_OPERATION_UNAVAILABLE",
+                                                        "Android did not return the authenticated cryptographic operation."
+                                                );
 
-                                response.put(
-                                        "success",
-                                        true
+                                                return;
+                                            }
+
+                                            Signature authenticatedSignature =
+                                                    authenticatedCrypto.getSignature();
+
+                                            if (authenticatedSignature == null) {
+
+                                                resolveFailure(
+                                                        call,
+                                                        "SIGNATURE_OPERATION_UNAVAILABLE",
+                                                        "Android did not return an authenticated signature operation."
+                                                );
+
+                                                return;
+                                            }
+
+                                            authenticatedSignature.update(
+                                                    challenge.getBytes(
+                                                            StandardCharsets.UTF_8
+                                                    )
+                                            );
+
+                                            byte[] signedBytes =
+                                                    authenticatedSignature.sign();
+
+                                            KeyStore authenticatedKeyStore =
+                                                    getAndroidKeyStore();
+
+                                            PublicKey publicKey =
+                                                    getRecoveryPublicKeyFromKeyStore(
+                                                            authenticatedKeyStore
+                                                    );
+
+                                            if (publicKey == null) {
+
+                                                resolveFailure(
+                                                        call,
+                                                        "PUBLIC_KEY_UNAVAILABLE",
+                                                        "Recovery signature succeeded, but Android could not retrieve the recovery public key."
+                                                );
+
+                                                return;
+                                            }
+
+                                            byte[] encodedPublicKey =
+                                                    publicKey.getEncoded();
+
+                                            if (encodedPublicKey == null ||
+                                                    encodedPublicKey.length == 0) {
+
+                                                resolveFailure(
+                                                        call,
+                                                        "PUBLIC_KEY_ENCODING_UNAVAILABLE",
+                                                        "Recovery public key encoding is unavailable."
+                                                );
+
+                                                return;
+                                            }
+
+                                            JSObject response =
+                                                    new JSObject();
+
+                                            response.put(
+                                                    "success",
+                                                    true
+                                            );
+
+                                            response.put(
+                                                    "method",
+                                                    "android-biometric-crypto"
+                                            );
+
+                                            response.put(
+                                                    "algorithm",
+                                                    "ECDSA-SHA256"
+                                            );
+
+                                            response.put(
+                                                    "challenge",
+                                                    challenge
+                                            );
+
+                                            response.put(
+                                                    "signature",
+                                                    encodeBase64(
+                                                            signedBytes
+                                                    )
+                                            );
+
+                                            response.put(
+                                                    "publicKey",
+                                                    encodeBase64(
+                                                            encodedPublicKey
+                                                    )
+                                            );
+
+                                            response.put(
+                                                    "message",
+                                                    "Recovery challenge signed successfully with strong biometric authentication."
+                                            );
+
+                                            call.resolve(
+                                                    response
+                                            );
+
+                                        } catch (Exception error) {
+
+                                            resolveFailure(
+                                                    call,
+                                                    "BIOMETRIC_SIGNATURE_FAILED",
+                                                    "Unable to sign the recovery challenge with biometric authentication: "
+                                                            + error.getClass().getName()
+                                                            + ": "
+                                                            + safeErrorMessage(error)
+                                            );
+                                        }
+                                    }
+
+                                    @Override
+                                    public void onAuthenticationError(
+                                            int errorCode,
+                                            @NonNull CharSequence errString
+                                    ) {
+
+                                        super.onAuthenticationError(
+                                                errorCode,
+                                                errString
+                                        );
+
+                                        JSObject response =
+                                                new JSObject();
+
+                                        response.put(
+                                                "success",
+                                                false
+                                        );
+
+                                        response.put(
+                                                "code",
+                                                getAuthenticationErrorCode(
+                                                        errorCode
+                                                )
+                                        );
+
+                                        response.put(
+                                                "errorCode",
+                                                errorCode
+                                        );
+
+                                        response.put(
+                                                "message",
+                                                errString.toString()
+                                        );
+
+                                        response.put(
+                                                "method",
+                                                "android-biometric-crypto"
+                                        );
+
+                                        call.resolve(
+                                                response
+                                        );
+                                    }
+
+                                    @Override
+                                    public void onAuthenticationFailed() {
+
+                                        super.onAuthenticationFailed();
+
+                                        /*
+                                         * Do not resolve.
+                                         *
+                                         * Android can permit another
+                                         * biometric attempt.
+                                         */
+                                    }
+                                };
+
+                        BiometricPrompt biometricPrompt =
+                                new BiometricPrompt(
+                                        fragmentActivity,
+                                        executor,
+                                        callback
                                 );
 
-                                response.put(
-                                        "method",
-                                        "android-biometric-crypto"
-                                );
-
-                                response.put(
-                                        "algorithm",
-                                        "ECDSA-SHA256"
-                                );
-
-                                response.put(
-                                        "challenge",
-                                        challenge
-                                );
-
-                                response.put(
-                                        "signature",
-                                        encodeBase64(
-                                                signedBytes
+                        /*
+                         * IMPORTANT:
+                         *
+                         * CryptoObject authentication uses
+                         * BIOMETRIC_STRONG only.
+                         *
+                         * DEVICE_CREDENTIAL must NOT be added here.
+                         */
+                        BiometricPrompt.PromptInfo promptInfo =
+                                new BiometricPrompt.PromptInfo.Builder()
+                                        .setTitle(
+                                                "Confirm PIN recovery"
                                         )
-                                );
-
-                                response.put(
-                                        "publicKey",
-                                        encodeBase64(
-                                                publicKey.getEncoded()
+                                        .setSubtitle(
+                                                "Use your fingerprint or face to authorize PIN recovery"
                                         )
-                                );
+                                        .setAllowedAuthenticators(
+                                                BiometricManager.Authenticators.BIOMETRIC_STRONG
+                                        )
+                                        .build();
 
-                                response.put(
-                                        "message",
-                                        "Recovery challenge signed successfully with strong biometric authentication."
-                                );
+                        biometricPrompt.authenticate(
+                                promptInfo,
+                                cryptoObject
+                        );
 
-                                call.resolve(
-                                        response
-                                );
+                    } catch (Exception error) {
 
-                            } catch (Exception error) {
-
-                                resolveFailure(
-                                        call,
-                                        "BIOMETRIC_SIGNATURE_FAILED",
-                                        "Unable to sign the recovery challenge with biometric authentication: "
-                                                + error.getClass().getName()
-                                                + ": "
-                                                + safeErrorMessage(error)
-                                );
-                            }
-                        }
-
-                        @Override
-                        public void onAuthenticationError(
-                                int errorCode,
-                                @NonNull CharSequence errString
-                        ) {
-
-                            super.onAuthenticationError(
-                                    errorCode,
-                                    errString
-                            );
-
-                            JSObject response =
-                                    new JSObject();
-
-                            response.put(
-                                    "success",
-                                    false
-                            );
-
-                            response.put(
-                                    "code",
-                                    getAuthenticationErrorCode(
-                                            errorCode
-                                    )
-                            );
-
-                            response.put(
-                                    "errorCode",
-                                    errorCode
-                            );
-
-                            response.put(
-                                    "message",
-                                    errString.toString()
-                            );
-
-                            response.put(
-                                    "method",
-                                    "android-biometric-crypto"
-                            );
-
-                            call.resolve(
-                                    response
-                            );
-                        }
-
-                        @Override
-                        public void onAuthenticationFailed() {
-
-                            super.onAuthenticationFailed();
-
-                            /*
-                             * Do not resolve.
-                             *
-                             * Android can permit another biometric
-                             * attempt.
-                             */
-                        }
-                    };
-
-            BiometricPrompt biometricPrompt =
-                    new BiometricPrompt(
-                            fragmentActivity,
-                            executor,
-                            callback
-                    );
-
-            /*
-             * IMPORTANT:
-             *
-             * CryptoObject authentication uses BIOMETRIC_STRONG.
-             *
-             * Do NOT add DEVICE_CREDENTIAL here.
-             */
-            BiometricPrompt.PromptInfo promptInfo =
-                    new BiometricPrompt.PromptInfo.Builder()
-                            .setTitle(
-                                    "Confirm PIN recovery"
-                            )
-                            .setSubtitle(
-                                    "Use your fingerprint or face to authorize PIN recovery"
-                            )
-                            .setAllowedAuthenticators(
-                                    BiometricManager.Authenticators.BIOMETRIC_STRONG
-                            )
-                            .build();
-
-            biometricPrompt.authenticate(
-                    promptInfo,
-                    cryptoObject
-            );
-
-        } catch (Exception error) {
-
-            JSObject response =
-                    new JSObject();
-
-            response.put(
-                    "success",
-                    false
-            );
-
-            response.put(
-                    "code",
-                    "CRYPTO_AUTHENTICATION_UNAVAILABLE"
-            );
-
-            response.put(
-                    "message",
-                    "Unable to start GEO-SHUA Android cryptographic authentication: "
-                            + error.getClass().getName()
-                            + ": "
-                            + safeErrorMessage(error)
-            );
-
-            response.put(
-                    "method",
-                    "android-biometric-crypto"
-            );
-
-            call.resolve(
-                    response
-            );
-        }
+                        resolveFailure(
+                                call,
+                                "CRYPTO_AUTHENTICATION_UNAVAILABLE",
+                                "Unable to start GEO-SHUA Android cryptographic authentication: "
+                                        + error.getClass().getName()
+                                        + ": "
+                                        + safeErrorMessage(error)
+                        );
+                    }
+                }
+        );
     }
 
     /**
@@ -1171,11 +1233,27 @@ public class DeviceSecurityPlugin extends Plugin {
      * - device password
      * - strong biometric
      *
-     * This method intentionally does NOT use a CryptoObject.
+     * IMPORTANT:
+     *
+     * This method intentionally does NOT use CryptoObject.
      *
      * Android first authenticates the user through BiometricPrompt.
      * Immediately after successful authentication, the application
      * performs the Keystore signing operation.
+     *
+     * IMPORTANT FIX:
+     *
+     * BiometricPrompt and FragmentManager operations MUST be started
+     * from the Android main/UI thread.
+     *
+     * The previous implementation could execute this method from
+     * Capacitor's plugin/background thread, causing:
+     *
+     * java.lang.IllegalStateException:
+     * Must be called from main thread of fragment host
+     *
+     * Everything involved in creating and starting BiometricPrompt
+     * is therefore explicitly executed through runOnUiThread().
      */
     @PluginMethod
     public void authenticateAndSignWithDeviceCredential(
@@ -1210,284 +1288,390 @@ public class DeviceSecurityPlugin extends Plugin {
         FragmentActivity fragmentActivity =
                 (FragmentActivity) activity;
 
-        try {
+        /*
+         * CRITICAL:
+         *
+         * BiometricPrompt internally interacts with FragmentManager.
+         * Capacitor plugin calls are not guaranteed to originate on
+         * Android's main thread.
+         *
+         * Therefore the complete prompt startup is explicitly
+         * dispatched to the UI thread.
+         */
+        fragmentActivity.runOnUiThread(
+                () -> {
 
-            KeyStore keyStore =
-                    getAndroidKeyStore();
+                    try {
 
-            if (!keyStore.containsAlias(
-                    RECOVERY_KEY_ALIAS
-            )) {
+                        /*
+                         * Verify that the host activity is still valid.
+                         */
+                        if (fragmentActivity.isFinishing()) {
 
-                call.reject(
-                        "GEO-SHUA Android recovery key does not exist. "
-                                + "Alias="
-                                + RECOVERY_KEY_ALIAS
-                );
-
-                return;
-            }
-
-            /*
-             * Confirm that the private key can be located before
-             * displaying the authentication prompt.
-             */
-            PrivateKey privateKey =
-                    getRecoveryPrivateKey(
-                            keyStore
-                    );
-
-            if (privateKey == null) {
-
-                call.reject(
-                        "Unable to access GEO-SHUA Android recovery private key before device authentication."
-                );
-
-                return;
-            }
-
-            Executor executor =
-                    ContextCompat.getMainExecutor(
-                            fragmentActivity
-                    );
-
-            BiometricPrompt.AuthenticationCallback callback =
-                    new BiometricPrompt.AuthenticationCallback() {
-
-                        @Override
-                        public void onAuthenticationSucceeded(
-                                @NonNull BiometricPrompt.AuthenticationResult result
-                        ) {
-
-                            super.onAuthenticationSucceeded(
-                                    result
+                            resolveFailure(
+                                    call,
+                                    "ACTIVITY_FINISHING",
+                                    "GEO-SHUA Android activity is finishing."
                             );
 
-                            try {
-
-                                /*
-                                 * Reload Keystore immediately after
-                                 * authentication.
-                                 */
-                                KeyStore authenticatedKeyStore =
-                                        getAndroidKeyStore();
-
-                                PrivateKey authenticatedPrivateKey =
-                                        getRecoveryPrivateKey(
-                                                authenticatedKeyStore
-                                        );
-
-                                if (authenticatedPrivateKey == null) {
-
-                                    resolveFailure(
-                                            call,
-                                            "PRIVATE_KEY_UNAVAILABLE",
-                                            "Android device authentication succeeded, but the GEO-SHUA recovery private key is unavailable."
-                                    );
-
-                                    return;
-                                }
-
-                                /*
-                                 * Perform the signing operation immediately
-                                 * while the authentication validity window
-                                 * is active.
-                                 */
-                                Signature signature =
-                                        Signature.getInstance(
-                                                SIGNATURE_ALGORITHM
-                                        );
-
-                                signature.initSign(
-                                        authenticatedPrivateKey
-                                );
-
-                                signature.update(
-                                        challenge.getBytes(
-                                                StandardCharsets.UTF_8
-                                        )
-                                );
-
-                                byte[] signedBytes =
-                                        signature.sign();
-
-                                PublicKey publicKey =
-                                        getRecoveryPublicKeyFromKeyStore(
-                                                authenticatedKeyStore
-                                        );
-
-                                if (publicKey == null) {
-
-                                    resolveFailure(
-                                            call,
-                                            "PUBLIC_KEY_UNAVAILABLE",
-                                            "Device authentication succeeded and the challenge was signed, but the recovery public key could not be retrieved."
-                                    );
-
-                                    return;
-                                }
-
-                                JSObject response =
-                                        new JSObject();
-
-                                response.put(
-                                        "success",
-                                        true
-                                );
-
-                                response.put(
-                                        "method",
-                                        "android-device-credential"
-                                );
-
-                                response.put(
-                                        "algorithm",
-                                        "ECDSA-SHA256"
-                                );
-
-                                response.put(
-                                        "challenge",
-                                        challenge
-                                );
-
-                                response.put(
-                                        "signature",
-                                        encodeBase64(
-                                                signedBytes
-                                        )
-                                );
-
-                                response.put(
-                                        "publicKey",
-                                        encodeBase64(
-                                                publicKey.getEncoded()
-                                        )
-                                );
-
-                                response.put(
-                                        "message",
-                                        "Recovery challenge signed successfully with Android device authentication."
-                                );
-
-                                call.resolve(
-                                        response
-                                );
-
-                            } catch (Exception error) {
-
-                                resolveFailure(
-                                        call,
-                                        "DEVICE_CREDENTIAL_SIGNATURE_FAILED",
-                                        "Android authentication succeeded, but the recovery challenge could not be signed: "
-                                                + error.getClass().getName()
-                                                + ": "
-                                                + safeErrorMessage(error)
-                                );
-                            }
+                            return;
                         }
 
-                        @Override
-                        public void onAuthenticationError(
-                                int errorCode,
-                                @NonNull CharSequence errString
-                        ) {
+                        if (Build.VERSION.SDK_INT >=
+                                Build.VERSION_CODES.JELLY_BEAN_MR1
+                                && fragmentActivity.isDestroyed()) {
 
-                            super.onAuthenticationError(
-                                    errorCode,
-                                    errString
+                            resolveFailure(
+                                    call,
+                                    "ACTIVITY_DESTROYED",
+                                    "GEO-SHUA Android activity has been destroyed."
                             );
 
-                            JSObject response =
-                                    new JSObject();
+                            return;
+                        }
 
-                            response.put(
-                                    "success",
-                                    false
-                            );
+                        /*
+                         * Check that the requested authentication methods
+                         * are actually available before showing the prompt.
+                         */
+                        BiometricManager biometricManager =
+                                BiometricManager.from(
+                                        fragmentActivity
+                                );
 
-                            response.put(
-                                    "code",
-                                    getAuthenticationErrorCode(
-                                            errorCode
+                        int availability =
+                                biometricManager.canAuthenticate(
+                                        BiometricManager.Authenticators.BIOMETRIC_STRONG
+                                                | BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                                );
+
+                        if (availability !=
+                                BiometricManager.BIOMETRIC_SUCCESS) {
+
+                            resolveFailure(
+                                    call,
+                                    getAvailabilityCode(
+                                            availability
+                                    ),
+                                    getAvailabilityMessage(
+                                            availability
                                     )
                             );
 
-                            response.put(
-                                    "errorCode",
-                                    errorCode
-                            );
-
-                            response.put(
-                                    "method",
-                                    "android-device-credential"
-                            );
-
-                            response.put(
-                                    "message",
-                                    errString.toString()
-                            );
-
-                            call.resolve(
-                                    response
-                            );
+                            return;
                         }
 
-                        @Override
-                        public void onAuthenticationFailed() {
+                        /*
+                         * Verify that the recovery key exists before asking
+                         * the user for authentication.
+                         */
+                        KeyStore keyStore =
+                                getAndroidKeyStore();
 
-                            super.onAuthenticationFailed();
+                        if (!keyStore.containsAlias(
+                                RECOVERY_KEY_ALIAS
+                        )) {
 
-                            /*
-                             * Do not resolve.
-                             */
+                            resolveFailure(
+                                    call,
+                                    "RECOVERY_KEY_NOT_FOUND",
+                                    "GEO-SHUA Android recovery key does not exist. Alias="
+                                            + RECOVERY_KEY_ALIAS
+                            );
+
+                            return;
                         }
-                    };
 
-            BiometricPrompt biometricPrompt =
-                    new BiometricPrompt(
-                            fragmentActivity,
-                            executor,
-                            callback
-                    );
+                        /*
+                         * We intentionally DO NOT retrieve and hold the
+                         * PrivateKey before authentication.
+                         *
+                         * The key is retrieved immediately after successful
+                         * authentication so that the Keystore operation
+                         * occurs as close as possible to the authentication
+                         * event.
+                         */
 
-            /*
-             * NO CryptoObject.
-             *
-             * This allows Android to provide:
-             *
-             * - fingerprint
-             * - face
-             * - PIN
-             * - pattern
-             * - password
-             */
-            BiometricPrompt.PromptInfo promptInfo =
-                    new BiometricPrompt.PromptInfo.Builder()
-                            .setTitle(
-                                    "Confirm PIN recovery"
-                            )
-                            .setSubtitle(
-                                    "Use your fingerprint, face, PIN, pattern, or password"
-                            )
-                            .setAllowedAuthenticators(
-                                    BiometricManager.Authenticators.BIOMETRIC_STRONG
-                                            | BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                            )
-                            .build();
+                        Executor executor =
+                                ContextCompat.getMainExecutor(
+                                        fragmentActivity
+                                );
 
-            biometricPrompt.authenticate(
-                    promptInfo
-            );
+                        BiometricPrompt.AuthenticationCallback callback =
+                                new BiometricPrompt.AuthenticationCallback() {
 
-        } catch (Exception error) {
+                                    @Override
+                                    public void onAuthenticationSucceeded(
+                                            @NonNull BiometricPrompt.AuthenticationResult result
+                                    ) {
 
-            call.reject(
-                    "Unable to start GEO-SHUA Android device-credential recovery: "
-                            + error.getClass().getName()
-                            + ": "
-                            + safeErrorMessage(error)
-            );
-        }
+                                        super.onAuthenticationSucceeded(
+                                                result
+                                        );
+
+                                        try {
+
+                                            /*
+                                             * Reload Keystore immediately
+                                             * after successful authentication.
+                                             */
+                                            KeyStore authenticatedKeyStore =
+                                                    getAndroidKeyStore();
+
+                                            PrivateKey authenticatedPrivateKey =
+                                                    getRecoveryPrivateKey(
+                                                            authenticatedKeyStore
+                                                    );
+
+                                            if (authenticatedPrivateKey == null) {
+
+                                                resolveFailure(
+                                                        call,
+                                                        "PRIVATE_KEY_UNAVAILABLE",
+                                                        "Android device authentication succeeded, but the GEO-SHUA recovery private key is unavailable."
+                                                );
+
+                                                return;
+                                            }
+
+                                            /*
+                                             * Perform the signing operation
+                                             * immediately while the Android
+                                             * Keystore authentication-validity
+                                             * window is active.
+                                             */
+                                            Signature signature =
+                                                    Signature.getInstance(
+                                                            SIGNATURE_ALGORITHM
+                                                    );
+
+                                            signature.initSign(
+                                                    authenticatedPrivateKey
+                                            );
+
+                                            signature.update(
+                                                    challenge.getBytes(
+                                                            StandardCharsets.UTF_8
+                                                    )
+                                            );
+
+                                            byte[] signedBytes =
+                                                    signature.sign();
+
+                                            /*
+                                             * Retrieve the public key from
+                                             * the same authenticated Keystore.
+                                             */
+                                            PublicKey publicKey =
+                                                    getRecoveryPublicKeyFromKeyStore(
+                                                            authenticatedKeyStore
+                                                    );
+
+                                            if (publicKey == null) {
+
+                                                resolveFailure(
+                                                        call,
+                                                        "PUBLIC_KEY_UNAVAILABLE",
+                                                        "Device authentication succeeded and the challenge was signed, but the recovery public key could not be retrieved."
+                                                );
+
+                                                return;
+                                            }
+
+                                            byte[] encodedPublicKey =
+                                                    publicKey.getEncoded();
+
+                                            if (encodedPublicKey == null ||
+                                                    encodedPublicKey.length == 0) {
+
+                                                resolveFailure(
+                                                        call,
+                                                        "PUBLIC_KEY_ENCODING_UNAVAILABLE",
+                                                        "Device authentication succeeded, but the recovery public key encoding is unavailable."
+                                                );
+
+                                                return;
+                                            }
+
+                                            JSObject response =
+                                                    new JSObject();
+
+                                            response.put(
+                                                    "success",
+                                                    true
+                                            );
+
+                                            response.put(
+                                                    "method",
+                                                    "android-device-credential"
+                                            );
+
+                                            response.put(
+                                                    "algorithm",
+                                                    "ECDSA-SHA256"
+                                            );
+
+                                            response.put(
+                                                    "challenge",
+                                                    challenge
+                                            );
+
+                                            response.put(
+                                                    "signature",
+                                                    encodeBase64(
+                                                            signedBytes
+                                                    )
+                                            );
+
+                                            response.put(
+                                                    "publicKey",
+                                                    encodeBase64(
+                                                            encodedPublicKey
+                                                    )
+                                            );
+
+                                            response.put(
+                                                    "message",
+                                                    "Recovery challenge signed successfully with Android device authentication."
+                                            );
+
+                                            call.resolve(
+                                                    response
+                                            );
+
+                                        } catch (Exception error) {
+
+                                            resolveFailure(
+                                                    call,
+                                                    "DEVICE_CREDENTIAL_SIGNATURE_FAILED",
+                                                    "Android authentication succeeded, but the recovery challenge could not be signed: "
+                                                            + error.getClass().getName()
+                                                            + ": "
+                                                            + safeErrorMessage(error)
+                                            );
+                                        }
+                                    }
+
+                                    @Override
+                                    public void onAuthenticationError(
+                                            int errorCode,
+                                            @NonNull CharSequence errString
+                                    ) {
+
+                                        super.onAuthenticationError(
+                                                errorCode,
+                                                errString
+                                        );
+
+                                        JSObject response =
+                                                new JSObject();
+
+                                        response.put(
+                                                "success",
+                                                false
+                                        );
+
+                                        response.put(
+                                                "code",
+                                                getAuthenticationErrorCode(
+                                                        errorCode
+                                                )
+                                        );
+
+                                        response.put(
+                                                "errorCode",
+                                                errorCode
+                                        );
+
+                                        response.put(
+                                                "method",
+                                                "android-device-credential"
+                                        );
+
+                                        response.put(
+                                                "message",
+                                                errString.toString()
+                                        );
+
+                                        call.resolve(
+                                                response
+                                        );
+                                    }
+
+                                    @Override
+                                    public void onAuthenticationFailed() {
+
+                                        super.onAuthenticationFailed();
+
+                                        /*
+                                         * Do not resolve.
+                                         *
+                                         * Android may allow another
+                                         * authentication attempt.
+                                         */
+                                    }
+                                };
+
+                        /*
+                         * BiometricPrompt construction MUST also happen
+                         * on the main thread.
+                         */
+                        BiometricPrompt biometricPrompt =
+                                new BiometricPrompt(
+                                        fragmentActivity,
+                                        executor,
+                                        callback
+                                );
+
+                        /*
+                         * NO CryptoObject.
+                         *
+                         * This permits Android to provide:
+                         *
+                         * - fingerprint
+                         * - face
+                         * - PIN
+                         * - pattern
+                         * - password
+                         */
+                        BiometricPrompt.PromptInfo promptInfo =
+                                new BiometricPrompt.PromptInfo.Builder()
+                                        .setTitle(
+                                                "Confirm PIN recovery"
+                                        )
+                                        .setSubtitle(
+                                                "Use your fingerprint, face, PIN, pattern, or password"
+                                        )
+                                        .setAllowedAuthenticators(
+                                                BiometricManager.Authenticators.BIOMETRIC_STRONG
+                                                        | BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                                        )
+                                        .build();
+
+                        /*
+                         * CRITICAL:
+                         *
+                         * authenticate() is also executed on the main
+                         * thread because this entire block is inside
+                         * runOnUiThread().
+                         */
+                        biometricPrompt.authenticate(
+                                promptInfo
+                        );
+
+                    } catch (Exception error) {
+
+                        resolveFailure(
+                                call,
+                                "DEVICE_CREDENTIAL_AUTHENTICATION_UNAVAILABLE",
+                                "Unable to start GEO-SHUA Android device-credential recovery: "
+                                        + error.getClass().getName()
+                                        + ": "
+                                        + safeErrorMessage(error)
+                        );
+                    }
+                }
+        );
     }
 
     /**
