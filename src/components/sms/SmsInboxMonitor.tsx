@@ -1,11 +1,9 @@
-
 "use client";
 
 import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  Clock3,
   Inbox,
   Loader2,
   RefreshCw,
@@ -34,8 +32,14 @@ import SmsReader, {
 
 const PROCESS_URL = "/api/sms/process";
 
-const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
-
+/*
+ * These terms are only a LOCAL candidate filter.
+ *
+ * IMPORTANT:
+ * The server remains authoritative.
+ * A message passing this filter does NOT mean
+ * it is financially valid.
+ */
 const FINANCIAL_TERMS = [
   "kes",
   "ksh",
@@ -75,7 +79,7 @@ type ProcessResult = {
   response?: unknown;
 };
 
-type SweepStats = {
+type ProcessStats = {
   inbox: number;
   candidates: number;
   submitted: number;
@@ -100,11 +104,44 @@ function isFinancialCandidate(
   sms: SmsMessage,
 ): boolean {
   const text =
-    `${sms.address ?? ""} ${sms.body}`.toLowerCase();
+    `${sms.address ?? ""} ${sms.body ?? ""}`.toLowerCase();
 
   return FINANCIAL_TERMS.some((term) =>
     text.includes(term),
   );
+}
+
+/*
+ * Creates a deterministic local key for the Android
+ * inbox row.
+ *
+ * We prefer the native SMS _id.
+ *
+ * If Android does not provide an id, we fall back to
+ * address + date + body.
+ *
+ * This is ONLY used to prevent submitting the same
+ * inbox row twice during a single foreground run.
+ *
+ * The server remains responsible for financial
+ * idempotency.
+ */
+function getLocalSmsKey(
+  sms: SmsMessage,
+): string {
+  if (
+    sms.id !== undefined &&
+    sms.id !== null &&
+    String(sms.id).trim()
+  ) {
+    return `id:${String(sms.id)}`;
+  }
+
+  return [
+    `address:${sms.address ?? ""}`,
+    `date:${sms.date}`,
+    `body:${sms.body ?? ""}`,
+  ].join("|");
 }
 
 function formatTime(
@@ -165,17 +202,6 @@ function truncate(
 function extractReaderError(
   error: unknown,
 ): ReaderError {
-  /*
-   * Capacitor native errors normally look approximately
-   * like:
-   *
-   * {
-   *   message: "...",
-   *   code: "...",
-   *   data: {...}
-   * }
-   */
-
   if (
     error &&
     typeof error === "object"
@@ -259,7 +285,7 @@ export default function SmsInboxMonitor() {
     useState<MonitorStatus>("idle");
 
   const [stats, setStats] =
-    useState<SweepStats>({
+    useState<ProcessStats>({
       inbox: 0,
       candidates: 0,
       submitted: 0,
@@ -281,15 +307,46 @@ export default function SmsInboxMonitor() {
   const [readerError, setReaderError] =
     useState<ReaderError | null>(null);
 
+  /*
+   * Prevents two foreground processing operations
+   * from running at the same time.
+   */
   const runningRef =
     useRef(false);
 
-  /* =======================================================
-     SWEEP
-  ======================================================= */
+  /*
+   * Prevents the automatic startup processing from
+   * running more than once for the current mounted
+   * component instance.
+   */
+  const startupProcessedRef =
+    useRef(false);
 
-  const sweepInbox =
+  /* =======================================================
+     PROCESS INBOX
+     
+     This function may be triggered by:
+
+     1. Automatic foreground startup
+     2. Manual "Process SMS" button
+
+     There is deliberately NO:
+
+     - Android BroadcastReceiver
+     - background service
+     - background task
+     - sweep receiver
+     - interval
+     - periodic polling
+     ======================================================= */
+
+  const processInbox =
     useCallback(async () => {
+      /*
+       * SMS reading is Android-native functionality.
+       *
+       * On web/PWA browser builds this simply does nothing.
+       */
       if (
         runningRef.current ||
         !Capacitor.isNativePlatform()
@@ -303,7 +360,7 @@ export default function SmsInboxMonitor() {
       setReaderError(null);
 
       console.log(
-        "GEO-SHUA SMS: starting inbox sweep...",
+        "GEO-SHUA SMS: foreground inbox processing started.",
       );
 
       try {
@@ -344,11 +401,6 @@ export default function SmsInboxMonitor() {
             nativeError.data,
           );
 
-          console.error(
-            "GEO-SHUA SMS: native error raw:",
-            nativeError.raw,
-          );
-
           setReaderError(
             nativeError,
           );
@@ -365,8 +417,7 @@ export default function SmsInboxMonitor() {
         }
 
         console.log(
-          "GEO-SHUA SMS: native readInbox returned:",
-          inboxResult,
+          "GEO-SHUA SMS: native readInbox returned.",
         );
 
         console.log(
@@ -390,8 +441,39 @@ export default function SmsInboxMonitor() {
           messages.length,
         );
 
+        /*
+         * Prevent duplicate Android inbox rows from being
+         * submitted more than once during this run.
+         */
+        const uniqueMessages: SmsMessage[] =
+          [];
+
+        const seenSmsKeys =
+          new Set<string>();
+
+        for (
+          const sms of messages
+        ) {
+          const key =
+            getLocalSmsKey(sms);
+
+          if (
+            seenSmsKeys.has(key)
+          ) {
+            continue;
+          }
+
+          seenSmsKeys.add(key);
+          uniqueMessages.push(sms);
+        }
+
+        console.log(
+          "GEO-SHUA SMS: unique inbox message count:",
+          uniqueMessages.length,
+        );
+
         const candidates =
-          messages.filter(
+          uniqueMessages.filter(
             isFinancialCandidate,
           );
 
@@ -416,6 +498,28 @@ export default function SmsInboxMonitor() {
         for (
           const sms of candidates
         ) {
+          /*
+           * Basic local validation.
+           *
+           * The server remains authoritative.
+           */
+          if (
+            !sms.body ||
+            !sms.body.trim() ||
+            !sms.date ||
+            sms.date <= 0
+          ) {
+            failed += 1;
+
+            nextResults.push({
+              sms,
+              error:
+                "SMS has invalid body or date.",
+            });
+
+            continue;
+          }
+
           submitted += 1;
 
           console.log(
@@ -485,6 +589,12 @@ export default function SmsInboxMonitor() {
             const wasProcessed =
               payload.processed === true;
 
+            /*
+             * The API can legitimately return an ignored
+             * or duplicate result with HTTP 200.
+             *
+             * These are NOT failures.
+             */
             if (wasDuplicate) {
               duplicate += 1;
             } else if (wasIgnored) {
@@ -494,9 +604,7 @@ export default function SmsInboxMonitor() {
               response.ok
             ) {
               processed += 1;
-            } else if (
-              !response.ok
-            ) {
+            } else {
               failed += 1;
             }
 
@@ -504,32 +612,44 @@ export default function SmsInboxMonitor() {
               sms,
               httpStatus:
                 response.status,
+
               status:
                 typeof payload.status ===
                 "string"
                   ? payload.status
                   : undefined,
+
               type:
                 typeof payload.type ===
                 "string"
                   ? payload.type
                   : undefined,
+
               financialChange:
                 payload.financialChange ===
                 true,
+
               duplicate:
                 wasDuplicate,
+
               ignored:
                 wasIgnored,
+
               processed:
                 wasProcessed,
+
               error:
                 typeof payload.error ===
                 "string"
                   ? payload.error
                   : !response.ok
                     ? `Request failed (${response.status})`
-                    : undefined,
+                    : !wasDuplicate &&
+                        !wasIgnored &&
+                        !wasProcessed
+                      ? "Server returned an unknown processing result."
+                      : undefined,
+
               response: data,
             });
           } catch (error) {
@@ -560,20 +680,31 @@ export default function SmsInboxMonitor() {
            STEP 4 — UPDATE STATE
         ================================================= */
 
-        const nextStats: SweepStats = {
+        const nextStats: ProcessStats = {
+          /*
+           * Display the unique inbox count because that is
+           * the number of distinct SMS rows considered by
+           * this foreground run.
+           */
           inbox:
-            messages.length,
+            uniqueMessages.length,
+
           candidates:
             candidates.length,
+
           submitted,
+
           processed,
+
           duplicate,
+
           ignored,
+
           failed,
         };
 
         console.log(
-          "GEO-SHUA SMS: sweep complete:",
+          "GEO-SHUA SMS: foreground processing complete:",
           nextStats,
         );
 
@@ -593,7 +724,7 @@ export default function SmsInboxMonitor() {
             : String(error);
 
         console.error(
-          "GEO-SHUA SMS: unexpected sweep failure:",
+          "GEO-SHUA SMS: unexpected processing failure:",
           error,
         );
 
@@ -613,14 +744,24 @@ export default function SmsInboxMonitor() {
         runningRef.current = false;
 
         console.log(
-          "GEO-SHUA SMS: sweep finished.",
+          "GEO-SHUA SMS: foreground inbox processing finished.",
         );
       }
     }, []);
 
   /* =======================================================
-     INITIAL SWEEP
-  ======================================================= */
+     AUTOMATIC APP-OPEN PROCESSING
+
+     Runs once when this component mounts in the
+     foreground.
+
+     There is deliberately NO interval.
+
+     If the component is later unmounted and mounted
+     again, a new instance may perform another app-open
+     read. Server-side idempotency protects previously
+     processed financial SMS messages.
+     ======================================================= */
 
   useEffect(() => {
     if (
@@ -629,19 +770,20 @@ export default function SmsInboxMonitor() {
       return;
     }
 
-    void sweepInbox();
+    if (
+      startupProcessedRef.current
+    ) {
+      return;
+    }
 
-    const interval =
-      window.setInterval(
-        () => {
-          void sweepInbox();
-        },
-        SWEEP_INTERVAL_MS,
-      );
+    startupProcessedRef.current = true;
 
-    return () =>
-      window.clearInterval(interval);
-  }, [sweepInbox]);
+    console.log(
+      "GEO-SHUA SMS: app-open foreground processing.",
+    );
+
+    void processInbox();
+  }, [processInbox]);
 
   /* =======================================================
      PRESENTATION
@@ -660,29 +802,31 @@ export default function SmsInboxMonitor() {
 
   const statusLabel =
     isScanning
-      ? "Checking messages…"
+      ? "Processing messages…"
       : hasReaderError
         ? "SMS reader unavailable"
         : hasAttention
           ? "Needs attention"
           : status === "synced"
-            ? "Up to date"
+            ? "Processing complete"
             : "Ready";
 
   const statusDescription =
     isScanning
-      ? "Checking Android inbox"
+      ? "Reading the Android inbox and checking payment messages"
       : hasReaderError
         ? "Android could not read the SMS inbox"
         : hasAttention
           ? "Some payment messages could not be processed"
           : status === "synced"
             ? stats.processed > 0
-              ? `${stats.processed} payment${stats.processed === 1 ? "" : "s"} checked`
+              ? `${stats.processed} payment${stats.processed === 1 ? "" : "s"} processed`
               : stats.duplicate > 0
-                ? "Payments already synced"
-                : "Payment messages checked"
-            : "Payment messages are monitored automatically";
+                ? "Payments already synchronized"
+                : stats.ignored > 0
+                  ? "Payment messages checked"
+                  : "Inbox checked"
+            : "SMS payments are checked when the app opens";
 
   const successfulCount =
     stats.processed +
@@ -730,7 +874,9 @@ export default function SmsInboxMonitor() {
         shadow-[0_12px_40px_rgba(0,0,0,0.18)]
       "
     >
-      {/* HEADER */}
+      {/* =================================================
+          HEADER
+      ================================================= */}
 
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
@@ -778,45 +924,61 @@ export default function SmsInboxMonitor() {
             </div>
 
             <p className="mt-0.5 text-[12px] text-slate-500">
-              Automatic payment monitoring
+              App-open foreground processing
             </p>
           </div>
         </div>
 
+        {/* =================================================
+            MANUAL PROCESS BUTTON
+        ================================================= */}
+
         <button
           type="button"
           onClick={() =>
-            void sweepInbox()
+            void processInbox()
           }
           disabled={isScanning}
-          aria-label="Refresh SMS payments"
+          aria-label="Process SMS payments"
           className="
-            flex h-9 w-9 shrink-0
-            items-center justify-center
+            flex h-9 shrink-0
+            items-center gap-1.5
             rounded-xl
-            border border-slate-800
-            bg-slate-900/70
-            text-slate-400
+            border border-blue-500/30
+            bg-blue-500/10
+            px-3
+            text-[11px]
+            font-medium
+            text-blue-400
             transition
-            hover:border-slate-700
-            hover:text-white
-            active:scale-95
+            hover:border-blue-400/50
+            hover:bg-blue-500/15
+            hover:text-blue-300
+            active:scale-[0.98]
             disabled:cursor-not-allowed
             disabled:opacity-50
           "
         >
           <RefreshCw
-            size={16}
+            size={14}
             className={
               isScanning
                 ? "animate-spin"
                 : ""
             }
           />
+
+          <span>
+            {isScanning
+              ? "Processing"
+              : "Process SMS"}
+          </span>
         </button>
       </div>
 
-      {/* STATUS */}
+      {/* =================================================
+          STATUS
+      ================================================= */}
 
       <div
         className="
@@ -865,7 +1027,9 @@ export default function SmsInboxMonitor() {
         )}
       </div>
 
-      {/* NATIVE ERROR */}
+      {/* =================================================
+          NATIVE ERROR
+      ================================================= */}
 
       {hasReaderError && (
         <div
@@ -894,13 +1058,9 @@ export default function SmsInboxMonitor() {
                 Android SMS reader error
               </p>
 
-              {/* MESSAGE */}
-
               <p className="mt-1 break-words text-[11px] leading-4 text-slate-300">
                 {readerError.message}
               </p>
-
-              {/* CODE */}
 
               {readerError.code && (
                 <div className="mt-2">
@@ -913,8 +1073,6 @@ export default function SmsInboxMonitor() {
                   </p>
                 </div>
               )}
-
-              {/* DATA */}
 
               {readerError.data !==
                 undefined && (
@@ -941,8 +1099,6 @@ export default function SmsInboxMonitor() {
                   </pre>
                 </div>
               )}
-
-              {/* RAW ERROR */}
 
               <details className="mt-2">
                 <summary className="cursor-pointer text-[9px] text-slate-600">
@@ -971,12 +1127,15 @@ export default function SmsInboxMonitor() {
         </div>
       )}
 
-      {/* METRICS */}
+      {/* =================================================
+          METRICS
+      ================================================= */}
 
       <div className="mt-3 grid grid-cols-3 gap-2">
         <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
           <div className="flex items-center gap-1.5 text-slate-500">
             <Inbox size={12} />
+
             <span className="text-[10px]">
               Inbox
             </span>
@@ -990,6 +1149,7 @@ export default function SmsInboxMonitor() {
         <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
           <div className="flex items-center gap-1.5 text-slate-500">
             <CheckCircle2 size={12} />
+
             <span className="text-[10px]">
               Synced
             </span>
@@ -1002,19 +1162,22 @@ export default function SmsInboxMonitor() {
 
         <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
           <div className="flex items-center gap-1.5 text-slate-500">
-            <Clock3 size={12} />
+            <ShieldCheck size={12} />
+
             <span className="text-[10px]">
-              Next
+              Failed
             </span>
           </div>
 
-          <p className="mt-1 text-[12px] font-semibold tracking-tight text-white">
-            5 min
+          <p className="mt-1 text-base font-semibold tracking-tight text-white">
+            {stats.failed}
           </p>
         </div>
       </div>
 
-      {/* RECENT ACTIVITY */}
+      {/* =================================================
+          RECENT ACTIVITY
+      ================================================= */}
 
       {latestResults.length > 0 && (
         <div className="mt-4">
@@ -1034,7 +1197,7 @@ export default function SmsInboxMonitor() {
 
               <p className="mt-1 text-[12px] text-slate-400">
                 {latestResults.length} recent
-                payment message
+                payment
                 {latestResults.length ===
                 1
                   ? ""
@@ -1057,14 +1220,15 @@ export default function SmsInboxMonitor() {
                 (item, index) => {
                   const success =
                     item.processed ||
-                    item.duplicate;
+                    item.duplicate ||
+                    item.ignored;
 
                   const failed =
                     !!item.error;
 
                   return (
                     <div
-                      key={`${item.sms.id ?? item.sms.date}-${index}`}
+                      key={`${getLocalSmsKey(item.sms)}-${index}`}
                       className="
                         rounded-2xl
                         border border-slate-800/70
@@ -1116,7 +1280,7 @@ export default function SmsInboxMonitor() {
                             )}
                           </p>
 
-                          <div className="mt-2 flex items-center gap-2">
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
                             <span
                               className={`
                                 rounded-md px-1.5 py-0.5
@@ -1134,7 +1298,7 @@ export default function SmsInboxMonitor() {
                                   ? item.type ||
                                     "Processed"
                                   : item.ignored
-                                    ? "Not a payment"
+                                    ? "Ignored"
                                     : "Needs attention"}
                             </span>
 
@@ -1161,7 +1325,9 @@ export default function SmsInboxMonitor() {
         </div>
       )}
 
-      {/* FOOTER */}
+      {/* =================================================
+          FOOTER
+      ================================================= */}
 
       <div className="mt-4 flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-slate-600">
@@ -1173,7 +1339,7 @@ export default function SmsInboxMonitor() {
         </div>
 
         <span className="text-[10px] text-slate-700">
-          Automatic
+          Foreground only
         </span>
       </div>
     </section>
