@@ -1,469 +1,248 @@
 "use client";
 
 import {
-  useCallback,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
-
-import {
   ArrowRight,
   Bell,
+  CheckCircle2,
   Eye,
   EyeOff,
-  FileText,
   Fingerprint,
   HandCoins,
   LayoutDashboard,
+  LockKeyhole,
   RefreshCw,
   ShieldCheck,
-  Sparkles,
   Users,
   Wallet,
 } from "lucide-react";
 
-import { useRouter } from "next/navigation";
-import { Capacitor } from "@capacitor/core";
-
-import SmsInboxMonitor from "@/components/sms/SmsInboxMonitor";
-import TopBar from "@/components/dashboard/TopBar";
-
 import {
-  createAndroidRecoveryKey,
-  getAndroidRecoveryPublicKey,
-  hasAndroidRecoveryKey,
-  signAndroidRecoveryChallenge,
-} from "@/lib/auth/androidDeviceSecurity";
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from "react";
+
+import { useRouter } from "next/navigation";
 
 /* =========================================================
    TYPES
 ========================================================= */
 
-type DashboardStats = {
+interface DashboardStats {
   members: number;
   activeMembers: number;
-
-  savings: number;
-  deposits: number;
-  withdrawals: number;
-  reversals: number;
-
   loans: number;
   outstandingLoans: number;
   defaulters: number;
+  unreadNotifications: number;
+  savingsBalance: number;
+  totalDeposits: number;
+  totalWithdrawals: number;
+  totalReversals: number;
+}
 
-  notifications: number;
-};
-
-type DashboardActivity = {
+interface DashboardActivity {
   id: string;
   title: string;
   description: string;
-  time: string;
+  amount?: number;
+  date?: string;
   type:
     | "member"
-    | "saving"
+    | "savings"
     | "loan"
     | "notification";
-};
+}
 
-type SavingsSummary = {
-  totalBalance?: unknown;
-  totalDeposits?: unknown;
+interface SavingsSummary {
+  balance?: number;
+  totalBalance?: number;
+  totalDeposits?: number;
+  totalWithdrawals?: number;
+  totalReversals?: number;
+}
 
-  /*
-   * Backend/domain name remains "totalAdjustments".
-   * UI presents this as "Withdrawals".
-   */
-  totalAdjustments?: unknown;
-
-  totalReversals?: unknown;
-  memberCount?: unknown;
-};
-
-type ApiResponse<T = unknown> = {
+interface ApiResponse<T> {
   success?: boolean;
   data?: T;
+  items?: T;
+  results?: T;
+  message?: string;
   error?: string;
-};
+}
 
-type MemberRecord = {
-  id?: string;
+interface MemberRecord {
   _id?: string;
-
-  firstName?: string;
-  middleName?: string;
-  lastName?: string;
-
-  name?: string;
-  fullName?: string;
-
-  status?: string;
-  isActive?: boolean;
-
-  createdAt?: string;
-  updatedAt?: string;
-};
-
-type LoanRecord = {
   id?: string;
-  _id?: string;
-
-  status?: string;
-  loanStatus?: string;
-
-  outstandingBalance?: unknown;
-  balance?: unknown;
-  remainingBalance?: unknown;
-
-  createdAt?: string;
-  updatedAt?: string;
-
-  memberName?: string;
   memberId?: string;
+  membershipNumber?: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  status?: string;
+  createdAt?: string;
+}
 
-  loanNumber?: string;
-};
-
-type NotificationRecord = {
-  id?: string;
+interface LoanRecord {
   _id?: string;
+  id?: string;
+  loanId?: string;
+  memberId?: string;
+  status?: string;
+  amount?: number;
+  principal?: number;
+  outstandingBalance?: number;
+  balance?: number;
+  createdAt?: string;
+}
 
+interface NotificationRecord {
+  _id?: string;
+  id?: string;
   title?: string;
   message?: string;
-  description?: string;
-
-  createdAt?: string;
-  updatedAt?: string;
-
   read?: boolean;
-  status?: string;
-};
+  isRead?: boolean;
+  createdAt?: string;
+}
 
 type SecurityMethod = "pin" | "device";
 
-type SecurityStatusResponse = {
+interface SecurityVerifyResponse {
   success?: boolean;
+  verified?: boolean;
+  error?: string;
+  message?: string;
+  code?: string;
+  retryAfterSeconds?: number;
+}
+
+interface SecurityStatusResponse {
   authenticated?: boolean;
   configured?: boolean;
   verified?: boolean;
-  error?: string;
-};
-
-type SecuritySetupResponse = {
-  success?: boolean;
-  error?: string;
-};
-
-type SecurityVerifyResponse = {
-  success?: boolean;
-  verified?: boolean;
-  error?: string;
+  locked?: boolean;
   retryAfterSeconds?: number;
-};
-
-type WebAuthnOptionsResponse = {
-  success?: boolean;
   error?: string;
-  publicKey?: PublicKeyCredentialRequestOptionsJSON;
-};
-
-type PublicKeyCredentialRequestOptionsJSON = {
-  challenge: string;
-  timeout?: number;
-  rpId?: string;
-  allowCredentials?: Array<{
-    id: string;
-    type: PublicKeyCredentialType;
-    transports?: AuthenticatorTransport[];
-  }>;
-  userVerification?: UserVerificationRequirement;
-};
-
-/* =========================================================
-   ANDROID DEVICE RECOVERY TYPES
-========================================================= */
-
-type DeviceRecoveryOptionsResponse = {
-  success?: boolean;
-  registered?: boolean;
-  platform?: string;
-  algorithm?: string;
-  error?: string;
-};
-
-type DeviceRecoveryChallengeResponse = {
-  success?: boolean;
-  challenge?: string;
-  challengeId?: string;
-  expiresAt?: string;
-  expiresInSeconds?: number;
-  platform?: string;
-  algorithm?: string;
-  error?: string;
-};
-
-type DeviceRecoveryVerifyResponse = {
-  success?: boolean;
-  authorizationToken?: string;
-  expiresAt?: string;
-  expiresInSeconds?: number;
-  platform?: string;
-  algorithm?: string;
-  error?: string;
-};
-
-type DeviceRecoveryResetResponse = {
-  success?: boolean;
-  reset?: boolean;
-  method?: string;
-  platform?: string;
   message?: string;
-  requiresVerification?: boolean;
+}
+
+interface SecuritySetupResponse {
+  success?: boolean;
+  configured?: boolean;
   error?: string;
-};
+  message?: string;
+}
 
 /* =========================================================
-   DEFAULTS
+   HELPERS
 ========================================================= */
 
-const DEFAULT_STATS: DashboardStats = {
-  members: 0,
-  activeMembers: 0,
-
-  savings: 0,
-  deposits: 0,
-  withdrawals: 0,
-  reversals: 0,
-
-  loans: 0,
-  outstandingLoans: 0,
-  defaulters: 0,
-
-  notifications: 0,
-};
-
-/* =========================================================
-   SAFE HELPERS
-========================================================= */
-
-function safeNumber(value: unknown): number {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number(value);
-
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  return 0;
-}
-
-function getId(
-  item: {
-    id?: string;
-    _id?: string;
-  },
-  fallback: string,
-): string {
-  return item.id || item._id || fallback;
-}
-
-function getDate(
-  item: {
-    createdAt?: string;
-    updatedAt?: string;
-  },
-): string {
-  return item.createdAt || item.updatedAt || "";
-}
-
-function formatRelativeTime(value: string): string {
-  if (!value) {
-    return "";
-  }
-
-  const timestamp = new Date(value).getTime();
-
-  if (!Number.isFinite(timestamp)) {
-    return "";
-  }
-
-  const difference = Math.max(
-    0,
-    Date.now() - timestamp,
-  );
-
-  const seconds = Math.floor(
-    difference / 1000,
-  );
-
-  if (seconds < 60) {
-    return "Just now";
-  }
-
-  const minutes = Math.floor(
-    seconds / 60,
-  );
-
-  if (minutes < 60) {
-    return `${minutes}m ago`;
-  }
-
-  const hours = Math.floor(
-    minutes / 60,
-  );
-
-  if (hours < 24) {
-    return `${hours}h ago`;
-  }
-
-  const days = Math.floor(
-    hours / 24,
-  );
-
-  if (days < 7) {
-    return `${days}d ago`;
-  }
-
-  return new Date(timestamp).toLocaleDateString(
-    "en-KE",
-    {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    },
-  );
-}
-
-function formatCurrency(value: number): string {
-  return `KES ${safeNumber(value).toLocaleString(
-    "en-KE",
-    {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    },
-  )}`;
-}
-
-function extractRecords<T>(
-  result: ApiResponse,
+function unwrapArray<T>(
+  response:
+    | ApiResponse<T[]>
+    | T[]
+    | null
+    | undefined,
 ): T[] {
-  const data = result.data;
-
-  if (Array.isArray(data)) {
-    return data as T[];
+  if (Array.isArray(response)) {
+    return response;
   }
 
-  if (
-    data &&
-    typeof data === "object"
-  ) {
-    const recordData =
-      data as Record<string, unknown>;
+  if (!response) {
+    return [];
+  }
 
-    const candidates = [
-      recordData.members,
-      recordData.loans,
-      recordData.notifications,
-      recordData.transactions,
-      recordData.items,
-      recordData.results,
-      recordData.data,
-    ];
+  if (Array.isArray(response.data)) {
+    return response.data;
+  }
 
-    for (const candidate of candidates) {
-      if (Array.isArray(candidate)) {
-        return candidate as T[];
-      }
-    }
+  if (Array.isArray(response.items)) {
+    return response.items;
+  }
+
+  if (Array.isArray(response.results)) {
+    return response.results;
   }
 
   return [];
 }
 
-/* =========================================================
-   BASE64URL HELPERS
-========================================================= */
+function formatKES(value: number): string {
+  return new Intl.NumberFormat("en-KE", {
+    style: "currency",
+    currency: "KES",
+    maximumFractionDigits: 0,
+  }).format(Number.isFinite(value) ? value : 0);
+}
 
-function base64UrlToUint8Array(
-  value: string,
-): Uint8Array {
-  const normalized = value
-    .replace(/-/g, "+")
-    .replace(/_/g, "/");
-
-  const padded =
-    normalized +
-    "=".repeat(
-      (4 - (normalized.length % 4)) % 4,
-    );
-
-  const binary = window.atob(padded);
-  const bytes = new Uint8Array(
-    binary.length,
-  );
-
-  for (
-    let index = 0;
-    index < binary.length;
-    index += 1
-  ) {
-    bytes[index] = binary.charCodeAt(index);
+function formatDate(value?: string): string {
+  if (!value) {
+    return "Recently";
   }
 
-  return bytes;
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Recently";
+  }
+
+  return new Intl.DateTimeFormat("en-KE", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(date);
 }
 
-function toArrayBuffer(
-  value: Uint8Array,
-): ArrayBuffer {
-  const buffer = new ArrayBuffer(
-    value.byteLength,
-  );
+function getMemberName(
+  member: MemberRecord,
+): string {
+  if (member.name) {
+    return member.name;
+  }
 
-  new Uint8Array(buffer).set(value);
-
-  return buffer;
-}
-
-function uint8ArrayToNumberArray(
-  value: ArrayBuffer | Uint8Array,
-): number[] {
-  return Array.from(
-    value instanceof Uint8Array
-      ? value
-      : new Uint8Array(value),
+  return (
+    [
+      member.firstName,
+      member.lastName,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim() || "GEO-SHUA Member"
   );
 }
 
 /* =========================================================
-   SECURITY LOADING
+   LOADING
 ========================================================= */
 
-function SecurityLoading() {
+function DashboardLoading(): ReactNode {
   return (
-    <main className="flex min-h-[100dvh] w-full items-center justify-center bg-[#050505] px-5 text-white">
-      <div className="w-full max-w-sm text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.03]">
-          <div className="text-xl font-bold tracking-tight text-yellow-400">
-            GS
+    <main className="flex h-[100dvh] min-h-[100dvh] items-center justify-center overflow-hidden bg-black text-white">
+      <div className="flex flex-col items-center gap-4">
+        <div className="relative flex h-16 w-16 items-center justify-center">
+          <div className="absolute inset-0 animate-ping rounded-full border border-sky-400/20" />
+
+          <div className="absolute inset-2 rounded-2xl border border-sky-400/20" />
+
+          <div className="relative flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04]">
+            <span className="text-sm font-black tracking-[0.2em] text-sky-300">
+              GS
+            </span>
           </div>
         </div>
 
-        <p className="mt-5 text-sm font-medium text-white/70">
-          GEO-SHUA
-        </p>
+        <div className="text-center">
+          <p className="text-[10px] font-bold uppercase tracking-[0.35em] text-sky-300">
+            GEO-SHUA
+          </p>
 
-        <p className="mt-1 text-xs text-white/25">
-          Preparing your secure workspace
-        </p>
-
-        <div className="mx-auto mt-5 h-1 w-32 overflow-hidden rounded-full bg-white/[0.06]">
-          <div className="h-full w-1/2 animate-pulse rounded-full bg-yellow-500" />
+          <p className="mt-1 text-xs text-white/35">
+            Preparing your workspace
+          </p>
         </div>
       </div>
     </main>
@@ -478,7 +257,7 @@ function PinSetupScreen({
   onSuccess,
 }: {
   onSuccess: () => void;
-}) {
+}): ReactNode {
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] =
     useState("");
@@ -492,41 +271,61 @@ function PinSetupScreen({
   const [checking, setChecking] =
     useState(false);
 
-  const [error, setError] =
-    useState("");
+  const [error, setError] = useState("");
 
-  const submit = async () => {
+  const handlePinChange = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const value = event.target.value
+      .replace(/\D/g, "")
+      .slice(0, 6);
+
+    setPin(value);
     setError("");
+  };
 
-    if (!/^\d{4,6}$/.test(pin)) {
+  const handleConfirmPinChange = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const value = event.target.value
+      .replace(/\D/g, "")
+      .slice(0, 6);
+
+    setConfirmPin(value);
+    setError("");
+  };
+
+  const setupPin = async () => {
+    if (pin.length < 4 || pin.length > 6) {
       setError(
         "Your PIN must contain 4 to 6 digits.",
       );
       return;
     }
 
+    if (confirmPin.length < 4) {
+      setError("Confirm your PIN.");
+      return;
+    }
+
     if (pin !== confirmPin) {
-      setError(
-        "The PINs do not match.",
-      );
+      setError("PINs do not match.");
       return;
     }
 
     setChecking(true);
+    setError("");
 
     try {
       const response = await fetch(
         "/api/auth/security/setup",
         {
           method: "POST",
-          credentials: "same-origin",
-          cache: "no-store",
           headers: {
-            "Content-Type":
-              "application/json",
-            Accept:
-              "application/json",
+            "Content-Type": "application/json",
           },
+          credentials: "include",
+          cache: "no-store",
           body: JSON.stringify({
             pin,
             confirmPin,
@@ -534,636 +333,262 @@ function PinSetupScreen({
         },
       );
 
-      const json =
+      const result =
         (await response.json()) as SecuritySetupResponse;
 
       if (
         !response.ok ||
-        json.success !== true
+        result.success !== true
       ) {
-        throw new Error(
-          json.error ||
-            "Unable to create your security PIN.",
+        setError(
+          result.error ||
+            result.message ||
+            "Unable to configure your security PIN.",
         );
+
+        return;
       }
 
       setPin("");
       setConfirmPin("");
 
       onSuccess();
-    } catch (setupError) {
+    } catch {
       setError(
-        setupError instanceof Error
-          ? setupError.message
-          : "Unable to create your security PIN.",
+        "Unable to configure your security PIN. Please try again.",
       );
     } finally {
       setChecking(false);
     }
   };
 
-  const handlePinChange = (
-    value: string,
-    setter: (value: string) => void,
-  ) => {
-    setter(
-      value
-        .replace(/\D/g, "")
-        .slice(0, 6),
-    );
-  };
-
   return (
-    <main className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-[#050505] px-4 py-6 text-white">
-      <div className="w-full max-w-md">
-        <div className="rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 shadow-2xl sm:p-7">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
-              <ShieldCheck
-                size={21}
-                strokeWidth={1.8}
-              />
+    <main className="relative h-[100dvh] min-h-[100dvh] overflow-hidden bg-black text-white">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500/[0.055] blur-3xl" />
+
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_25%,rgba(0,0,0,0.8)_100%)]" />
+      </div>
+
+      <div className="relative flex h-full items-center justify-center px-4 py-4">
+        <section className="w-full max-w-sm rounded-[1.75rem] border border-white/[0.08] bg-white/[0.035] p-5 shadow-2xl shadow-black/60 backdrop-blur-2xl sm:p-6">
+
+          <div className="text-center">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.25rem] border border-sky-400/20 bg-sky-400/[0.06]">
+              <span className="text-lg font-black tracking-[0.18em] text-sky-300">
+                GS
+              </span>
             </div>
 
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-yellow-500/60">
-                Identity
-              </p>
+            <p className="mt-3 text-[9px] font-bold uppercase tracking-[0.45em] text-sky-300/80">
+              GEO-SHUA
+            </p>
 
-              <h1 className="mt-1 text-lg font-semibold text-white">
-                Create security PIN
-              </h1>
-            </div>
+            <h1 className="mt-1.5 text-xl font-semibold">
+              Create security PIN
+            </h1>
+
+            <p className="mt-1 text-[11px] text-white/35">
+              Protect your GEO-SHUA workspace
+            </p>
           </div>
 
-          <div className="mt-6 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-            <div className="flex items-center gap-2">
-              <div className="h-2 w-2 rounded-full bg-[#1683ff]" />
+          <div className="mt-4 flex items-center gap-3 rounded-xl border border-white/[0.06] bg-black/25 p-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.06]">
+              <CheckCircle2 className="h-4 w-4 text-sky-300" />
+            </div>
 
-              <p className="text-xs font-medium text-white/65">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-white">
                 Google identity verified
               </p>
+
+              <p className="mt-0.5 truncate text-[10px] text-white/30">
+                Create a second security layer
+              </p>
             </div>
 
-            <p className="mt-2 text-[11px] leading-5 text-white/30">
-              Create your GEO-SHUA security
-              PIN. It will be securely hashed
-              on the server and will never be
-              stored as plain text.
-            </p>
+            <ShieldCheck className="h-4 w-4 shrink-0 text-sky-300/60" />
           </div>
 
-          {/* PIN */}
-
           <div className="mt-5">
-            <label
-              htmlFor="security-pin"
-              className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
-            >
-              Security PIN
-            </label>
+            <p className="text-[11px] text-white/40">
+              Create your 4–6 digit PIN
+            </p>
 
-            <div className="relative mt-2">
+            <div className="relative mt-2.5">
               <input
-                id="security-pin"
-                type={
-                  showPin
-                    ? "text"
-                    : "password"
-                }
-                inputMode="numeric"
-                autoComplete="new-password"
-                maxLength={6}
+                autoFocus
                 value={pin}
-                onChange={(event) =>
-                  handlePinChange(
-                    event.target.value,
-                    setPin,
-                  )
+                onChange={handlePinChange}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="new-password"
+                type={
+                  showPin ? "text" : "password"
                 }
-                onKeyDown={(event) => {
-                  if (
-                    event.key === "Enter"
-                  ) {
-                    void submit();
-                  }
-                }}
-                placeholder="4–6 digits"
-                className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
+                maxLength={6}
+                placeholder="Enter PIN"
+                className="h-12 w-full rounded-xl border border-white/[0.08] bg-black/40 px-4 pr-12 text-center text-lg font-bold tracking-[0.45em] text-white outline-none transition placeholder:text-xs placeholder:font-normal placeholder:tracking-normal placeholder:text-white/20 focus:border-sky-400/40"
               />
 
               <button
                 type="button"
                 onClick={() =>
                   setShowPin(
-                    (current) =>
-                      !current,
+                    (value) => !value,
                   )
                 }
-                aria-label={
-                  showPin
-                    ? "Hide PIN"
-                    : "Show PIN"
-                }
-                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 transition hover:bg-white/[0.05] hover:text-white/60"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-white/30 hover:text-white"
               >
                 {showPin ? (
-                  <EyeOff size={17} />
+                  <EyeOff className="h-4 w-4" />
                 ) : (
-                  <Eye size={17} />
+                  <Eye className="h-4 w-4" />
                 )}
               </button>
             </div>
+
+            <div className="mt-2 flex justify-center gap-2">
+              {Array.from({ length: 6 }).map(
+                (_, index) => (
+                  <span
+                    key={index}
+                    className={`h-1.5 w-5 rounded-full ${
+                      index < pin.length
+                        ? "bg-sky-300"
+                        : "bg-white/10"
+                    }`}
+                  />
+                ),
+              )}
+            </div>
           </div>
 
-          {/* CONFIRM PIN */}
-
           <div className="mt-4">
-            <label
-              htmlFor="confirm-security-pin"
-              className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
-            >
-              Confirm PIN
-            </label>
+            <p className="text-[11px] text-white/40">
+              Confirm your PIN
+            </p>
 
-            <div className="relative mt-2">
+            <div className="relative mt-2.5">
               <input
-                id="confirm-security-pin"
+                value={confirmPin}
+                onChange={
+                  handleConfirmPinChange
+                }
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="new-password"
                 type={
                   showConfirmPin
                     ? "text"
                     : "password"
                 }
-                inputMode="numeric"
-                autoComplete="new-password"
                 maxLength={6}
-                value={confirmPin}
-                onChange={(event) =>
-                  handlePinChange(
-                    event.target.value,
-                    setConfirmPin,
-                  )
-                }
+                placeholder="Confirm PIN"
                 onKeyDown={(event) => {
                   if (
-                    event.key === "Enter"
+                    event.key === "Enter" &&
+                    pin.length >= 4 &&
+                    confirmPin.length >= 4 &&
+                    !checking
                   ) {
-                    void submit();
+                    void setupPin();
                   }
                 }}
-                placeholder="Repeat your PIN"
-                className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
+                className="h-12 w-full rounded-xl border border-white/[0.08] bg-black/40 px-4 pr-12 text-center text-lg font-bold tracking-[0.45em] text-white outline-none transition placeholder:text-xs placeholder:font-normal placeholder:tracking-normal placeholder:text-white/20 focus:border-sky-400/40"
               />
 
               <button
                 type="button"
                 onClick={() =>
                   setShowConfirmPin(
-                    (current) =>
-                      !current,
+                    (value) => !value,
                   )
                 }
-                aria-label={
-                  showConfirmPin
-                    ? "Hide confirmation PIN"
-                    : "Show confirmation PIN"
-                }
-                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 transition hover:bg-white/[0.05] hover:text-white/60"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-white/30 hover:text-white"
               >
                 {showConfirmPin ? (
-                  <EyeOff size={17} />
+                  <EyeOff className="h-4 w-4" />
                 ) : (
-                  <Eye size={17} />
+                  <Eye className="h-4 w-4" />
                 )}
               </button>
             </div>
           </div>
 
-          {error && (
-            <div className="mt-4 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs leading-5 text-red-300/80">
+          {error ? (
+            <p className="mt-3 text-center text-[10px] font-medium text-red-300">
               {error}
-            </div>
+            </p>
+          ) : (
+            <p className="mt-3 text-center text-[9px] text-white/20">
+              Your PIN is securely hashed on the server.
+            </p>
           )}
 
           <button
             type="button"
-            onClick={() => void submit()}
-            disabled={checking}
-            className="mt-5 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => void setupPin()}
+            disabled={
+              pin.length < 4 ||
+              confirmPin.length < 4 ||
+              checking
+            }
+            className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-sky-400 text-xs font-bold text-black shadow-lg shadow-sky-500/15 transition hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-30"
           >
             {checking ? (
               <>
-                <RefreshCw
-                  size={16}
-                  className="animate-spin"
-                />
-
-                Creating PIN...
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Creating PIN
               </>
             ) : (
               <>
                 Create security PIN
-
-                <ArrowRight size={16} />
+                <ArrowRight className="h-4 w-4" />
               </>
             )}
           </button>
 
-          <p className="mt-4 text-center text-[10px] leading-5 text-white/20">
-            Your PIN is verified by the
-            GEO-SHUA security service.
-          </p>
-        </div>
+          <div className="mt-4 flex items-center justify-center gap-1.5 text-[8px] font-semibold uppercase tracking-[0.25em] text-white/15">
+            <ShieldCheck className="h-3 w-3" />
+            GEO-SHUA
+          </div>
+        </section>
       </div>
     </main>
   );
 }
 
 /* =========================================================
-   ANDROID DEVICE RECOVERY RESET SCREEN
-========================================================= */
-
-function DeviceRecoveryResetScreen({
-  authorizationToken,
-  onSuccess,
-  onCancel,
-}: {
-  authorizationToken: string;
-  onSuccess: () => void;
-  onCancel: () => void;
-}) {
-  const [pin, setPin] = useState("");
-  const [confirmPin, setConfirmPin] =
-    useState("");
-
-  const [showPin, setShowPin] =
-    useState(false);
-
-  const [showConfirmPin, setShowConfirmPin] =
-    useState(false);
-
-  const [checking, setChecking] =
-    useState(false);
-
-  const [error, setError] =
-    useState("");
-
-  const submit = async () => {
-    setError("");
-
-    if (!/^\d{4,6}$/.test(pin)) {
-      setError(
-        "Your PIN must contain 4 to 6 digits.",
-      );
-      return;
-    }
-
-    if (pin !== confirmPin) {
-      setError(
-        "The PINs do not match.",
-      );
-      return;
-    }
-
-    if (!authorizationToken) {
-      setError(
-        "The recovery authorization is missing. Please start again.",
-      );
-      return;
-    }
-
-    setChecking(true);
-
-    try {
-      const response = await fetch(
-        "/api/auth/security/device-recovery/reset-pin",
-        {
-          method: "POST",
-          credentials: "same-origin",
-          cache: "no-store",
-          headers: {
-            "Content-Type":
-              "application/json",
-            Accept:
-              "application/json",
-          },
-          body: JSON.stringify({
-            authorizationToken,
-            pin,
-            confirmPin,
-          }),
-        },
-      );
-
-      const json =
-        (await response.json()) as DeviceRecoveryResetResponse;
-
-      if (
-        !response.ok ||
-        json.success !== true ||
-        json.reset !== true
-      ) {
-        throw new Error(
-          json.error ||
-            "Unable to reset your security PIN.",
-        );
-      }
-
-      setPin("");
-      setConfirmPin("");
-
-      onSuccess();
-    } catch (resetError) {
-      setError(
-        resetError instanceof Error
-          ? resetError.message
-          : "Unable to reset your security PIN.",
-      );
-    } finally {
-      setChecking(false);
-    }
-  };
-
-  const handlePinChange = (
-    value: string,
-    setter: (value: string) => void,
-  ) => {
-    setter(
-      value
-        .replace(/\D/g, "")
-        .slice(0, 6),
-    );
-  };
-
-  return (
-    <main className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-[#050505] px-4 py-6 text-white">
-      <div className="w-full max-w-md">
-        <div className="rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 shadow-2xl sm:p-7">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
-              <ShieldCheck
-                size={21}
-                strokeWidth={1.8}
-              />
-            </div>
-
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-yellow-500/60">
-                Identity
-              </p>
-
-              <h1 className="mt-1 text-lg font-semibold text-white">
-                Create a new security PIN
-              </h1>
-            </div>
-          </div>
-
-          <div className="mt-6 rounded-2xl border border-[#1683ff]/10 bg-[#1683ff]/[0.035] p-4">
-            <div className="flex items-center gap-2">
-              <Fingerprint
-                size={16}
-                className="text-[#4da3ff]"
-              />
-
-              <p className="text-xs font-medium text-white/65">
-                Android device recovery verified
-              </p>
-            </div>
-
-            <p className="mt-2 text-[11px] leading-5 text-white/30">
-              Your device security has
-              authorized this PIN reset.
-              Create a new 4 to 6 digit PIN
-              below.
-            </p>
-          </div>
-
-          {/* NEW PIN */}
-
-          <div className="mt-5">
-            <label
-              htmlFor="recovery-new-pin"
-              className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
-            >
-              New security PIN
-            </label>
-
-            <div className="relative mt-2">
-              <input
-                id="recovery-new-pin"
-                type={
-                  showPin
-                    ? "text"
-                    : "password"
-                }
-                inputMode="numeric"
-                autoComplete="new-password"
-                maxLength={6}
-                value={pin}
-                onChange={(event) =>
-                  handlePinChange(
-                    event.target.value,
-                    setPin,
-                  )
-                }
-                onKeyDown={(event) => {
-                  if (
-                    event.key === "Enter"
-                  ) {
-                    void submit();
-                  }
-                }}
-                placeholder="4–6 digits"
-                className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
-              />
-
-              <button
-                type="button"
-                onClick={() =>
-                  setShowPin(
-                    (current) =>
-                      !current,
-                  )
-                }
-                aria-label={
-                  showPin
-                    ? "Hide PIN"
-                    : "Show PIN"
-                }
-                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 transition hover:bg-white/[0.05] hover:text-white/60"
-              >
-                {showPin ? (
-                  <EyeOff size={17} />
-                ) : (
-                  <Eye size={17} />
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* CONFIRM PIN */}
-
-          <div className="mt-4">
-            <label
-              htmlFor="recovery-confirm-pin"
-              className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
-            >
-              Confirm new PIN
-            </label>
-
-            <div className="relative mt-2">
-              <input
-                id="recovery-confirm-pin"
-                type={
-                  showConfirmPin
-                    ? "text"
-                    : "password"
-                }
-                inputMode="numeric"
-                autoComplete="new-password"
-                maxLength={6}
-                value={confirmPin}
-                onChange={(event) =>
-                  handlePinChange(
-                    event.target.value,
-                    setConfirmPin,
-                  )
-                }
-                onKeyDown={(event) => {
-                  if (
-                    event.key === "Enter"
-                  ) {
-                    void submit();
-                  }
-                }}
-                placeholder="Repeat your PIN"
-                className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
-              />
-
-              <button
-                type="button"
-                onClick={() =>
-                  setShowConfirmPin(
-                    (current) =>
-                      !current,
-                  )
-                }
-                aria-label={
-                  showConfirmPin
-                    ? "Hide confirmation PIN"
-                    : "Show confirmation PIN"
-                }
-                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 transition hover:bg-white/[0.05] hover:text-white/60"
-              >
-                {showConfirmPin ? (
-                  <EyeOff size={17} />
-                ) : (
-                  <Eye size={17} />
-                )}
-              </button>
-            </div>
-          </div>
-
-          {error && (
-            <div className="mt-4 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs leading-5 text-red-300/80">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => void submit()}
-            disabled={checking}
-            className="mt-5 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {checking ? (
-              <>
-                <RefreshCw
-                  size={16}
-                  className="animate-spin"
-                />
-
-                Updating PIN...
-              </>
-            ) : (
-              <>
-                Update security PIN
-
-                <ArrowRight size={16} />
-              </>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={checking}
-            className="mt-3 flex h-11 w-full items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.02] px-4 text-xs font-medium text-white/45 transition hover:bg-white/[0.04] hover:text-white/65 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Back to Identity
-          </button>
-
-          <p className="mt-4 text-center text-[10px] leading-5 text-white/20">
-            Your old security sessions are
-            invalidated after the PIN is changed.
-          </p>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-/* =========================================================
-   IDENTITY SCREEN
+   IDENTITY
 ========================================================= */
 
 function IdentityScreen({
   onSuccess,
 }: {
   onSuccess: () => void;
-}) {
+}): ReactNode {
   const [method, setMethod] =
     useState<SecurityMethod>("pin");
 
   const [pin, setPin] = useState("");
-
   const [showPin, setShowPin] =
     useState(false);
 
   const [checking, setChecking] =
     useState(false);
 
+  const [error, setError] = useState("");
+
   const [deviceAvailable, setDeviceAvailable] =
     useState(false);
 
-  const [error, setError] =
-    useState("");
+  const [attempts, setAttempts] = useState(0);
 
-  const [attempts, setAttempts] =
-    useState(0);
-
-  const [forgotPin, setForgotPin] =
-    useState(false);
-
-  const [recoveryToken, setRecoveryToken] =
-    useState("");
-
-  const [recoveryBusy, setRecoveryBusy] =
-    useState(false);
-
-  const [isAndroid, setIsAndroid] =
-    useState(false);
-
-  const MAX_CLIENT_ATTEMPTS = 5;
-
-  useEffect(() => {
-    const android =
-      Capacitor.isNativePlatform() &&
-      Capacitor.getPlatform() ===
-        "android";
-
-    setIsAndroid(android);
-  }, []);
+  /* -------------------------------------------------------
+     DEVICE AVAILABILITY
+  ------------------------------------------------------- */
 
   useEffect(() => {
     let active = true;
@@ -1171,25 +596,8 @@ function IdentityScreen({
     const checkDevice = async () => {
       try {
         if (
-          typeof window ===
-            "undefined" ||
-          !("PublicKeyCredential" in
-            window)
-        ) {
-          if (active) {
-            setDeviceAvailable(false);
-          }
-
-          return;
-        }
-
-        const credential =
-          window.PublicKeyCredential;
-
-        if (
-          typeof credential
-            .isUserVerifyingPlatformAuthenticatorAvailable !==
-          "function"
+          typeof window === "undefined" ||
+          !window.PublicKeyCredential
         ) {
           if (active) {
             setDeviceAvailable(false);
@@ -1199,12 +607,10 @@ function IdentityScreen({
         }
 
         const available =
-          await credential.isUserVerifyingPlatformAuthenticatorAvailable();
+          await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
 
         if (active) {
-          setDeviceAvailable(
-            available,
-          );
+          setDeviceAvailable(available);
         }
       } catch {
         if (active) {
@@ -1220,43 +626,51 @@ function IdentityScreen({
     };
   }, []);
 
-  const verifyPin = async () => {
-    setError("");
+  /* -------------------------------------------------------
+     PIN
+  ------------------------------------------------------- */
 
-    if (
-      !/^\d{4,6}$/.test(pin)
-    ) {
-      setError(
-        "Enter a valid 4 to 6 digit PIN.",
-      );
+  const handlePinChange = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const value = event.target.value
+      .replace(/\D/g, "")
+      .slice(0, 6);
+
+    setPin(value);
+    setError("");
+  };
+
+  /* -------------------------------------------------------
+     VERIFY PIN
+  ------------------------------------------------------- */
+
+  const verifyPin = async () => {
+    if (pin.length < 4) {
+      setError("Enter at least 4 digits.");
       return;
     }
 
-    if (
-      attempts >=
-      MAX_CLIENT_ATTEMPTS
-    ) {
+    if (attempts >= 5) {
       setError(
-        "Too many unsuccessful attempts. Please wait and try again.",
+        "Too many unsuccessful attempts. Please wait before trying again.",
       );
       return;
     }
 
     setChecking(true);
+    setError("");
 
     try {
       const response = await fetch(
         "/api/auth/security/verify",
         {
           method: "POST",
-          credentials: "same-origin",
-          cache: "no-store",
           headers: {
-            "Content-Type":
-              "application/json",
-            Accept:
-              "application/json",
+            "Content-Type": "application/json",
           },
+          credentials: "include",
+          cache: "no-store",
           body: JSON.stringify({
             method: "pin",
             pin,
@@ -1264,895 +678,579 @@ function IdentityScreen({
         },
       );
 
-      const json =
+      const result =
         (await response.json()) as SecurityVerifyResponse;
 
       if (
-        response.ok &&
-        json.success === true &&
-        json.verified === true
+        !response.ok ||
+        result.verified !== true
       ) {
-        setPin("");
-        setAttempts(0);
+        setAttempts(
+          (current) => current + 1,
+        );
 
-        onSuccess();
+        if (
+          result.retryAfterSeconds &&
+          result.retryAfterSeconds > 0
+        ) {
+          const minutes = Math.ceil(
+            result.retryAfterSeconds / 60,
+          );
+
+          setError(
+            result.error ||
+              `Security temporarily locked. Try again in ${minutes} minute${
+                minutes === 1
+                  ? ""
+                  : "s"
+              }.`,
+          );
+        } else {
+          setError(
+            result.error ||
+              result.message ||
+              "The PIN could not be verified.",
+          );
+        }
 
         return;
       }
 
-      setAttempts(
-        (current) => current + 1,
-      );
-
-      if (
-        json.retryAfterSeconds &&
-        json.retryAfterSeconds > 0
-      ) {
-        setError(
-          `Too many attempts. Try again in ${json.retryAfterSeconds} seconds.`,
-        );
-      } else {
-        setError(
-          json.error ||
-            "Incorrect security PIN.",
-        );
-      }
-
       setPin("");
+      setAttempts(0);
+
+      onSuccess();
     } catch {
       setError(
-        "Unable to verify your PIN. Please try again.",
+        "Unable to verify your identity. Please try again.",
       );
     } finally {
       setChecking(false);
     }
   };
 
-  /* =======================================================
-     ANDROID FORGOT PIN
-  ======================================================= */
-
-  const startAndroidPinRecovery =
-    async () => {
-      if (!isAndroid) {
-        return;
-      }
-
-      setError("");
-      setRecoveryBusy(true);
-
-      try {
-        /*
-         * The native Android recovery key is
-         * device-bound. Create it once if it
-         * does not already exist.
-         */
-        let hasKey =
-          await hasAndroidRecoveryKey();
-
-        if (!hasKey.success) {
-          throw new Error(
-            hasKey.error ||
-              "Unable to check Android device recovery.",
-          );
-        }
-
-        if (!hasKey.exists) {
-          const created =
-            await createAndroidRecoveryKey();
-
-          if (
-            !created.success ||
-            !created.publicKey
-          ) {
-            throw new Error(
-              created.error ||
-                "Unable to create secure Android recovery access.",
-            );
-          }
-        }
-
-        const publicKey =
-          await getAndroidRecoveryPublicKey();
-
-        if (
-          !publicKey.success ||
-          !publicKey.publicKey
-        ) {
-          throw new Error(
-            publicKey.error ||
-              "Unable to access the Android recovery key.",
-          );
-        }
-
-        /*
-         * Register/update the public key on the
-         * server. The private key never leaves
-         * Android Keystore.
-         */
-        const optionsResponse =
-          await fetch(
-            "/api/auth/security/device-recovery/options",
-            {
-              method: "POST",
-              credentials: "same-origin",
-              cache: "no-store",
-              headers: {
-                "Content-Type":
-                  "application/json",
-                Accept:
-                  "application/json",
-              },
-              body: JSON.stringify({
-                publicKey:
-                  publicKey.publicKey,
-              }),
-            },
-          );
-
-        const optionsJson =
-          (await optionsResponse.json()) as DeviceRecoveryOptionsResponse;
-
-        if (
-          !optionsResponse.ok ||
-          optionsJson.success !== true
-        ) {
-          throw new Error(
-            optionsJson.error ||
-              "Unable to register Android recovery.",
-          );
-        }
-
-        /*
-         * Ask the server for a fresh,
-         * short-lived challenge.
-         */
-        const challengeResponse =
-          await fetch(
-            "/api/auth/security/device-recovery/challenge",
-            {
-              method: "POST",
-              credentials: "same-origin",
-              cache: "no-store",
-              headers: {
-                "Content-Type":
-                  "application/json",
-                Accept:
-                  "application/json",
-              },
-              body: JSON.stringify({}),
-            },
-          );
-
-        const challengeJson =
-          (await challengeResponse.json()) as DeviceRecoveryChallengeResponse;
-
-        if (
-          !challengeResponse.ok ||
-          challengeJson.success !== true ||
-          !challengeJson.challenge ||
-          !challengeJson.challengeId
-        ) {
-          throw new Error(
-            challengeJson.error ||
-              "Unable to start PIN recovery.",
-          );
-        }
-
-        /*
-         * Native Android signs the challenge.
-         * The private key remains inside the
-         * Android Keystore.
-         */
-        const signed =
-          await signAndroidRecoveryChallenge(
-            challengeJson.challenge,
-          );
-
-        if (
-          !signed.success ||
-          !signed.signature
-        ) {
-          throw new Error(
-            signed.error ||
-              "Android device authorization failed.",
-          );
-        }
-
-        /*
-         * Server verifies the ECDSA signature
-         * using the previously registered public
-         * key.
-         */
-        const verifyResponse =
-          await fetch(
-            "/api/auth/security/device-recovery/verify",
-            {
-              method: "POST",
-              credentials: "same-origin",
-              cache: "no-store",
-              headers: {
-                "Content-Type":
-                  "application/json",
-                Accept:
-                  "application/json",
-              },
-              body: JSON.stringify({
-                challengeId:
-                  challengeJson.challengeId,
-                challenge:
-                  challengeJson.challenge,
-                signature:
-                  signed.signature,
-              }),
-            },
-          );
-
-        const verifyJson =
-          (await verifyResponse.json()) as DeviceRecoveryVerifyResponse;
-
-        if (
-          !verifyResponse.ok ||
-          verifyJson.success !== true ||
-          !verifyJson.authorizationToken
-        ) {
-          throw new Error(
-            verifyJson.error ||
-              "Android recovery verification failed.",
-          );
-        }
-
-        /*
-         * We now have a short-lived,
-         * single-use server authorization token.
-         *
-         * Do not store it in localStorage,
-         * sessionStorage, or any persistent
-         * browser storage.
-         */
-        setRecoveryToken(
-          verifyJson.authorizationToken,
-        );
-
-        setPin("");
-        setError("");
-        setForgotPin(true);
-      } catch (recoveryError) {
-        setError(
-          recoveryError instanceof Error
-            ? recoveryError.message
-            : "Unable to recover your security PIN.",
-        );
-      } finally {
-        setRecoveryBusy(false);
-      }
-    };
-
-  const cancelRecovery = () => {
-    setRecoveryToken("");
-    setForgotPin(false);
-    setRecoveryBusy(false);
-    setChecking(false);
-    setPin("");
-    setError("");
-    setMethod("pin");
-  };
-
-  const handleRecoverySuccess =
-    () => {
-      /*
-       * The reset route has already invalidated
-       * all existing security sessions.
-       *
-       * Do not authenticate automatically.
-       * Return to Identity and require the
-       * newly created PIN.
-       */
-      setRecoveryToken("");
-      setForgotPin(false);
-      setRecoveryBusy(false);
-      setChecking(false);
-      setPin("");
-      setAttempts(0);
-      setError("");
-      setMethod("pin");
-    };
-
-  if (
-    forgotPin &&
-    recoveryToken
-  ) {
-    return (
-      <DeviceRecoveryResetScreen
-        authorizationToken={
-          recoveryToken
-        }
-        onSuccess={
-          handleRecoverySuccess
-        }
-        onCancel={
-          cancelRecovery
-        }
-      />
-    );
-  }
-  
-
+  /* -------------------------------------------------------
+     VERIFY DEVICE
+  ------------------------------------------------------- */
 
   const verifyDevice = async () => {
+    setChecking(true);
     setError("");
 
-    if (!deviceAvailable) {
-      setError(
-        "Device verification is not available.",
-      );
-      return;
-    }
-
-    setChecking(true);
-
     try {
+      const optionsResponse =
+        await fetch(
+          "/api/auth/security/webauthn/options",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            credentials: "include",
+            cache: "no-store",
+          },
+        );
+
+      if (!optionsResponse.ok) {
+        throw new Error(
+          "Device security is not available right now.",
+        );
+      }
+
+      const optionsResult =
+        (await optionsResponse.json()) as {
+          publicKey?: PublicKeyCredentialRequestOptions;
+        };
+
+      if (!optionsResult.publicKey) {
+        throw new Error(
+          "Device security configuration is unavailable.",
+        );
+      }
+
+      const credential =
+        await navigator.credentials.get({
+          publicKey:
+            optionsResult.publicKey,
+        });
+
+      if (!credential) {
+        throw new Error(
+          "No device credential was returned.",
+        );
+      }
+
+      const assertion =
+        credential as PublicKeyCredential;
+
+      const assertionResponse =
+        assertion.response as AuthenticatorAssertionResponse;
+
       const response = await fetch(
-        "/api/auth/security/verify",
+        "/api/auth/security/webauthn/verify",
         {
           method: "POST",
-          credentials: "same-origin",
-          cache: "no-store",
           headers: {
             "Content-Type":
               "application/json",
-            Accept:
-              "application/json",
           },
+          credentials: "include",
+          cache: "no-store",
           body: JSON.stringify({
-            method: "device",
+            id: assertion.id,
+            rawId: Array.from(
+              new Uint8Array(
+                assertion.rawId,
+              ),
+            ),
+            type: assertion.type,
+            response: {
+              authenticatorData:
+                Array.from(
+                  new Uint8Array(
+                    assertionResponse.authenticatorData,
+                  ),
+                ),
+
+              clientDataJSON:
+                Array.from(
+                  new Uint8Array(
+                    assertionResponse.clientDataJSON,
+                  ),
+                ),
+
+              signature: Array.from(
+                new Uint8Array(
+                  assertionResponse.signature,
+                ),
+              ),
+
+              userHandle:
+                assertionResponse.userHandle
+                  ? Array.from(
+                      new Uint8Array(
+                        assertionResponse.userHandle,
+                      ),
+                    )
+                  : null,
+            },
           }),
         },
       );
 
-      const json =
+      const result =
         (await response.json()) as SecurityVerifyResponse;
 
       if (
-        response.ok &&
-        json.success === true &&
-        json.verified === true
+        !response.ok ||
+        result.verified !== true
       ) {
-        setAttempts(0);
-
-        onSuccess();
-
-        return;
+        throw new Error(
+          result.error ||
+            result.message ||
+            "Device verification failed.",
+        );
       }
 
-      setAttempts(
-        (current) => current + 1,
-      );
-
-      setError(
-        json.error ||
-          "Device verification failed. Please try again.",
-      );
-    } catch {
-      setError(
-        "Unable to verify your device. Please try again.",
-      );
+      onSuccess();
+    } catch (err) {
+      if (
+        err instanceof DOMException &&
+        err.name === "NotAllowedError"
+      ) {
+        setError(
+          "Device verification was cancelled.",
+        );
+      } else {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Device verification failed.",
+        );
+      }
     } finally {
       setChecking(false);
     }
   };
 
-return (
-  <main className="flex min-h-[100dvh] w-full items-center justify-center overflow-x-hidden bg-[#050505] px-4 py-5 text-white">
-    <div className="w-full max-w-md">
-      <div className="rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 shadow-2xl sm:p-7">
+  return (
+    <main className="relative h-[100dvh] min-h-[100dvh] overflow-hidden bg-black text-white">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500/[0.055] blur-3xl" />
 
-        {/* =====================================================
-            HEADER
-        ====================================================== */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_25%,rgba(0,0,0,0.8)_100%)]" />
+      </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
-            <ShieldCheck
-              size={21}
-              strokeWidth={1.8}
-            />
-          </div>
+      <div className="relative flex h-full items-center justify-center px-4 py-4">
+        <section className="w-full max-w-sm rounded-[1.75rem] border border-white/[0.08] bg-white/[0.035] p-5 shadow-2xl shadow-black/60 backdrop-blur-2xl sm:p-6">
 
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-yellow-500/60">
+          <div className="text-center">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.25rem] border border-sky-400/20 bg-sky-400/[0.06]">
+              <span className="text-lg font-black tracking-[0.18em] text-sky-300">
+                GS
+              </span>
+            </div>
+
+            <p className="mt-3 text-[9px] font-bold uppercase tracking-[0.45em] text-sky-300/80">
+              GEO-SHUA
+            </p>
+
+            <h1 className="mt-1.5 text-xl font-semibold">
               Identity
-            </p>
-
-            <h1 className="mt-1 text-lg font-semibold text-white">
-              Verify your identity
             </h1>
+
+            <p className="mt-1 text-[11px] text-white/35">
+              Confirm your identity to continue
+            </p>
           </div>
-        </div>
 
-        {/* =====================================================
-            GOOGLE IDENTITY STATUS
-        ====================================================== */}
-
-        <div className="mt-5 flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3">
-          <span className="h-2 w-2 rounded-full bg-[#1683ff]" />
-
-          <span className="text-xs text-white/55">
-            Google identity verified
-          </span>
-        </div>
-
-        {/* =====================================================
-            VERIFICATION METHOD
-        ====================================================== */}
-
-        <div className="mt-5 grid grid-cols-2 gap-2">
-
-          {/* PIN METHOD */}
-
-          <button
-            type="button"
-            onClick={() => {
-              setMethod("pin");
-              setError("");
-            }}
-            className={`rounded-2xl border p-3 text-left transition ${
-              method === "pin"
-                ? "border-yellow-500/30 bg-yellow-500/[0.07]"
-                : "border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <ShieldCheck
-                size={17}
-                className={
-                  method === "pin"
-                    ? "text-yellow-400"
-                    : "text-white/35"
-                }
-              />
-
-              <span
-                className={`text-xs font-medium ${
-                  method === "pin"
-                    ? "text-white"
-                    : "text-white/45"
-                }`}
-              >
-                PIN
-              </span>
+          <div className="mt-4 flex items-center gap-3 rounded-xl border border-white/[0.06] bg-black/25 p-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.06]">
+              <CheckCircle2 className="h-4 w-4 text-sky-300" />
             </div>
 
-            <p className="mt-1 text-[9px] text-white/20">
-              Use your security PIN
-            </p>
-          </button>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-white">
+                Google identity verified
+              </p>
 
-          {/* DEVICE METHOD */}
-
-          <button
-            type="button"
-            disabled={!deviceAvailable}
-            onClick={() => {
-              setMethod("device");
-              setError("");
-            }}
-            className={`rounded-2xl border p-3 text-left transition ${
-              method === "device"
-                ? "border-yellow-500/30 bg-yellow-500/[0.07]"
-                : "border-white/[0.07] bg-white/[0.02]"
-            } ${
-              !deviceAvailable
-                ? "cursor-not-allowed opacity-40"
-                : "hover:bg-white/[0.04]"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Fingerprint
-                size={17}
-                className={
-                  method === "device"
-                    ? "text-yellow-400"
-                    : "text-white/35"
-                }
-              />
-
-              <span
-                className={`text-xs font-medium ${
-                  method === "device"
-                    ? "text-white"
-                    : "text-white/45"
-                }`}
-              >
-                Device
-              </span>
+              <p className="mt-0.5 truncate text-[10px] text-white/30">
+                GEO-SHUA account authenticated
+              </p>
             </div>
 
-            <p className="mt-1 text-[9px] text-white/20">
-              Fingerprint or device security
-            </p>
-          </button>
-        </div>
+            <ShieldCheck className="h-4 w-4 shrink-0 text-sky-300/60" />
+          </div>
 
-        {/* =====================================================
-            PIN VERIFICATION
-        ====================================================== */}
-
-        {method === "pin" && (
-          <div className="mt-5">
-
-            <label
-              htmlFor="identity-pin"
-              className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35"
-            >
-              Security PIN
-            </label>
-
-            <div className="relative mt-2">
-              <input
-                id="identity-pin"
-                type={showPin ? "text" : "password"}
-                inputMode="numeric"
-                autoComplete="current-password"
-                maxLength={6}
-                value={pin}
-                onChange={(event) => {
-                  setPin(
-                    event.target.value
-                      .replace(/\D/g, "")
-                      .slice(0, 6),
-                  );
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    void verifyPin();
-                  }
-                }}
-                placeholder="Enter 4–6 digit PIN"
-                className="h-14 w-full rounded-2xl border border-white/[0.08] bg-black/30 px-4 pr-12 text-center text-xl tracking-[0.5em] text-white outline-none transition placeholder:text-sm placeholder:tracking-normal placeholder:text-white/15 focus:border-yellow-500/40"
-              />
-
-              <button
-                type="button"
-                onClick={() => {
-                  setShowPin((current) => !current);
-                }}
-                aria-label={
-                  showPin
-                    ? "Hide PIN"
-                    : "Show PIN"
-                }
-                className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-white/30 hover:bg-white/[0.05]"
-              >
-                {showPin ? (
-                  <EyeOff size={17} />
-                ) : (
-                  <Eye size={17} />
-                )}
-              </button>
-            </div>
-
-            {/* PIN ERROR */}
-
-            {error && (
-              <div className="mt-3 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs text-red-300/80">
-                {error}
-              </div>
-            )}
-
-            {/* CONTINUE */}
-
+          <div className="mt-3 grid grid-cols-2 gap-1.5 rounded-xl border border-white/[0.06] bg-black/25 p-1">
             <button
               type="button"
               onClick={() => {
-                void verifyPin();
+                setMethod("pin");
+                setError("");
               }}
-              disabled={
-                checking ||
-                recoveryBusy
-              }
-              className="mt-4 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
+              className={`flex h-9 items-center justify-center gap-2 rounded-lg text-[11px] font-semibold ${
+                method === "pin"
+                  ? "bg-white/[0.09] text-white"
+                  : "text-white/35"
+              }`}
             >
-              {checking ? (
-                <>
-                  <RefreshCw
-                    size={16}
-                    className="animate-spin"
-                  />
-
-                  Verifying...
-                </>
-              ) : (
-                <>
-                  Continue
-                  <ArrowRight size={16} />
-                </>
-              )}
+              <LockKeyhole className="h-3.5 w-3.5" />
+              PIN
             </button>
 
-            {/* =================================================
-                ANDROID-ONLY PIN RECOVERY
-            ================================================== */}
+            <button
+              type="button"
+              disabled={!deviceAvailable}
+              onClick={() => {
+                setMethod("device");
+                setError("");
+              }}
+              className={`flex h-9 items-center justify-center gap-2 rounded-lg text-[11px] font-semibold ${
+                method === "device"
+                  ? "bg-white/[0.09] text-white"
+                  : "text-white/35"
+              } ${
+                !deviceAvailable
+                  ? "cursor-not-allowed opacity-25"
+                  : ""
+              }`}
+            >
+              <Fingerprint className="h-3.5 w-3.5" />
+              Device
+            </button>
+          </div>
 
-            {isAndroid && (
-              <div className="mt-3">
+          {method === "pin" ? (
+            <div className="mt-4">
+              <p className="text-center text-[11px] text-white/40">
+                Enter your security PIN
+              </p>
+
+              <div className="relative mt-2.5">
+                <input
+                  autoFocus
+                  value={pin}
+                  onChange={handlePinChange}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  autoComplete="off"
+                  type={
+                    showPin
+                      ? "text"
+                      : "password"
+                  }
+                  maxLength={6}
+                  placeholder="Enter PIN"
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "Enter" &&
+                      pin.length >= 4 &&
+                      !checking
+                    ) {
+                      void verifyPin();
+                    }
+                  }}
+                  className="h-12 w-full rounded-xl border border-white/[0.08] bg-black/40 px-4 pr-12 text-center text-lg font-bold tracking-[0.45em] text-white outline-none placeholder:text-xs placeholder:font-normal placeholder:tracking-normal placeholder:text-white/20 focus:border-sky-400/40"
+                />
 
                 <button
                   type="button"
-                  onClick={() => {
-                    void startAndroidPinRecovery();
-                  }}
-                  disabled={
-                    checking ||
-                    recoveryBusy
+                  onClick={() =>
+                    setShowPin(
+                      (value) => !value,
+                    )
                   }
-                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] px-4 text-xs font-medium text-white/45 transition hover:border-yellow-500/20 hover:bg-white/[0.04] hover:text-white/70 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-white/30 hover:text-white"
                 >
-                  {recoveryBusy ? (
-                    <>
-                      <RefreshCw
-                        size={15}
-                        className="animate-spin"
-                      />
-
-                      Verifying device...
-                    </>
+                  {showPin ? (
+                    <EyeOff className="h-4 w-4" />
                   ) : (
-                    <>
-                      <Fingerprint size={15} />
-                      Forgot PIN?
-                    </>
+                    <Eye className="h-4 w-4" />
                   )}
                 </button>
-
-                <p className="mt-2 text-center text-[9px] leading-4 text-white/15">
-                  Use your Android device
-                  security to create a new PIN.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* =====================================================
-            DEVICE VERIFICATION
-        ====================================================== */}
-        
-
-        {method === "device" && (
-          <div className="mt-5">
-
-            <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5 text-center">
-
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-yellow-500/10 text-yellow-400">
-                <Fingerprint
-                  size={27}
-                  strokeWidth={1.6}
-                />
               </div>
 
-              <p className="mt-4 text-sm font-medium text-white/70">
-                Device security
-              </p>
-
-              <p className="mx-auto mt-2 max-w-xs text-[11px] leading-5 text-white/25">
-                Use your device fingerprint,
-                face recognition, screen lock,
-                or other supported biometric
-                security.
-              </p>
-            </div>
-
-            {/* DEVICE ERROR */}
-
-            {error && (
-              <div className="mt-3 rounded-xl border border-red-400/10 bg-red-400/[0.05] px-3 py-2.5 text-xs text-red-300/80">
-                {error}
-              </div>
-            )}
-
-            {/* VERIFY DEVICE */}
-
-            <button
-              type="button"
-              onClick={() => {
-                void verifyDevice();
-              }}
-              disabled={checking}
-              className="mt-4 flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-yellow-500 px-4 text-sm font-semibold text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {checking ? (
-                <>
-                  <RefreshCw
-                    size={16}
-                    className="animate-spin"
+              <div className="mt-2.5 flex justify-center gap-2">
+                {Array.from({
+                  length: 6,
+                }).map((_, index) => (
+                  <span
+                    key={index}
+                    className={`h-1.5 w-5 rounded-full ${
+                      index < pin.length
+                        ? "bg-sky-300"
+                        : "bg-white/10"
+                    }`}
                   />
+                ))}
+              </div>
 
-                  Verifying...
-                </>
+              {error ? (
+                <p className="mt-2 text-center text-[10px] text-red-300">
+                  {error}
+                </p>
               ) : (
-                <>
-                  <Fingerprint size={17} />
-                  Verify device
-                </>
+                <p className="mt-2 text-center text-[9px] text-white/20">
+                  4–6 digit PIN
+                </p>
               )}
-            </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void verifyPin()
+                }
+                disabled={
+                  pin.length < 4 ||
+                  checking
+                }
+                className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-sky-400 text-xs font-bold text-black shadow-lg shadow-sky-500/15 hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                {checking ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Verifying
+                  </>
+                ) : (
+                  <>
+                    Continue
+                    <ArrowRight className="h-4 w-4" />
+                  </>
+                )}
+              </button>
+            </div>
+          ) : (
+            <div className="mt-5 text-center">
+              <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-[1.5rem] border border-sky-400/15 bg-sky-400/[0.05]">
+                <Fingerprint className="h-10 w-10 text-sky-300" />
+              </div>
+
+              <h2 className="mt-4 text-base font-semibold">
+                Device security
+              </h2>
+
+              <p className="mx-auto mt-1.5 max-w-[260px] text-[10px] leading-4 text-white/35">
+                Use the security method configured on this device.
+              </p>
+
+              {error ? (
+                <p className="mt-2 text-[10px] text-red-300">
+                  {error}
+                </p>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={() =>
+                  void verifyDevice()
+                }
+                disabled={
+                  checking ||
+                  !deviceAvailable
+                }
+                className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-sky-400 text-xs font-bold text-black shadow-lg shadow-sky-500/15 hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                {checking ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Verifying
+                  </>
+                ) : (
+                  <>
+                    Verify identity
+                    <Fingerprint className="h-4 w-4" />
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          <div className="mt-4 flex items-center justify-center gap-1.5 text-[8px] font-semibold uppercase tracking-[0.25em] text-white/15">
+            <ShieldCheck className="h-3 w-3" />
+            GEO-SHUA
           </div>
-        )}
-
-        {/* =====================================================
-            FOOTER
-        ====================================================== */}
-
-        <p className="mt-4 text-center text-[9px] leading-5 text-white/15">
-          Identity verification protects
-          access to the GEO-SHUA workspace.
-        </p>
-
+        </section>
       </div>
-    </div>
-  </main>
-);
-
+    </main>
+  );
 }
 
+
 /* =========================================================
-   GEO-SHUA LAUNCHER
+   GEO-SHUA NAVIGATOR
 ========================================================= */
 
-function GeoShuaLauncher({
-  onDashboard,
-}: {
-  onDashboard: () => void;
-}) {
+function GeoShuaNavigator(): ReactNode {
   const router = useRouter();
 
-  const open = (
-    href: string,
-  ) => {
-    router.push(href);
-  };
+  const navigation = [
+    {
+      title: "Dashboard",
+      description: "SACCO overview & activity",
+      icon: LayoutDashboard,
+      path: "/dashboard/summery",
+    },
+    {
+      title: "Members",
+      description: "Manage membership",
+      icon: Users,
+      path: "/dashboard/members",
+    },
+    {
+      title: "Savings",
+      description: "Savings & transactions",
+      icon: Wallet,
+      path: "/dashboard/savings",
+    },
+    {
+      title: "Loans",
+      description: "Loans & repayments",
+      icon: HandCoins,
+      path: "/dashboard/loans",
+    },
+  ];
 
   return (
-    <main className="min-h-[100dvh] w-full overflow-x-hidden bg-[#050505] px-4 py-6 text-white sm:px-6 sm:py-10">
-      <div className="mx-auto flex min-h-[calc(100dvh-3rem)] w-full max-w-3xl flex-col justify-center">
-        <div className="text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-yellow-500/20 bg-yellow-500/[0.07] text-xl font-bold tracking-tight text-yellow-400 shadow-[0_0_45px_rgba(234,179,8,0.08)]">
-            GS
-          </div>
+    <main className="relative min-h-[100dvh] overflow-hidden bg-black text-white">
+      {/* BACKGROUND */}
 
-          <div className="mt-5 flex items-center justify-center gap-2">
-            <Sparkles
-              size={14}
-              className="text-yellow-400"
-            />
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-1/2 top-1/2 h-[380px] w-[380px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500/[0.04] blur-3xl" />
 
-            <span className="text-[10px] font-semibold uppercase tracking-[0.25em] text-yellow-500/60">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_25%,rgba(0,0,0,0.88)_100%)]" />
+      </div>
+
+      {/* CONTENT */}
+
+      <div className="relative flex min-h-[100dvh] items-center justify-center px-4 py-6 sm:px-6">
+        <section className="w-full max-w-md">
+
+          {/* =================================================
+             BRAND
+          ================================================= */}
+
+          <div className="text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-sky-400/15 bg-white/[0.035] shadow-lg shadow-sky-500/[0.04]">
+              <span className="text-sm font-black tracking-[0.16em] text-sky-300">
+                GS
+              </span>
+            </div>
+
+            <p className="mt-3 text-[8px] font-bold uppercase tracking-[0.42em] text-sky-300/70">
               GEO-SHUA
-            </span>
+            </p>
+
+            <h1 className="mt-1 text-xl font-semibold tracking-tight text-white sm:text-2xl">
+              Workspace
+            </h1>
+
+            <p className="mt-1 text-[10px] text-white/30 sm:text-[11px]">
+              Select a section to continue
+            </p>
           </div>
 
-          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-            Your workspace
-          </h1>
+          {/* =================================================
+             NAVIGATION
+          ================================================= */}
 
-          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-white/30">
-            Choose where you want to go.
-          </p>
-        </div>
+          <div className="mt-6 grid grid-cols-2 gap-2.5 sm:gap-3">
+            {navigation.map((item) => {
+              const Icon = item.icon;
 
-        <div className="mt-8 grid gap-3 sm:grid-cols-2">
-          <LauncherCard
-            title="Dashboard"
-            description="SACCO overview and live activity"
-            icon={
-              <LayoutDashboard
-                size={20}
-                strokeWidth={1.8}
-              />
-            }
-            onClick={onDashboard}
-          />
+              return (
+                <button
+                  key={item.title}
+                  type="button"
+                  onClick={() =>
+                    router.push(item.path)
+                  }
+                  className="group rounded-xl border border-white/[0.07] bg-white/[0.035] p-3.5 text-left backdrop-blur-xl transition duration-200 hover:border-sky-400/20 hover:bg-white/[0.055] active:scale-[0.98] sm:p-4"
+                >
+                  {/* TOP ROW */}
 
-          <LauncherCard
-            title="Members"
-            description="Manage GEO-SHUA membership"
-            icon={
-              <Users
-                size={20}
-                strokeWidth={1.8}
-              />
-            }
-            onClick={() =>
-              open("/dashboard/members")
-            }
-          />
+                  <div className="flex items-center justify-between">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-400/[0.055]">
+                      <Icon className="h-4.5 w-4.5 text-sky-300" />
+                    </div>
 
-          <LauncherCard
-            title="Savings"
-            description="View savings and ledger records"
-            icon={
-              <Wallet
-                size={20}
-                strokeWidth={1.8}
-              />
-            }
-            onClick={() =>
-              open("/dashboard/savings")
-            }
-          />
+                    <ArrowRight className="h-4 w-4 text-white/15 transition duration-200 group-hover:translate-x-0.5 group-hover:text-sky-300/70" />
+                  </div>
 
-          <LauncherCard
-            title="Loans"
-            description="Manage lending and repayments"
-            icon={
-              <HandCoins
-                size={20}
-                strokeWidth={1.8}
-              />
-            }
-            onClick={() =>
-              open("/dashboard/loans")
-            }
-          />
-        </div>
+                  {/* TEXT */}
 
-        <p className="mt-8 text-center text-[9px] text-white/15">
-          GEO-SHUA SACCO Management
-        </p>
+                  <h2 className="mt-3 text-sm font-semibold text-white">
+                    {item.title}
+                  </h2>
+
+                  <p className="mt-1 text-[10px] leading-4 text-white/30">
+                    {item.description}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* =================================================
+             FOOTER
+          ================================================= */}
+
+          <div className="mt-5 flex items-center justify-center gap-1.5 text-[8px] font-medium uppercase tracking-[0.28em] text-white/15">
+            <ShieldCheck className="h-3 w-3" />
+            GEO-SHUA workspace
+          </div>
+        </section>
       </div>
     </main>
   );
 }
 
 /* =========================================================
-   LAUNCHER CARD
+   MAIN DASHBOARD PAGE
 ========================================================= */
 
-function LauncherCard({
-  title,
-  description,
-  icon,
-  onClick,
-}: {
-  title: string;
-  description: string;
-  icon: ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group flex min-w-0 items-center gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition hover:border-yellow-500/20 hover:bg-white/[0.045] active:scale-[0.99]"
-    >
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/[0.04] text-white/45 transition group-hover:bg-yellow-500/10 group-hover:text-yellow-400">
-        {icon}
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-white/75 group-hover:text-white">
-          {title}
-        </p>
-
-        <p className="mt-1 text-[10px] text-white/25">
-          {description}
-        </p>
-      </div>
-
-      <ArrowRight
-        size={16}
-        className="shrink-0 text-white/15 transition group-hover:translate-x-0.5 group-hover:text-yellow-400"
-      />
-    </button>
-  );
-}
-
-/* =========================================================
-   DASHBOARD PAGE
-========================================================= */
-
-export default function DashboardPage() {
+export default function DashboardPage(): ReactNode {
   const [mounted, setMounted] =
     useState(false);
 
@@ -2165,106 +1263,32 @@ export default function DashboardPage() {
   const [identityVerified, setIdentityVerified] =
     useState(false);
 
-  const [showDashboard, setShowDashboard] =
-    useState(false);
-
-  const [stats, setStats] =
-    useState<DashboardStats>(
-      DEFAULT_STATS,
-    );
-
-  const [activities, setActivities] =
-    useState<DashboardActivity[]>([]);
+  /* =======================================================
+     DASHBOARD DATA
+  ======================================================= */
 
   const [loading, setLoading] =
-    useState(true);
+    useState(false);
 
   const [refreshing, setRefreshing] =
     useState(false);
 
-  /* =======================================================
-     SECURITY STATUS
-  ======================================================= */
+  const [stats, setStats] =
+    useState<DashboardStats>({
+      members: 0,
+      activeMembers: 0,
+      loans: 0,
+      outstandingLoans: 0,
+      defaulters: 0,
+      unreadNotifications: 0,
+      savingsBalance: 0,
+      totalDeposits: 0,
+      totalWithdrawals: 0,
+      totalReversals: 0,
+    });
 
-  const checkSecurityStatus =
-    useCallback(async () => {
-      try {
-        const response =
-          await fetch(
-            "/api/auth/security/status",
-            {
-              method: "GET",
-              credentials: "same-origin",
-              cache: "no-store",
-              headers: {
-                Accept:
-                  "application/json",
-              },
-            },
-          );
-
-        if (
-          response.status === 401
-        ) {
-          setPinConfigured(false);
-          setIdentityVerified(false);
-          setShowDashboard(false);
-
-          return;
-        }
-
-        const json =
-          (await response.json()) as SecurityStatusResponse;
-
-        if (
-          json.authenticated ===
-          false
-        ) {
-          setPinConfigured(false);
-          setIdentityVerified(false);
-          setShowDashboard(false);
-
-          return;
-        }
-
-        const configured =
-          json.configured === true;
-
-        const verified =
-          json.verified === true;
-
-        setPinConfigured(
-          configured,
-        );
-
-        setIdentityVerified(
-          verified,
-        );
-
-        if (verified) {
-          setShowDashboard(true);
-        } else {
-          setShowDashboard(false);
-        }
-      } catch (error) {
-        console.error(
-          "Failed to check security status:",
-          error,
-        );
-
-        /*
-         * Fail closed.
-         *
-         * If the security service cannot be
-         * reached, do not expose the dashboard.
-         */
-        setPinConfigured(false);
-        setIdentityVerified(false);
-        setShowDashboard(false);
-      } finally {
-        setSecurityChecked(true);
-      }
-    }, []);
+  const [activities, setActivities] =
+    useState<DashboardActivity[]>([]);
 
   /* =======================================================
      MOUNT
@@ -2275,8 +1299,63 @@ export default function DashboardPage() {
   }, []);
 
   /* =======================================================
-     SECURITY STATUS LOAD
+     SECURITY STATUS
   ======================================================= */
+
+  const checkSecurityStatus =
+    useCallback(async () => {
+      try {
+        setSecurityChecked(false);
+
+        const response = await fetch(
+          "/api/auth/security/status",
+          {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+          },
+        );
+
+        const result =
+          (await response.json()) as SecurityStatusResponse;
+
+        if (
+          response.status === 401 ||
+          result.authenticated === false
+        ) {
+          setIdentityVerified(false);
+          setPinConfigured(false);
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            result.error ||
+              result.message ||
+              "Unable to check security status.",
+          );
+        }
+
+        const configured =
+          result.configured === true;
+
+        const verified =
+          result.verified === true;
+
+        setPinConfigured(configured);
+        setIdentityVerified(verified);
+      } catch (error) {
+        console.error(
+          "SECURITY STATUS ERROR:",
+          error,
+        );
+
+        setPinConfigured(false);
+        setIdentityVerified(false);
+      } finally {
+        setSecurityChecked(true);
+      }
+    }, []);
 
   useEffect(() => {
     if (!mounted) {
@@ -2290,41 +1369,37 @@ export default function DashboardPage() {
   ]);
 
   /* =======================================================
-     PIN SETUP SUCCESS
+     PIN SETUP COMPLETE
   ======================================================= */
 
   const handlePinSetupSuccess =
-    useCallback(() => {
+    () => {
       setPinConfigured(true);
       setIdentityVerified(false);
-      setShowDashboard(false);
-    }, []);
+    };
 
   /* =======================================================
-     IDENTITY SUCCESS
+     IDENTITY COMPLETE
+     
+     IMPORTANT:
+     After identity verification we stay on
+     /dashboard and show the NAVIGATOR.
+     
+     We do NOT automatically open the summary.
   ======================================================= */
 
   const handleIdentitySuccess =
-    useCallback(() => {
+    () => {
       setIdentityVerified(true);
-      setShowDashboard(false);
-    }, []);
+    };
 
   /* =======================================================
-     LOAD DASHBOARD
-  ======================================================= */
+     LOAD SUMMARY DATA
+======================================================= */
 
   const loadDashboard =
     useCallback(
       async (isRefresh = false) => {
-        if (!identityVerified) {
-          return;
-        }
-
-        if (!showDashboard) {
-          return;
-        }
-
         if (isRefresh) {
           setRefreshing(true);
         } else {
@@ -2342,614 +1417,421 @@ export default function DashboardPage() {
               fetch(
                 "/api/savings/summary",
                 {
-                  method: "GET",
-                  cache: "no-store",
                   credentials:
-                    "same-origin",
-                  headers: {
-                    Accept:
-                      "application/json",
-                  },
+                    "include",
+                  cache: "no-store",
                 },
               ),
 
-              fetch(
-                "/api/members",
-                {
-                  method: "GET",
-                  cache: "no-store",
-                  credentials:
-                    "same-origin",
-                  headers: {
-                    Accept:
-                      "application/json",
-                  },
-                },
-              ),
+              fetch("/api/members", {
+                credentials:
+                  "include",
+                cache: "no-store",
+              }),
 
-              fetch(
-                "/api/loans",
-                {
-                  method: "GET",
-                  cache: "no-store",
-                  credentials:
-                    "same-origin",
-                  headers: {
-                    Accept:
-                      "application/json",
-                  },
-                },
-              ),
+              fetch("/api/loans", {
+                credentials:
+                  "include",
+                cache: "no-store",
+              }),
 
               fetch(
                 "/api/notifications",
                 {
-                  method: "GET",
-                  cache: "no-store",
                   credentials:
-                    "same-origin",
-                  headers: {
-                    Accept:
-                      "application/json",
-                  },
+                    "include",
+                  cache: "no-store",
                 },
               ),
             ]);
 
-          /* =================================================
-             SAVINGS
-          ================================================= */
-
           let savings: SavingsSummary =
             {};
 
+          let members: MemberRecord[] =
+            [];
+
+          let loans: LoanRecord[] = [];
+
+          let notifications: NotificationRecord[] =
+            [];
+
+          /* SAVINGS */
+
           if (
             savingsResponse.status ===
-            "fulfilled"
+              "fulfilled" &&
+            savingsResponse.value.ok
           ) {
             try {
-              const response =
-                savingsResponse.value;
-
-              const json =
-                (await response.json()) as ApiResponse<SavingsSummary>;
-
-              if (
-                response.ok &&
-                json.success !== false
-              ) {
-                savings =
-                  json.data || {};
-              }
+              savings =
+                (await savingsResponse.value.json()) as SavingsSummary;
             } catch {
               savings = {};
             }
           }
 
-          /* =================================================
-             MEMBERS
-          ================================================= */
-
-          let members: MemberRecord[] =
-            [];
+          /* MEMBERS */
 
           if (
             membersResponse.status ===
-            "fulfilled"
+              "fulfilled" &&
+            membersResponse.value.ok
           ) {
             try {
-              const response =
-                membersResponse.value;
+              const result =
+                (await membersResponse.value.json()) as
+                  | ApiResponse<MemberRecord[]>
+                  | MemberRecord[];
 
-              const json =
-                (await response.json()) as ApiResponse;
-
-              if (
-                response.ok &&
-                json.success !== false
-              ) {
-                members =
-                  extractRecords<MemberRecord>(
-                    json,
-                  );
-              }
+              members =
+                unwrapArray(result);
             } catch {
               members = [];
             }
           }
 
-          /* =================================================
-             LOANS
-          ================================================= */
-
-          let loans: LoanRecord[] =
-            [];
+          /* LOANS */
 
           if (
             loansResponse.status ===
-            "fulfilled"
+              "fulfilled" &&
+            loansResponse.value.ok
           ) {
             try {
-              const response =
-                loansResponse.value;
+              const result =
+                (await loansResponse.value.json()) as
+                  | ApiResponse<LoanRecord[]>
+                  | LoanRecord[];
 
-              const json =
-                (await response.json()) as ApiResponse;
-
-              if (
-                response.ok &&
-                json.success !== false
-              ) {
-                loans =
-                  extractRecords<LoanRecord>(
-                    json,
-                  );
-              }
+              loans =
+                unwrapArray(result);
             } catch {
               loans = [];
             }
           }
 
-          /* =================================================
-             NOTIFICATIONS
-          ================================================= */
-
-          let notifications:
-            NotificationRecord[] = [];
+          /* NOTIFICATIONS */
 
           if (
             notificationsResponse.status ===
-            "fulfilled"
+              "fulfilled" &&
+            notificationsResponse.value.ok
           ) {
             try {
-              const response =
-                notificationsResponse.value;
+              const result =
+                (await notificationsResponse.value.json()) as
+                  | ApiResponse<NotificationRecord[]>
+                  | NotificationRecord[];
 
-              const json =
-                (await response.json()) as ApiResponse;
-
-              if (
-                response.ok &&
-                json.success !== false
-              ) {
-                notifications =
-                  extractRecords<NotificationRecord>(
-                    json,
-                  );
-              }
+              notifications =
+                unwrapArray(result);
             } catch {
               notifications = [];
             }
           }
 
-          /* =================================================
-             MEMBER STATS
-          ================================================= */
-
-          const memberCountFromSavings =
-            safeNumber(
-              savings.memberCount,
-            );
-
-          const totalMembers =
-            members.length > 0
-              ? members.length
-              : memberCountFromSavings;
+          /* MEMBERS */
 
           const activeMembers =
-            members.length > 0
-              ? members.filter(
-                  (member) => {
-                    if (
-                      member.isActive ===
-                      true
-                    ) {
-                      return true;
-                    }
-
-                    return (
-                      typeof member.status ===
-                        "string" &&
-                      member.status
-                        .trim()
-                        .toLowerCase() ===
-                        "active"
-                    );
-                  },
-                ).length
-              : memberCountFromSavings;
-
-          /* =================================================
-             LOAN STATS
-          ================================================= */
-
-          const loanCount =
-            loans.length;
-
-          let outstandingLoans = 0;
-          let defaulters = 0;
-
-          for (const loan of loans) {
-            const outstanding =
-              safeNumber(
-                loan.outstandingBalance ??
-                  loan.remainingBalance ??
-                  loan.balance,
-              );
-
-            outstandingLoans +=
-              Math.max(
-                0,
-                outstanding,
-              );
-
-            const status = (
-              loan.status ||
-              loan.loanStatus ||
-              ""
-            )
-              .trim()
-              .toLowerCase();
-
-            if (
-              [
-                "default",
-                "defaulted",
-                "overdue",
-                "defaulter",
-              ].includes(status)
-            ) {
-              defaulters += 1;
-            }
-          }
-
-          /* =================================================
-             NOTIFICATIONS
-          ================================================= */
-
-          const notificationCount =
-            notifications.filter(
-              (notification) => {
-                if (
-                  notification.read ===
-                  true
-                ) {
-                  return false;
-                }
-
-                return (
-                  notification.status
-                    ?.trim()
-                    .toLowerCase() !==
-                  "read"
-                );
-              },
+            members.filter(
+              (member) =>
+                member.status?.toLowerCase() ===
+                "active",
             ).length;
 
-          /* =================================================
-             SAVINGS VALUES
-          ================================================= */
+          /* LOANS */
+
+          const activeLoans =
+            loans.filter((loan) => {
+              const status =
+                loan.status?.toLowerCase();
+
+              return (
+                status !== "closed" &&
+                status !== "completed" &&
+                status !== "repaid"
+              );
+            });
+
+          const outstandingLoans =
+            activeLoans.reduce(
+              (total, loan) =>
+                total +
+                Number(
+                  loan.outstandingBalance ??
+                    loan.balance ??
+                    loan.amount ??
+                    loan.principal ??
+                    0,
+                ),
+              0,
+            );
+
+          const defaulters =
+            loans.filter((loan) => {
+              const status =
+                loan.status?.toLowerCase();
+
+              return (
+                status === "defaulted" ||
+                status === "overdue" ||
+                status === "defaulter"
+              );
+            }).length;
+
+          /* NOTIFICATIONS */
+
+          const unreadNotifications =
+            notifications.filter(
+              (notification) =>
+                notification.read !== true &&
+                notification.isRead !== true,
+            ).length;
+
+          /* SAVINGS */
 
           const savingsBalance =
-            safeNumber(
-              savings.totalBalance,
+            Number(
+              savings.balance ??
+                savings.totalBalance ??
+                0,
             );
 
-          const savingsDeposits =
-            safeNumber(
-              savings.totalDeposits,
+          const totalDeposits =
+            Number(
+              savings.totalDeposits ?? 0,
             );
 
-          const savingsWithdrawals =
-            Math.abs(
-              safeNumber(
-                savings.totalAdjustments,
-              ),
+          const totalWithdrawals =
+            Number(
+              savings.totalWithdrawals ?? 0,
             );
 
-          const savingsReversals =
-            Math.abs(
-              safeNumber(
-                savings.totalReversals,
-              ),
+          const totalReversals =
+            Number(
+              savings.totalReversals ?? 0,
             );
-
-          /* =================================================
-             STATS
-          ================================================= */
 
           setStats({
-            members:
-              totalMembers,
-
-            activeMembers:
-              activeMembers,
-
-            savings:
-              savingsBalance,
-
-            deposits:
-              savingsDeposits,
-
-            withdrawals:
-              savingsWithdrawals,
-
-            reversals:
-              savingsReversals,
-
-            loans:
-              loanCount,
-
-            outstandingLoans:
-              outstandingLoans,
-
-            defaulters:
-              defaulters,
-
-            notifications:
-              notificationCount,
+            members: members.length,
+            activeMembers,
+            loans: activeLoans.length,
+            outstandingLoans,
+            defaulters,
+            unreadNotifications,
+            savingsBalance,
+            totalDeposits,
+            totalWithdrawals,
+            totalReversals,
           });
 
-          /* =================================================
-             RECENT ACTIVITY
-          ================================================= */
+          /* RECENT MEMBERS */
 
-          const nextActivities: Array<
-            DashboardActivity & {
-              sortTimestamp: number;
-            }
-          > = [];
+          const recentMembers =
+            [...members]
+              .sort(
+                (a, b) =>
+                  new Date(
+                    b.createdAt ?? 0,
+                  ).getTime() -
+                  new Date(
+                    a.createdAt ?? 0,
+                  ).getTime(),
+              )
+              .slice(0, 3)
+              .map((member) => ({
+                id:
+                  member.id ??
+                  member._id ??
+                  member.memberId ??
+                  crypto.randomUUID(),
 
-          members
-            .slice()
-            .sort(
-              (a, b) =>
-                new Date(
-                  getDate(b),
-                ).getTime() -
-                new Date(
-                  getDate(a),
-                ).getTime(),
-            )
-            .slice(0, 5)
-            .forEach(
-              (member, index) => {
-                const name =
-                  member.name ||
-                  member.fullName ||
-                  [
-                    member.firstName,
-                    member.middleName,
-                    member.lastName,
-                  ]
-                    .filter(Boolean)
-                    .join(" ") ||
-                  "Member";
+                title: "New member",
 
-                const date =
-                  getDate(member);
+                description:
+                  getMemberName(member),
 
-                nextActivities.push({
-                  id: `member-${getId(
-                    member,
-                    String(index),
-                  )}`,
+                date: formatDate(
+                  member.createdAt,
+                ),
 
-                  title:
-                    "Member activity",
+                type:
+                  "member" as const,
+              }));
 
-                  description:
-                    `${name} was recently recorded.`,
+          /* RECENT LOANS */
 
-                  time:
-                    formatRelativeTime(
-                      date,
-                    ),
+          const recentLoans =
+            [...loans]
+              .sort(
+                (a, b) =>
+                  new Date(
+                    b.createdAt ?? 0,
+                  ).getTime() -
+                  new Date(
+                    a.createdAt ?? 0,
+                  ).getTime(),
+              )
+              .slice(0, 3)
+              .map((loan) => ({
+                id:
+                  loan.id ??
+                  loan._id ??
+                  loan.loanId ??
+                  crypto.randomUUID(),
 
-                  type:
-                    "member",
+                title: "Loan activity",
 
-                  sortTimestamp:
-                    new Date(
-                      date,
-                    ).getTime() || 0,
-                });
-              },
-            );
+                description:
+                  loan.loanId ??
+                  loan.memberId ??
+                  "Loan record",
 
-          loans
-            .slice()
-            .sort(
-              (a, b) =>
-                new Date(
-                  getDate(b),
-                ).getTime() -
-                new Date(
-                  getDate(a),
-                ).getTime(),
-            )
-            .slice(0, 5)
-            .forEach(
-              (loan, index) => {
-                const date =
-                  getDate(loan);
+                amount: Number(
+                  loan.amount ??
+                    loan.principal ??
+                    0,
+                ),
 
-                nextActivities.push({
-                  id: `loan-${getId(
-                    loan,
-                    String(index),
-                  )}`,
+                date: formatDate(
+                  loan.createdAt,
+                ),
 
-                  title:
-                    "Loan activity",
+                type:
+                  "loan" as const,
+              }));
 
-                  description:
-                    loan.memberName
-                      ? `${loan.memberName} has loan activity.`
-                      : "A loan record was recently updated.",
+          /* RECENT NOTIFICATIONS */
 
-                  time:
-                    formatRelativeTime(
-                      date,
-                    ),
-
-                  type:
-                    "loan",
-
-                  sortTimestamp:
-                    new Date(
-                      date,
-                    ).getTime() || 0,
-                });
-              },
-            );
-
-          notifications
-            .slice()
-            .sort(
-              (a, b) =>
-                new Date(
-                  getDate(b),
-                ).getTime() -
-                new Date(
-                  getDate(a),
-                ).getTime(),
-            )
-            .slice(0, 5)
-            .forEach(
-              (
-                notification,
-                index,
-              ) => {
-                const date =
-                  getDate(
-                    notification,
-                  );
-
-                nextActivities.push({
-                  id: `notification-${getId(
-                    notification,
-                    String(index),
-                  )}`,
+          const recentNotifications =
+            [...notifications]
+              .sort(
+                (a, b) =>
+                  new Date(
+                    b.createdAt ?? 0,
+                  ).getTime() -
+                  new Date(
+                    a.createdAt ?? 0,
+                  ).getTime(),
+              )
+              .slice(0, 3)
+              .map(
+                (
+                  notification,
+                ) => ({
+                  id:
+                    notification.id ??
+                    notification._id ??
+                    crypto.randomUUID(),
 
                   title:
-                    notification.title ||
+                    notification.title ??
                     "Notification",
 
                   description:
-                    notification.message ||
-                    notification.description ||
-                    "New notification.",
+                    notification.message ??
+                    "GEO-SHUA notification",
 
-                  time:
-                    formatRelativeTime(
-                      date,
-                    ),
+                  date: formatDate(
+                    notification.createdAt,
+                  ),
 
                   type:
-                    "notification",
-
-                  sortTimestamp:
-                    new Date(
-                      date,
-                    ).getTime() || 0,
-                });
-              },
-            );
+                    "notification" as const,
+                }),
+              );
 
           setActivities(
-            nextActivities
-              .sort(
-                (a, b) =>
-                  b.sortTimestamp -
-                  a.sortTimestamp,
-              )
-              .slice(0, 12)
-              .map(
-                ({
-                  sortTimestamp:
-                    _sortTimestamp,
-                  ...activity
-                }) => activity,
-              ),
-          );
-        } catch (error) {
-          console.error(
-            "Failed to load dashboard:",
-            error,
+            [
+              ...recentMembers,
+              ...recentLoans,
+              ...recentNotifications,
+            ].slice(0, 6),
           );
         } finally {
           setLoading(false);
           setRefreshing(false);
         }
       },
-      [
-        identityVerified,
-        showDashboard,
-      ],
+      [],
     );
 
   /* =======================================================
-     DASHBOARD LOAD
+     DASHBOARD CARDS
+     
+     Kept here because /dashboard/summery will use them
+     through DashboardUI.
   ======================================================= */
 
-  useEffect(() => {
-    if (
-      !mounted ||
-      !securityChecked ||
-      !identityVerified ||
-      !showDashboard
-    ) {
-      return;
-    }
+  const dashboardCards =
+    useMemo(
+      () => [
+        {
+          title: "Members",
+          value:
+            stats.members.toLocaleString(),
+          secondary: `${stats.activeMembers.toLocaleString()} active`,
+          icon: Users,
+        },
 
-    void loadDashboard();
-  }, [
-    mounted,
-    securityChecked,
-    identityVerified,
-    showDashboard,
-    loadDashboard,
-  ]);
+        {
+          title: "Savings",
+          value: formatKES(
+            stats.savingsBalance,
+          ),
+          secondary: "Current balance",
+          icon: Wallet,
+        },
+
+        {
+          title: "Loans",
+          value:
+            stats.loans.toLocaleString(),
+          secondary: formatKES(
+            stats.outstandingLoans,
+          ),
+          icon: HandCoins,
+        },
+
+        {
+          title: "Notifications",
+          value:
+            stats.unreadNotifications.toLocaleString(),
+          secondary:
+            stats.unreadNotifications ===
+            1
+              ? "Unread notification"
+              : "Unread notifications",
+          icon: Bell,
+        },
+      ],
+      [stats],
+    );
+
+  void dashboardCards;
 
   /* =======================================================
-     REFRESH
+     HYDRATION
   ======================================================= */
 
-  const handleRefresh =
-    useCallback(() => {
-      if (
-        loading === true ||
-        refreshing === true
-      ) {
-        return;
-      }
-
-      void loadDashboard(true);
-    }, [
-      loadDashboard,
-      loading,
-      refreshing,
-    ]);
+  if (!mounted) {
+    return <DashboardLoading />;
+  }
 
   /* =======================================================
-     HYDRATION / SECURITY LOADING
+     SECURITY LOADING
   ======================================================= */
 
-  if (
-    mounted === false ||
-    securityChecked === false
-  ) {
-    return <SecurityLoading />;
+  if (!securityChecked) {
+    return <DashboardLoading />;
   }
 
   /* =======================================================
      PIN SETUP
   ======================================================= */
 
-  if (
-    pinConfigured === false
-  ) {
+  if (!pinConfigured) {
     return (
       <PinSetupScreen
         onSuccess={
@@ -2963,9 +1845,7 @@ export default function DashboardPage() {
      IDENTITY
   ======================================================= */
 
-  if (
-    identityVerified === false
-  ) {
+  if (!identityVerified) {
     return (
       <IdentityScreen
         onSuccess={
@@ -2976,1535 +1856,10 @@ export default function DashboardPage() {
   }
 
   /* =======================================================
-     LAUNCHER
+     AFTER LOGIN → NAVIGATOR
+     
+     THIS IS NOW ALWAYS THE DEFAULT.
   ======================================================= */
 
-  if (
-    showDashboard === false
-  ) {
-    return (
-      <GeoShuaLauncher
-        onDashboard={() =>
-          setShowDashboard(true)
-        }
-      />
-    );
-  }
-
-  /* =======================================================
-     MAIN DASHBOARD
-  ======================================================= */
-
-  return (
-    <main className="min-h-[100dvh] w-full max-w-full overflow-x-clip bg-[#050505] text-white">
-      <TopBar />
-
-      <div className="w-full pt-16">
-        <div className="mx-auto w-full max-w-[1800px] px-4 py-5 sm:px-6 sm:py-8 lg:px-8 lg:py-10 xl:px-10 2xl:px-12">
-          {/* =================================================
-              MOBILE DASHBOARD
-          ================================================= */}
-
-          <div className="lg:hidden">
-            {loading === true ? (
-              <MobileDashboardLoading />
-            ) : (
-              <MobileDashboard
-                stats={stats}
-                activities={
-                  activities
-                }
-                onRefresh={
-                  handleRefresh
-                }
-                refreshing={
-                  refreshing === true
-                }
-              />
-            )}
-          </div>
-
-          {/* =================================================
-              DESKTOP DASHBOARD
-          ================================================= */}
-
-          <div className="hidden lg:block">
-            <section className="mb-6">
-              <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-yellow-500/10 text-yellow-400">
-                      <FileText
-                        size={17}
-                        strokeWidth={1.8}
-                      />
-                    </div>
-
-                    <span className="text-xs font-medium uppercase tracking-[0.22em] text-yellow-500/60">
-                      Overview
-                    </span>
-                  </div>
-
-                  <h1 className="mt-3 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-                    Dashboard
-                  </h1>
-
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-white/35">
-                    A clean view of
-                    GEO-SHUA members,
-                    savings, loans and
-                    account activity.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={
-                    handleRefresh
-                  }
-                  disabled={
-                    loading === true ||
-                    refreshing === true
-                  }
-                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-4 text-sm font-medium text-white/55 transition hover:border-white/[0.14] hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 lg:w-auto"
-                >
-                  <RefreshCw
-                    size={16}
-                    strokeWidth={1.8}
-                    className={
-                      refreshing
-                        ? "animate-spin"
-                        : ""
-                    }
-                  />
-
-                  Refresh
-                </button>
-              </div>
-            </section>
-
-            {loading === true ? (
-              <DashboardLoading />
-            ) : (
-              <>
-                {/* STATS */}
-
-                <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-                  <StatCard
-                    title="Members"
-                    value={
-                      stats.members
-                    }
-                    subtitle={`${stats.activeMembers.toLocaleString()} active`}
-                    icon={
-                      <Users
-                        size={19}
-                        strokeWidth={1.8}
-                      />
-                    }
-                    href="/dashboard/members"
-                  />
-
-                  <StatCard
-                    title="Savings"
-                    value={formatCurrency(
-                      stats.savings,
-                    )}
-                    subtitle="Current ledger balance"
-                    icon={
-                      <Wallet
-                        size={19}
-                        strokeWidth={1.8}
-                      />
-                    }
-                    href="/dashboard/savings"
-                  />
-
-                  <StatCard
-                    title="Loans"
-                    value={
-                      stats.loans
-                    }
-                    subtitle={formatCurrency(
-                      stats.outstandingLoans,
-                    )}
-                    icon={
-                      <HandCoins
-                        size={19}
-                        strokeWidth={1.8}
-                      />
-                    }
-                    href="/dashboard/loans"
-                  />
-
-                  <StatCard
-                    title="Defaulters"
-                    value={
-                      stats.defaulters
-                    }
-                    subtitle="Members requiring attention"
-                    icon={
-                      <Bell
-                        size={19}
-                        strokeWidth={1.8}
-                      />
-                    }
-                    href="/dashboard/loans"
-                  />
-                </section>
-
-                {/* FINANCIAL BREAKDOWN */}
-
-                <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <MetricCard
-                    label="Deposits"
-                    value={formatCurrency(
-                      stats.deposits,
-                    )}
-                  />
-
-                  <MetricCard
-                    label="Withdrawals"
-                    value={formatCurrency(
-                      stats.withdrawals,
-                    )}
-                  />
-
-                  <MetricCard
-                    label="Reversals"
-                    value={formatCurrency(
-                      stats.reversals,
-                    )}
-                  />
-
-                  <MetricCard
-                    label="Net Savings"
-                    value={formatCurrency(
-                      stats.savings,
-                    )}
-                  />
-                </section>
-
-                {/* MAIN GRID */}
-
-                <section className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
-                  {/* RECENT ACTIVITY */}
-
-                  <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
-                    <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-4 sm:px-5">
-                      <div>
-                        <h2 className="text-sm font-semibold text-white">
-                          Recent Activity
-                        </h2>
-
-                        <p className="mt-1 text-xs text-white/30">
-                          Latest recorded
-                          activity
-                        </p>
-                      </div>
-
-                      <span className="rounded-lg bg-white/[0.04] px-2.5 py-1 text-[10px] text-white/25">
-                        Live data
-                      </span>
-                    </div>
-
-                    {activities.length ===
-                    0 ? (
-                      <div className="flex min-h-[180px] items-center justify-center p-6">
-                        <div className="text-center">
-                          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-white/25">
-                            <Bell
-                              size={19}
-                              strokeWidth={1.5}
-                            />
-                          </div>
-
-                          <p className="mt-4 text-sm font-medium text-white/45">
-                            No recent
-                            activity
-                          </p>
-
-                          <p className="mt-2 text-xs text-white/25">
-                            New records
-                            will appear
-                            here
-                            automatically.
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="max-h-[300px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
-                        <div className="divide-y divide-white/[0.05]">
-                          {activities.map(
-                            (
-                              activity,
-                            ) => (
-                              <ActivityRow
-                                key={
-                                  activity.id
-                                }
-                                activity={
-                                  activity
-                                }
-                              />
-                            ),
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* QUICK ACCESS */}
-
-                  <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
-                    <div className="border-b border-white/[0.07] px-4 py-4 sm:px-5">
-                      <h2 className="text-sm font-semibold text-white">
-                        Quick Access
-                      </h2>
-
-                      <p className="mt-1 text-xs text-white/30">
-                        Core GEO-SHUA
-                        modules
-                      </p>
-                    </div>
-
-                    <div className="grid gap-1 p-3 sm:p-4">
-                      <QuickAccess
-                        label="Members"
-                        description="Manage member records"
-                        icon={
-                          <Users
-                            size={18}
-                            strokeWidth={1.8}
-                          />
-                        }
-                        href="/dashboard/members"
-                      />
-
-                      <QuickAccess
-                        label="Savings"
-                        description="View savings records"
-                        icon={
-                          <Wallet
-                            size={18}
-                            strokeWidth={1.8}
-                          />
-                        }
-                        href="/dashboard/savings"
-                      />
-
-                      <QuickAccess
-                        label="Loans"
-                        description="Manage loans and repayments"
-                        icon={
-                          <HandCoins
-                            size={18}
-                            strokeWidth={1.8}
-                          />
-                        }
-                        href="/dashboard/loans"
-                      />
-
-                      <QuickAccess
-                        label="Notifications"
-                        description={`${stats.notifications.toLocaleString()} unread notifications`}
-                        icon={
-                          <Bell
-                            size={18}
-                            strokeWidth={1.8}
-                          />
-                        }
-                        href="/dashboard/notifications"
-                      />
-                    </div>
-                  </div>
-                </section>
-
-                {/* MEMBER + SAVINGS */}
-
-                <section className="mt-5 grid gap-5 md:grid-cols-2">
-                  <OverviewCard
-                    eyebrow="Member Overview"
-                    value={stats.members.toLocaleString()}
-                    description="Registered members"
-                    icon={
-                      <Users
-                        size={19}
-                        strokeWidth={1.8}
-                      />
-                    }
-                    footerLabel="Manage members"
-                    footerHref="/dashboard/members"
-                    progress={
-                      stats.members > 0
-                        ? Math.min(
-                            100,
-                            (stats.activeMembers /
-                              stats.members) *
-                              100,
-                          )
-                        : 0
-                    }
-                    progressLabel="Active members"
-                    progressValue={
-                      stats.members > 0
-                        ? `${Math.round(
-                            (stats.activeMembers /
-                              stats.members) *
-                              100,
-                          )}%`
-                        : "0%"
-                    }
-                  />
-
-                  <OverviewCard
-                    eyebrow="Savings Overview"
-                    value={formatCurrency(
-                      stats.savings,
-                    )}
-                    description="Authoritative ledger balance"
-                    icon={
-                      <Wallet
-                        size={19}
-                        strokeWidth={1.8}
-                      />
-                    }
-                    footerLabel="Open savings"
-                    footerHref="/dashboard/savings"
-                    metrics={[
-                      {
-                        label:
-                          "Deposits",
-                        value:
-                          formatCurrency(
-                            stats.deposits,
-                          ),
-                      },
-                      {
-                        label:
-                          "Withdrawals",
-                        value:
-                          formatCurrency(
-                            stats.withdrawals,
-                          ),
-                      },
-                      {
-                        label:
-                          "Reversals",
-                        value:
-                          formatCurrency(
-                            stats.reversals,
-                          ),
-                      },
-                    ]}
-                  />
-                </section>
-
-                {/* LOANS */}
-
-                <section className="mt-5">
-                  <LoanOverviewCard
-                    loans={
-                      stats.loans
-                    }
-                    outstanding={
-                      stats.outstandingLoans
-                    }
-                    defaulters={
-                      stats.defaulters
-                    }
-                  />
-                </section>
-
-                {/* FOOTER */}
-
-                <div className="mt-5 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-[10px] text-white/20">
-                    GEO-SHUA SACCO
-                    Management
-                  </p>
-
-                  <p className="text-[10px] text-white/20">
-                    Financial data
-                    sourced from
-                    domain APIs
-                  </p>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-/* =========================================================
-   MOBILE DASHBOARD
-========================================================= */
-
-function MobileDashboard({
-  stats,
-  activities,
-  onRefresh,
-  refreshing,
-}: {
-  stats: DashboardStats;
-  activities: DashboardActivity[];
-  onRefresh: () => void;
-  refreshing: boolean;
-}) {
-  const [amountsHidden, setAmountsHidden] =
-    useState(false);
-
-  /*
-   * This is a client-side reconciliation
-   * indicator only.
-   *
-   * stats.savings remains the authoritative
-   * backend balance.
-   */
-  const calculatedSavings =
-    stats.deposits -
-    stats.withdrawals -
-    stats.reversals;
-
-  const displayAmount = (
-    value: number,
-  ): string => {
-    if (amountsHidden) {
-      return "KES ••••••";
-    }
-
-    return formatCurrency(value);
-  };
-
-  return (
-    <div className="space-y-3">
-      {/* HEADER */}
-
-      <section className="flex items-center justify-between px-1 pb-1">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#1683ff] shadow-[0_0_10px_rgba(22,131,255,0.8)]" />
-
-            <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#1683ff]">
-              GEO-SHUA
-            </span>
-          </div>
-
-          <h1 className="mt-1 text-lg font-semibold tracking-tight text-white">
-            Dashboard
-          </h1>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() =>
-              setAmountsHidden(
-                (current) =>
-                  !current,
-              )
-            }
-            aria-label={
-              amountsHidden
-                ? "Show amounts"
-                : "Hide amounts"
-            }
-            aria-pressed={amountsHidden}
-            title={
-              amountsHidden
-                ? "Show amounts"
-                : "Hide amounts"
-            }
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-white/55 transition active:scale-95 hover:bg-white/[0.055] hover:text-white/75"
-          >
-            {amountsHidden ? (
-              <Eye
-                size={16}
-                strokeWidth={1.8}
-              />
-            ) : (
-              <EyeOff
-                size={16}
-                strokeWidth={1.8}
-              />
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={
-              refreshing === true
-            }
-            aria-label="Refresh dashboard"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-white/55 transition active:scale-95 disabled:opacity-40"
-          >
-            <RefreshCw
-              size={16}
-              strokeWidth={1.8}
-              className={
-                refreshing
-                  ? "animate-spin"
-                  : ""
-              }
-            />
-          </button>
-        </div>
-      </section>
-
-      {/* MEMBERS */}
-
-      <button
-        type="button"
-        onClick={() =>
-          window.location.assign(
-            "/dashboard/members",
-          )
-        }
-        className="group relative w-full overflow-hidden rounded-[22px] border border-[#1683ff]/15 bg-gradient-to-br from-[#0b1c30] via-[#081521] to-[#060b11] p-4 text-left shadow-[0_12px_35px_rgba(0,0,0,0.25)] transition active:scale-[0.99]"
-      >
-        <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-[#1683ff]/10 blur-2xl" />
-
-        <div className="relative">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1683ff]/10 text-[#4da3ff]">
-                <Users
-                  size={17}
-                  strokeWidth={1.8}
-                />
-              </div>
-
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
-                  Members
-                </p>
-
-                <p className="text-[9px] text-white/20">
-                  Membership base
-                </p>
-              </div>
-            </div>
-
-            <ArrowRight
-              size={15}
-              className="text-white/20"
-            />
-          </div>
-
-          <div className="mt-3 flex items-end justify-between">
-            <div>
-              <p className="text-[28px] font-semibold leading-none tracking-tight text-white">
-                {stats.members.toLocaleString()}
-              </p>
-
-              <p className="mt-1 text-[10px] text-white/30">
-                registered members
-              </p>
-            </div>
-
-            <div className="text-right">
-              <p className="text-sm font-semibold text-[#4da3ff]">
-                {stats.activeMembers.toLocaleString()}
-              </p>
-
-              <p className="text-[9px] uppercase tracking-[0.12em] text-white/25">
-                active
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/[0.06]">
-            <div
-              className="h-full rounded-full bg-[#1683ff] transition-all"
-              style={{
-                width: `${
-                  stats.members > 0
-                    ? Math.min(
-                        100,
-                        (stats.activeMembers /
-                          stats.members) *
-                          100,
-                      )
-                    : 0
-                }%`,
-              }}
-            />
-          </div>
-
-          <div className="mt-2 flex items-center justify-between">
-            <span className="text-[9px] text-white/25">
-              Active membership
-            </span>
-
-            <span className="text-[9px] font-medium text-white/40">
-              {stats.members > 0
-                ? `${Math.round(
-                    (stats.activeMembers /
-                      stats.members) *
-                      100,
-                  )}%`
-                : "0%"}
-            </span>
-          </div>
-        </div>
-      </button>
-
-      {/* SAVINGS */}
-
-      <button
-        type="button"
-        onClick={() =>
-          window.location.assign(
-            "/dashboard/savings",
-          )
-        }
-        className="group relative w-full overflow-hidden rounded-[22px] border border-[#1683ff]/15 bg-gradient-to-br from-[#0a1928] via-[#07131e] to-[#060b11] p-4 text-left shadow-[0_12px_35px_rgba(0,0,0,0.25)] transition active:scale-[0.99]"
-      >
-        <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-[#1683ff]/10 blur-3xl" />
-
-        <div className="relative">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1683ff]/10 text-[#4da3ff]">
-                <Wallet
-                  size={17}
-                  strokeWidth={1.8}
-                />
-              </div>
-
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
-                  Savings
-                </p>
-
-                <p className="text-[9px] text-white/20">
-                  Authoritative ledger
-                </p>
-              </div>
-            </div>
-
-            <ArrowRight
-              size={15}
-              className="text-white/20"
-            />
-          </div>
-
-          <div className="mt-3">
-            <p className="truncate text-[25px] font-semibold leading-none tracking-tight text-white">
-              {displayAmount(
-                stats.savings,
-              )}
-            </p>
-
-            <p className="mt-1 text-[10px] text-white/30">
-              current savings
-              balance
-            </p>
-          </div>
-
-          <div className="mt-4 border-t border-white/[0.06] pt-3">
-            <div className="flex items-center justify-between">
-              <p className="text-[8px] font-semibold uppercase tracking-[0.12em] text-white/20">
-                Balance calculation
-              </p>
-
-              <span
-                className={
-                  Math.abs(
-                    calculatedSavings -
-                      stats.savings,
-                  ) < 0.01
-                    ? "text-[8px] font-medium text-[#4da3ff]/70"
-                    : "text-[8px] font-medium text-red-400"
-                }
-              >
-                {Math.abs(
-                  calculatedSavings -
-                    stats.savings,
-                ) < 0.01
-                  ? "Balanced"
-                  : "Check ledger"}
-              </span>
-            </div>
-
-            <div className="mt-2 space-y-1.5">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[9px] text-white/30">
-                  Deposits
-                </span>
-
-                <span className="text-[10px] font-medium text-white/55">
-                  {displayAmount(
-                    stats.deposits,
-                  )}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[9px] text-white/30">
-                  − Withdrawals
-                </span>
-
-                <span className="text-[10px] font-medium text-white/50">
-                  {displayAmount(
-                    stats.withdrawals,
-                  )}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[9px] text-white/30">
-                  − Reversals
-                </span>
-
-                <span className="text-[10px] font-medium text-white/50">
-                  {displayAmount(
-                    stats.reversals,
-                  )}
-                </span>
-              </div>
-
-              <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/[0.06] pt-2">
-                <span className="text-[9px] font-medium text-white/40">
-                  Current balance
-                </span>
-
-                <span className="text-[10px] font-semibold text-[#4da3ff]">
-                  {displayAmount(
-                    calculatedSavings,
-                  )}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </button>
-
-      {/* LOANS */}
-
-      <button
-        type="button"
-        onClick={() =>
-          window.location.assign(
-            "/dashboard/loans",
-          )
-        }
-        className="group relative w-full overflow-hidden rounded-[22px] border border-[#1683ff]/15 bg-gradient-to-br from-[#0a1826] via-[#07131e] to-[#060b11] p-4 text-left shadow-[0_12px_35px_rgba(0,0,0,0.25)] transition active:scale-[0.99]"
-      >
-        <div className="absolute -bottom-12 -right-10 h-32 w-32 rounded-full bg-[#1683ff]/10 blur-3xl" />
-
-        <div className="relative">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1683ff]/10 text-[#4da3ff]">
-                <HandCoins
-                  size={17}
-                  strokeWidth={1.8}
-                />
-              </div>
-
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
-                  Loans
-                </p>
-
-                <p className="text-[9px] text-white/20">
-                  Lending portfolio
-                </p>
-              </div>
-            </div>
-
-            <ArrowRight
-              size={15}
-              className="text-white/20"
-            />
-          </div>
-
-          <div className="mt-3">
-            <p className="truncate text-[25px] font-semibold leading-none tracking-tight text-white">
-              {displayAmount(
-                stats.outstandingLoans,
-              )}
-            </p>
-
-            <p className="mt-1 text-[10px] text-white/30">
-              outstanding
-              balance
-            </p>
-          </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/[0.06] pt-3">
-            <div>
-              <p className="text-sm font-semibold text-white/80">
-                {stats.loans.toLocaleString()}
-              </p>
-
-              <p className="mt-0.5 text-[9px] uppercase tracking-[0.12em] text-white/25">
-                Active loans
-              </p>
-            </div>
-
-            <div className="text-right">
-              <p
-                className={`text-sm font-semibold ${
-                  stats.defaulters > 0
-                    ? "text-red-400"
-                    : "text-[#4da3ff]"
-                }`}
-              >
-                {stats.defaulters.toLocaleString()}
-              </p>
-
-              <p className="mt-0.5 text-[9px] uppercase tracking-[0.12em] text-white/25">
-                Defaulters
-              </p>
-            </div>
-          </div>
-        </div>
-      </button>
-
-      {/* SMS INGESTION MONITOR */}
-
-      <SmsInboxMonitor />
-
-      {/* RECENT ACTIVITY */}
-
-      <section className="overflow-hidden rounded-[22px] border border-white/[0.07] bg-white/[0.025]">
-        <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3.5">
-          <div>
-            <p className="text-xs font-semibold text-white/75">
-              Recent activity
-            </p>
-
-            <p className="mt-0.5 text-[9px] text-white/25">
-              Latest system
-              records
-            </p>
-          </div>
-
-          <span className="flex items-center gap-1.5 text-[9px] text-[#4da3ff]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#1683ff]" />
-            Live
-          </span>
-        </div>
-
-        {activities.length === 0 ? (
-          <div className="px-4 py-8 text-center">
-            <Bell
-              size={18}
-              className="mx-auto text-white/20"
-            />
-
-            <p className="mt-2 text-xs text-white/35">
-              No recent activity
-            </p>
-          </div>
-        ) : (
-          <div className="max-h-[260px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10">
-            {activities
-              .slice(0, 6)
-              .map(
-                (activity) => (
-                  <MobileActivityRow
-                    key={
-                      activity.id
-                    }
-                    activity={
-                      activity
-                    }
-                  />
-                ),
-              )}
-          </div>
-        )}
-      </section>
-
-      {/* FOOTER */}
-
-      <div className="px-1 pb-3 pt-1 text-center">
-        <p className="text-[9px] text-white/15">
-          GEO-SHUA SACCO
-          Management
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   MOBILE ACTIVITY
-========================================================= */
-
-function MobileActivityRow({
-  activity,
-}: {
-  activity: DashboardActivity;
-}) {
-  const icons: Record<
-    DashboardActivity["type"],
-    ReactNode
-  > = {
-    member: (
-      <Users
-        size={14}
-        strokeWidth={1.8}
-      />
-    ),
-
-    saving: (
-      <Wallet
-        size={14}
-        strokeWidth={1.8}
-      />
-    ),
-
-    loan: (
-      <HandCoins
-        size={14}
-        strokeWidth={1.8}
-      />
-    ),
-
-    notification: (
-      <Bell
-        size={14}
-        strokeWidth={1.8}
-      />
-    ),
-  };
-
-  return (
-    <div className="flex min-w-0 items-center gap-3 border-b border-white/[0.045] px-4 py-3 last:border-b-0">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1683ff]/[0.07] text-[#4da3ff]/70">
-        {icons[activity.type]}
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[10px] font-medium text-white/60">
-          {activity.title}
-        </p>
-
-        <p className="mt-0.5 truncate text-[9px] text-white/20">
-          {activity.description}
-        </p>
-      </div>
-
-      <span className="shrink-0 text-[8px] text-white/20">
-        {activity.time}
-      </span>
-    </div>
-  );
-}
-
-/* =========================================================
-   OVERVIEW CARD
-========================================================= */
-
-function OverviewCard({
-  eyebrow,
-  value,
-  description,
-  icon,
-  footerLabel,
-  footerHref,
-  progress,
-  progressLabel,
-  progressValue,
-  metrics,
-}: {
-  eyebrow: string;
-  value: string;
-  description: string;
-  icon: ReactNode;
-  footerLabel: string;
-  footerHref: string;
-  progress?: number;
-  progressLabel?: string;
-  progressValue?: string;
-  metrics?: {
-    label: string;
-    value: string;
-  }[];
-}) {
-  return (
-    <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-xs uppercase tracking-[0.18em] text-white/25">
-            {eyebrow}
-          </p>
-
-          <p className="mt-3 text-3xl font-semibold text-white">
-            {value}
-          </p>
-
-          <p className="mt-1 text-xs text-white/30">
-            {description}
-          </p>
-        </div>
-
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
-          {icon}
-        </div>
-      </div>
-
-      {progress !==
-        undefined && (
-        <div className="mt-5">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[10px] text-white/25">
-              {progressLabel}
-            </span>
-
-            <span className="text-[10px] text-white/40">
-              {progressValue}
-            </span>
-          </div>
-
-          <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
-            <div
-              className="h-full rounded-full bg-yellow-500 transition-all"
-              style={{
-                width: `${Math.max(
-                  0,
-                  Math.min(
-                    100,
-                    progress,
-                  ),
-                )}%`,
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {metrics &&
-        metrics.length > 0 && (
-          <div className="mt-5 grid grid-cols-3 gap-3">
-            {metrics.map(
-              (metric) => (
-                <MiniMetric
-                  key={
-                    metric.label
-                  }
-                  label={
-                    metric.label
-                  }
-                  value={
-                    metric.value
-                  }
-                />
-              ),
-            )}
-          </div>
-        )}
-
-      <button
-        type="button"
-        onClick={() =>
-          window.location.assign(
-            footerHref,
-          )
-        }
-        className="mt-5 flex items-center gap-2 text-xs font-medium text-yellow-400 transition hover:text-yellow-300"
-      >
-        <span>
-          {footerLabel}
-        </span>
-
-        <ArrowRight
-          size={14}
-          strokeWidth={1.8}
-        />
-      </button>
-    </div>
-  );
-}
-
-/* =========================================================
-   LOAN OVERVIEW
-========================================================= */
-
-function LoanOverviewCard({
-  loans,
-  outstanding,
-  defaulters,
-}: {
-  loans: number;
-  outstanding: number;
-  defaulters: number;
-}) {
-  return (
-    <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 items-start gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
-            <HandCoins
-              size={20}
-              strokeWidth={1.8}
-            />
-          </div>
-
-          <div className="min-w-0">
-            <p className="text-xs uppercase tracking-[0.18em] text-white/25">
-              Loan Overview
-            </p>
-
-            <p className="mt-2 text-2xl font-semibold text-white">
-              {formatCurrency(
-                outstanding,
-              )}
-            </p>
-
-            <p className="mt-1 text-xs text-white/30">
-              Outstanding loan
-              balance
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <MiniMetric
-            label="Loans"
-            value={loans.toLocaleString()}
-          />
-
-          <MiniMetric
-            label="Outstanding"
-            value={formatCurrency(
-              outstanding,
-            )}
-          />
-
-          <MiniMetric
-            label="Defaulters"
-            value={defaulters.toLocaleString()}
-          />
-        </div>
-
-        <button
-          type="button"
-          onClick={() =>
-            window.location.assign(
-              "/dashboard/loans",
-            )
-          }
-          className="flex shrink-0 items-center gap-2 text-xs font-medium text-yellow-400 transition hover:text-yellow-300"
-        >
-          <span>
-            Open loans
-          </span>
-
-          <ArrowRight
-            size={14}
-            strokeWidth={1.8}
-          />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   METRIC CARD
-========================================================= */
-
-function MetricCard({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
-      <p className="truncate text-[10px] uppercase tracking-[0.14em] text-white/25">
-        {label}
-      </p>
-
-      <p className="mt-2 truncate text-sm font-semibold text-white/75">
-        {value}
-      </p>
-    </div>
-  );
-}
-
-/* =========================================================
-   MINI METRIC
-========================================================= */
-
-function MiniMetric({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="min-w-0">
-      <p className="truncate text-[9px] uppercase tracking-[0.12em] text-white/20">
-        {label}
-      </p>
-
-      <p className="mt-1 truncate text-xs font-medium text-white/55">
-        {value}
-      </p>
-    </div>
-  );
-}
-
-/* =========================================================
-   QUICK ACCESS
-========================================================= */
-
-function QuickAccess({
-  label,
-  description,
-  icon,
-  href,
-}: {
-  label: string;
-  description: string;
-  icon: ReactNode;
-  href: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() =>
-        window.location.assign(
-          href,
-        )
-      }
-      className="group flex min-w-0 items-center gap-3 rounded-xl border border-transparent px-3 py-3 text-left transition hover:border-white/[0.06] hover:bg-white/[0.04]"
-    >
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-white/40 transition group-hover:bg-yellow-500/10 group-hover:text-yellow-400">
-        {icon}
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-white/65 group-hover:text-white">
-          {label}
-        </p>
-
-        <p className="mt-0.5 truncate text-[10px] text-white/25">
-          {description}
-        </p>
-      </div>
-
-      <ArrowRight
-        size={14}
-        strokeWidth={1.8}
-        className="shrink-0 text-white/15 transition group-hover:translate-x-0.5 group-hover:text-white/40"
-      />
-    </button>
-  );
-}
-
-/* =========================================================
-   STAT CARD
-========================================================= */
-
-function StatCard({
-  title,
-  value,
-  subtitle,
-  icon,
-  href,
-}: {
-  title: string;
-  value: string | number;
-  subtitle: string;
-  icon: ReactNode;
-  href: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() =>
-        window.location.assign(
-          href,
-        )
-      }
-      className="group min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition hover:border-white/[0.12] hover:bg-white/[0.04] sm:p-5"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-medium text-white/35">
-            {title}
-          </p>
-
-          <p className="mt-3 truncate text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-            {value}
-          </p>
-
-          <p className="mt-2 truncate text-[10px] text-white/25">
-            {subtitle}
-          </p>
-        </div>
-
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400 transition group-hover:bg-yellow-500/15 sm:h-10 sm:w-10">
-          {icon}
-        </div>
-      </div>
-    </button>
-  );
-}
-
-/* =========================================================
-   ACTIVITY ROW
-========================================================= */
-
-function ActivityRow({
-  activity,
-}: {
-  activity: DashboardActivity;
-}) {
-  const icons: Record<
-    DashboardActivity["type"],
-    ReactNode
-  > = {
-    member: (
-      <Users
-        size={15}
-        strokeWidth={1.8}
-      />
-    ),
-
-    saving: (
-      <Wallet
-        size={15}
-        strokeWidth={1.8}
-      />
-    ),
-
-    loan: (
-      <HandCoins
-        size={15}
-        strokeWidth={1.8}
-      />
-    ),
-
-    notification: (
-      <Bell
-        size={15}
-        strokeWidth={1.8}
-      />
-    ),
-  };
-
-  return (
-    <div className="flex min-w-0 items-center gap-3 px-4 py-3.5 sm:px-5">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.04] text-white/35">
-        {icons[activity.type]}
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-white/65">
-          {activity.title}
-        </p>
-
-        <p className="mt-0.5 truncate text-[10px] text-white/25">
-          {activity.description}
-        </p>
-      </div>
-
-      <span className="shrink-0 text-[10px] text-white/20">
-        {activity.time}
-      </span>
-    </div>
-  );
-}
-
-/* =========================================================
-   DESKTOP LOADING
-========================================================= */
-
-function DashboardLoading() {
-  return (
-    <div className="w-full animate-pulse space-y-5">
-      <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        {Array.from({
-          length: 4,
-        }).map(
-          (_, index) => (
-            <div
-              key={index}
-              className="h-[125px] rounded-2xl border border-white/[0.06] bg-white/[0.025]"
-            />
-          ),
-        )}
-      </section>
-
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {Array.from({
-          length: 4,
-        }).map(
-          (_, index) => (
-            <div
-              key={index}
-              className="h-[85px] rounded-2xl border border-white/[0.06] bg-white/[0.025]"
-            />
-          ),
-        )}
-      </section>
-
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
-        <div className="min-h-[330px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
-
-        <div className="min-h-[330px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
-      </section>
-
-      <section className="grid gap-5 md:grid-cols-2">
-        <div className="h-[220px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
-
-        <div className="h-[220px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
-      </section>
-
-      <section>
-        <div className="h-[125px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
-      </section>
-    </div>
-  );
-}
-
-/* =========================================================
-   MOBILE LOADING
-========================================================= */
-
-function MobileDashboardLoading() {
-  return (
-    <div className="animate-pulse space-y-3">
-      <div className="mb-5 flex items-center justify-between">
-        <div>
-          <div className="h-2.5 w-20 rounded bg-white/[0.06]" />
-
-          <div className="mt-2 h-5 w-28 rounded bg-white/[0.06]" />
-
-          <div className="mt-2 h-2.5 w-36 rounded bg-white/[0.04]" />
-        </div>
-
-        <div className="h-10 w-10 rounded-xl bg-white/[0.05]" />
-      </div>
-
-      {Array.from({
-        length: 3,
-      }).map(
-        (_, index) => (
-          <div
-            key={index}
-            className="h-[137px] rounded-[22px] border border-white/[0.06] bg-white/[0.025]"
-          />
-        ),
-      )}
-
-      <div className="h-[170px] rounded-[22px] border border-white/[0.06] bg-white/[0.025]" />
-
-      <div className="h-[220px] rounded-[22px] border border-white/[0.06] bg-white/[0.025]" />
-    </div>
-  );
+  return <GeoShuaNavigator />;
 }

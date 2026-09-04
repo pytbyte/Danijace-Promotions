@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -1220,7 +1221,7 @@ function MemberCard({
         rounded-3xl
         border
         border-slate-200/70
-        bg-white
+        bg-blue-50/80
         p-4
         shadow-[0_10px_40px_rgba(15,23,42,0.07)]
         dark:border-white/10
