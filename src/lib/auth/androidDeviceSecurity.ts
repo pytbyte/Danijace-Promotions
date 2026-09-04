@@ -16,7 +16,9 @@ export type DeviceSecurityResult = {
 export type RecoveryKeyResult = {
   success: boolean;
   created?: boolean;
+  existing?: boolean;
   publicKey?: string;
+  algorithm?: string;
   error?: string;
   message?: string;
 };
@@ -31,6 +33,7 @@ export type RecoveryKeyExistsResult = {
 export type RecoveryPublicKeyResult = {
   success: boolean;
   publicKey?: string;
+  algorithm?: string;
   error?: string;
   message?: string;
 };
@@ -68,12 +71,19 @@ const DeviceSecurity =
 export default DeviceSecurity;
 
 /**
- * Check whether Android device security is available.
+ * =========================================================
+ * ANDROID DEVICE SECURITY AVAILABILITY
+ * =========================================================
  */
 export async function isAndroidDeviceSecurityAvailable(): Promise<boolean> {
   try {
     const result =
       await DeviceSecurity.isAvailable();
+
+    console.log(
+      "ANDROID DEVICE SECURITY AVAILABILITY RESULT:",
+      JSON.stringify(result),
+    );
 
     return result.available === true;
   } catch (error) {
@@ -87,130 +97,270 @@ export async function isAndroidDeviceSecurityAvailable(): Promise<boolean> {
 }
 
 /**
- * Open the native Android authentication prompt.
+ * =========================================================
+ * NORMAL ANDROID DEVICE AUTHENTICATION
+ * =========================================================
+ *
+ * Opens the native Android security prompt.
+ *
+ * Supports:
+ * - fingerprint
+ * - face
+ * - device PIN
+ * - device pattern
+ * - device password
  */
 export async function authenticateWithAndroidDeviceSecurity(): Promise<DeviceSecurityResult> {
   try {
-    return await DeviceSecurity.authenticate();
+    const result =
+      await DeviceSecurity.authenticate();
+
+    console.log(
+      "ANDROID DEVICE SECURITY RESULT:",
+      JSON.stringify(result),
+    );
+
+    return result;
   } catch (error) {
     console.error(
       "ANDROID DEVICE SECURITY ERROR:",
       error,
     );
 
+    const message =
+      error instanceof Error
+        ? error.message
+        : String(error);
+
     return {
       success: false,
       code: "NATIVE_ERROR",
       message:
-        error instanceof Error
-          ? error.message
-          : "Unable to authenticate with Android device security.",
+        message ||
+        "Unable to authenticate with Android device security.",
     };
   }
 }
 
 /**
- * Create the Android recovery key in Android Keystore.
+ * =========================================================
+ * CREATE ANDROID RECOVERY KEY
+ * =========================================================
+ *
+ * Creates the recovery key inside Android Keystore.
  *
  * The private key never leaves the Android device.
  */
 export async function createAndroidRecoveryKey(): Promise<RecoveryKeyResult> {
   try {
-    return await DeviceSecurity.createRecoveryKey();
+    const result =
+      await DeviceSecurity.createRecoveryKey();
+
+    console.log(
+      "ANDROID RECOVERY KEY CREATION RESULT:",
+      JSON.stringify(result),
+    );
+
+    return result;
   } catch (error) {
     console.error(
       "ANDROID RECOVERY KEY CREATION ERROR:",
       error,
     );
 
+    const message =
+      error instanceof Error
+        ? error.message
+        : String(error);
+
     return {
       success: false,
       created: false,
       error:
-        error instanceof Error
-          ? error.message
-          : "Unable to create Android recovery key.",
+        message ||
+        "Unable to create Android recovery key.",
+      message:
+        message ||
+        "Unable to create Android recovery key.",
     };
   }
 }
 
 /**
- * Check whether an Android recovery key already exists.
+ * =========================================================
+ * CHECK ANDROID RECOVERY KEY
+ * =========================================================
+ *
+ * Checks whether the recovery key exists in
+ * Android Keystore.
  */
 export async function hasAndroidRecoveryKey(): Promise<RecoveryKeyExistsResult> {
   try {
-    return await DeviceSecurity.hasRecoveryKey();
+    const result =
+      await DeviceSecurity.hasRecoveryKey();
+
+    console.log(
+      "ANDROID RECOVERY KEY RESULT:",
+      JSON.stringify(result),
+    );
+
+    return {
+      success: true,
+      exists: result.exists === true,
+      message:
+        result.message ||
+        "Android recovery key check completed.",
+    };
   } catch (error) {
     console.error(
       "ANDROID RECOVERY KEY CHECK ERROR:",
       error,
     );
 
+    const message =
+      error instanceof Error
+        ? error.message
+        : String(error);
+
+    console.error(
+      "ANDROID RECOVERY KEY CHECK ERROR MESSAGE:",
+      message,
+    );
+
     return {
       success: false,
       exists: false,
       error:
-        error instanceof Error
-          ? error.message
-          : "Unable to check Android recovery key.",
+        message ||
+        "Unable to check Android recovery key.",
+      message:
+        message ||
+        "Unable to check Android recovery key.",
     };
   }
 }
 
 /**
- * Get the public portion of the Android recovery key.
+ * =========================================================
+ * GET ANDROID RECOVERY PUBLIC KEY
+ * =========================================================
+ *
+ * Gets only the public portion of the recovery key.
  *
  * The private key remains inside Android Keystore.
  */
 export async function getAndroidRecoveryPublicKey(): Promise<RecoveryPublicKeyResult> {
   try {
-    return await DeviceSecurity.getRecoveryPublicKey();
+    const result =
+      await DeviceSecurity.getRecoveryPublicKey();
+
+    console.log(
+      "ANDROID RECOVERY PUBLIC KEY RESULT:",
+      JSON.stringify({
+        ...result,
+        publicKey: result.publicKey
+          ? "[PRESENT]"
+          : undefined,
+      }),
+    );
+
+    return result;
   } catch (error) {
     console.error(
       "ANDROID RECOVERY PUBLIC KEY ERROR:",
       error,
     );
 
+    const message =
+      error instanceof Error
+        ? error.message
+        : String(error);
+
     return {
       success: false,
       error:
-        error instanceof Error
-          ? error.message
-          : "Unable to access Android recovery public key.",
+        message ||
+        "Unable to access Android recovery public key.",
+      message:
+        message ||
+        "Unable to access Android recovery public key.",
     };
   }
 }
 
 /**
- * Sign a server-issued recovery challenge using
- * the private recovery key stored in Android Keystore.
+ * =========================================================
+ * SIGN ANDROID RECOVERY CHALLENGE
+ * =========================================================
+ *
+ * Signs a server-issued recovery challenge using
+ * the private key stored inside Android Keystore.
  */
 export async function signAndroidRecoveryChallenge(
   challenge: string,
 ): Promise<SignChallengeResult> {
-  if (!challenge || challenge.trim().length === 0) {
+  if (
+    !challenge ||
+    challenge.trim().length === 0
+  ) {
     return {
       success: false,
-      error: "Recovery challenge is required.",
+      error:
+        "Recovery challenge is required.",
+      message:
+        "Recovery challenge is required.",
+    };
+  }
+
+  if (challenge.length > 4096) {
+    return {
+      success: false,
+      error:
+        "Recovery challenge is too large.",
+      message:
+        "Recovery challenge is too large.",
     };
   }
 
   try {
-    return await DeviceSecurity.signChallenge(
-      challenge,
+    const result =
+      await DeviceSecurity.signChallenge(
+        challenge,
+      );
+
+    console.log(
+      "ANDROID RECOVERY CHALLENGE SIGN RESULT:",
+      JSON.stringify({
+        ...result,
+        signature: result.signature
+          ? "[PRESENT]"
+          : undefined,
+        publicKey: result.publicKey
+          ? "[PRESENT]"
+          : undefined,
+      }),
     );
+
+    return result;
   } catch (error) {
     console.error(
       "ANDROID RECOVERY CHALLENGE SIGNING ERROR:",
       error,
     );
 
+    const message =
+      error instanceof Error
+        ? error.message
+        : String(error);
+
     return {
       success: false,
       error:
-        error instanceof Error
-          ? error.message
-          : "Unable to sign Android recovery challenge.",
+        message ||
+        "Unable to sign Android recovery challenge.",
+      message:
+        message ||
+        "Unable to sign Android recovery challenge.",
     };
   }
 }
