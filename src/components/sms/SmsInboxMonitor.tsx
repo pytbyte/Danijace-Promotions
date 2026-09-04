@@ -3,6 +3,7 @@
 import {
   ChevronDown,
   ChevronUp,
+  RefreshCw,
 } from "lucide-react";
 
 import {
@@ -118,7 +119,9 @@ type FilteredDiagnostic = {
    GENERIC HELPERS
 ========================================================= */
 
-function isRecord(value: unknown): value is ApiRecord {
+function isRecord(
+  value: unknown
+): value is ApiRecord {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -126,8 +129,12 @@ function isRecord(value: unknown): value is ApiRecord {
   );
 }
 
-function toRecord(value: unknown): ApiRecord | null {
-  return isRecord(value) ? value : null;
+function toRecord(
+  value: unknown
+): ApiRecord | null {
+  return isRecord(value)
+    ? value
+    : null;
 }
 
 function getString(
@@ -193,7 +200,8 @@ function isFinancialCandidate(
   if (!body) {
     return {
       candidate: false,
-      reason: "SMS body is empty.",
+      reason:
+        "SMS body is empty.",
     };
   }
 
@@ -201,8 +209,9 @@ function isFinancialCandidate(
     body.toLowerCase();
 
   const hasFinancialTerm =
-    FINANCIAL_TERMS.some((term) =>
-      normalized.includes(term)
+    FINANCIAL_TERMS.some(
+      (term) =>
+        normalized.includes(term)
     );
 
   if (!hasFinancialTerm) {
@@ -215,7 +224,8 @@ function isFinancialCandidate(
 
   return {
     candidate: true,
-    reason: "Financial candidate.",
+    reason:
+      "Financial candidate.",
   };
 }
 
@@ -277,14 +287,20 @@ function formatDateTime(
       ? value
       : Number(value);
 
-  if (!Number.isFinite(timestamp)) {
+  if (
+    !Number.isFinite(timestamp)
+  ) {
     return "—";
   }
 
   const date =
     new Date(timestamp);
 
-  if (Number.isNaN(date.getTime())) {
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
     return "—";
   }
 
@@ -306,14 +322,20 @@ function formatDateOnly(
       ? value
       : Number(value);
 
-  if (!Number.isFinite(timestamp)) {
+  if (
+    !Number.isFinite(timestamp)
+  ) {
     return "—";
   }
 
   const date =
     new Date(timestamp);
 
-  if (Number.isNaN(date.getTime())) {
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
     return "—";
   }
 
@@ -325,21 +347,27 @@ function formatDateOnly(
 ========================================================= */
 
 function getApiReason(
-  response: ApiRecord | undefined
+  response:
+    | ApiRecord
+    | undefined
 ): string {
   if (!response) {
     return "";
   }
 
   const direct =
-    getString(response.reason);
+    getString(
+      response.reason
+    );
 
   if (direct) {
     return direct;
   }
 
   const data =
-    toRecord(response.data);
+    toRecord(
+      response.data
+    );
 
   return getString(
     data?.reason
@@ -347,41 +375,55 @@ function getApiReason(
 }
 
 function getApiReference(
-  response: ApiRecord | undefined
+  response:
+    | ApiRecord
+    | undefined
 ): string {
   if (!response) {
     return "";
   }
 
   const direct =
-    getString(response.reference);
+    getString(
+      response.reference
+    );
 
   if (direct) {
     return direct;
   }
 
   const parsed =
-    toRecord(response.parsed);
+    toRecord(
+      response.parsed
+    );
 
   const parsedReference =
-    getString(parsed?.reference);
+    getString(
+      parsed?.reference
+    );
 
   if (parsedReference) {
     return parsedReference;
   }
 
   const data =
-    toRecord(response.data);
+    toRecord(
+      response.data
+    );
 
   const dataReference =
-    getString(data?.reference);
+    getString(
+      data?.reference
+    );
 
   if (dataReference) {
     return dataReference;
   }
 
   const dataParsed =
-    toRecord(data?.parsed);
+    toRecord(
+      data?.parsed
+    );
 
   return getString(
     dataParsed?.reference
@@ -389,7 +431,9 @@ function getApiReference(
 }
 
 function getApiAmount(
-  response: ApiRecord | undefined
+  response:
+    | ApiRecord
+    | undefined
 ): string {
   if (!response) {
     return "";
@@ -406,30 +450,44 @@ function getApiAmount(
   }
 
   const parsed =
-    toRecord(response.parsed);
+    toRecord(
+      response.parsed
+    );
 
   if (
-    typeof parsed?.amount === "number" ||
-    typeof parsed?.amount === "string"
+    typeof parsed?.amount ===
+      "number" ||
+    typeof parsed?.amount ===
+      "string"
   ) {
-    return String(parsed.amount);
+    return String(
+      parsed.amount
+    );
   }
 
   const data =
-    toRecord(response.data);
+    toRecord(
+      response.data
+    );
 
   if (
-    typeof data?.amount === "number" ||
-    typeof data?.amount === "string"
+    typeof data?.amount ===
+      "number" ||
+    typeof data?.amount ===
+      "string"
   ) {
-    return String(data.amount);
+    return String(
+      data.amount
+    );
   }
 
   return "";
 }
 
 function getApiDestinationAccountNumber(
-  response: ApiRecord | undefined
+  response:
+    | ApiRecord
+    | undefined
 ): string {
   if (!response) {
     return "";
@@ -445,7 +503,9 @@ function getApiDestinationAccountNumber(
   }
 
   const parsed =
-    toRecord(response.parsed);
+    toRecord(
+      response.parsed
+    );
 
   const parsedDestination =
     getString(
@@ -457,7 +517,9 @@ function getApiDestinationAccountNumber(
   }
 
   const data =
-    toRecord(response.data);
+    toRecord(
+      response.data
+    );
 
   const dataDestination =
     getString(
@@ -469,7 +531,9 @@ function getApiDestinationAccountNumber(
   }
 
   const dataParsed =
-    toRecord(data?.parsed);
+    toRecord(
+      data?.parsed
+    );
 
   return getString(
     dataParsed?.destinationAccountNumber
@@ -477,41 +541,55 @@ function getApiDestinationAccountNumber(
 }
 
 function getApiSenderName(
-  response: ApiRecord | undefined
+  response:
+    | ApiRecord
+    | undefined
 ): string {
   if (!response) {
     return "";
   }
 
   const direct =
-    getString(response.senderName);
+    getString(
+      response.senderName
+    );
 
   if (direct) {
     return direct;
   }
 
   const parsed =
-    toRecord(response.parsed);
+    toRecord(
+      response.parsed
+    );
 
   const parsedSender =
-    getString(parsed?.senderName);
+    getString(
+      parsed?.senderName
+    );
 
   if (parsedSender) {
     return parsedSender;
   }
 
   const data =
-    toRecord(response.data);
+    toRecord(
+      response.data
+    );
 
   const dataSender =
-    getString(data?.senderName);
+    getString(
+      data?.senderName
+    );
 
   if (dataSender) {
     return dataSender;
   }
 
   const dataParsed =
-    toRecord(data?.parsed);
+    toRecord(
+      data?.parsed
+    );
 
   return getString(
     dataParsed?.senderName
@@ -519,7 +597,9 @@ function getApiSenderName(
 }
 
 function getApiTransactionDate(
-  response: ApiRecord | undefined
+  response:
+    | ApiRecord
+    | undefined
 ): string {
   if (!response) {
     return "";
@@ -536,7 +616,9 @@ function getApiTransactionDate(
   }
 
   const parsed =
-    toRecord(response.parsed);
+    toRecord(
+      response.parsed
+    );
 
   const parsedDate =
     parsed?.transactionDate;
@@ -545,11 +627,15 @@ function getApiTransactionDate(
     typeof parsedDate === "string" ||
     typeof parsedDate === "number"
   ) {
-    return String(parsedDate);
+    return String(
+      parsedDate
+    );
   }
 
   const data =
-    toRecord(response.data);
+    toRecord(
+      response.data
+    );
 
   const dataDate =
     data?.transactionDate;
@@ -558,11 +644,15 @@ function getApiTransactionDate(
     typeof dataDate === "string" ||
     typeof dataDate === "number"
   ) {
-    return String(dataDate);
+    return String(
+      dataDate
+    );
   }
 
   const dataParsed =
-    toRecord(data?.parsed);
+    toRecord(
+      data?.parsed
+    );
 
   const nestedDate =
     dataParsed?.transactionDate;
@@ -571,56 +661,68 @@ function getApiTransactionDate(
     typeof nestedDate === "string" ||
     typeof nestedDate === "number"
   ) {
-    return String(nestedDate);
+    return String(
+      nestedDate
+    );
   }
 
   return "";
 }
 
 function getApiLoan(
-  response: ApiRecord | undefined
+  response:
+    | ApiRecord
+    | undefined
 ): ApiRecord | null {
   if (!response) {
     return null;
   }
 
   const direct =
-    toRecord(response.loan);
+    toRecord(
+      response.loan
+    );
 
   if (direct) {
     return direct;
   }
 
   const data =
-    toRecord(response.data);
+    toRecord(
+      response.data
+    );
 
-  const nested =
-    toRecord(data?.loan);
-
-  return nested;
+  return toRecord(
+    data?.loan
+  );
 }
 
 function getApiSavingsAccount(
-  response: ApiRecord | undefined
+  response:
+    | ApiRecord
+    | undefined
 ): ApiRecord | null {
   if (!response) {
     return null;
   }
 
   const direct =
-    toRecord(response.savingsAccount);
+    toRecord(
+      response.savingsAccount
+    );
 
   if (direct) {
     return direct;
   }
 
   const data =
-    toRecord(response.data);
+    toRecord(
+      response.data
+    );
 
-  const nested =
-    toRecord(data?.savingsAccount);
-
-  return nested;
+  return toRecord(
+    data?.savingsAccount
+  );
 }
 
 /* =========================================================
@@ -642,7 +744,9 @@ function getResultKind(
   }
 
   const type =
-    getString(response.type);
+    getString(
+      response.type
+    );
 
   if (type) {
     return type;
@@ -658,7 +762,9 @@ function getResultKind(
   }
 
   const parsed =
-    toRecord(response.parsed);
+    toRecord(
+      response.parsed
+    );
 
   return getString(
     parsed?.transactionType
@@ -723,8 +829,9 @@ function extractReaderError(
   return {
     message,
     code:
-      getString(record?.code) ||
-      undefined,
+      getString(
+        record?.code
+      ) || undefined,
     data:
       record?.data,
     raw:
@@ -738,10 +845,14 @@ function extractReaderError(
 
 export default function SmsInboxMonitor() {
   const [status, setStatus] =
-    useState<MonitorStatus>("idle");
+    useState<MonitorStatus>(
+      "idle"
+    );
 
   const [scanPhase, setScanPhase] =
-    useState<ScanPhase>("idle");
+    useState<ScanPhase>(
+      "idle"
+    );
 
   const [
     performingTransaction,
@@ -776,22 +887,30 @@ export default function SmsInboxMonitor() {
     });
 
   const [results, setResults] =
-    useState<ProcessResult[]>([]);
+    useState<ProcessResult[]>(
+      []
+    );
 
   const [
     filteredDiagnostics,
     setFilteredDiagnostics,
-  ] = useState<FilteredDiagnostic[]>([]);
+  ] = useState<
+    FilteredDiagnostic[]
+  >([]);
 
   const [
     readerError,
     setReaderError,
-  ] = useState<ReaderError | null>(null);
+  ] = useState<ReaderError | null>(
+    null
+  );
 
   const [
     lastSync,
     setLastSync,
-  ] = useState<Date | null>(null);
+  ] = useState<Date | null>(
+    null
+  );
 
   const [
     diagnosticsOpen,
@@ -809,7 +928,8 @@ export default function SmsInboxMonitor() {
   ======================================================= */
 
   const isNative = useMemo(
-    () => Capacitor.isNativePlatform(),
+    () =>
+      Capacitor.isNativePlatform(),
     []
   );
 
@@ -833,7 +953,9 @@ export default function SmsInboxMonitor() {
 
       setStatus("scanning");
       setScanPhase("reading");
-      setPerformingTransaction(false);
+      setPerformingTransaction(
+        false
+      );
 
       setReaderError(null);
       setResults([]);
@@ -892,7 +1014,8 @@ export default function SmsInboxMonitor() {
            DEDUPLICATE LOCAL INBOX
         --------------------------------------------------- */
 
-        const uniqueMessages: SmsMessage[] = [];
+        const uniqueMessages: SmsMessage[] =
+          [];
 
         const seen =
           new Set<string>();
@@ -906,23 +1029,33 @@ export default function SmsInboxMonitor() {
           }
 
           seen.add(key);
-          uniqueMessages.push(sms);
+          uniqueMessages.push(
+            sms
+          );
         }
 
         /* ---------------------------------------------------
            LOCAL FINANCIAL FILTER
         --------------------------------------------------- */
 
-        const candidates: SmsMessage[] = [];
+        const candidates: SmsMessage[] =
+          [];
 
-        const filtered: FilteredDiagnostic[] = [];
+        const filtered: FilteredDiagnostic[] =
+          [];
 
         for (const sms of uniqueMessages) {
           const classification =
-            isFinancialCandidate(sms);
+            isFinancialCandidate(
+              sms
+            );
 
-          if (classification.candidate) {
-            candidates.push(sms);
+          if (
+            classification.candidate
+          ) {
+            candidates.push(
+              sms
+            );
           } else if (
             filtered.length <
             MAX_FILTERED_DIAGNOSTICS
@@ -939,28 +1072,36 @@ export default function SmsInboxMonitor() {
           filtered
         );
 
-        setScanPhase("processing");
+        setScanPhase(
+          "processing"
+        );
 
-        const initialStats: ProcessStats = {
-          inbox: uniqueMessages.length,
-          candidates: candidates.length,
-          filtered:
-            uniqueMessages.length -
-            candidates.length,
-          submitted: 0,
-          processed: 0,
-          duplicate: 0,
-          ignored: 0,
-          failed: 0,
-          loanUpdated: 0,
-          savingsUpdated: 0,
-        };
+        const initialStats: ProcessStats =
+          {
+            inbox:
+              uniqueMessages.length,
+            candidates:
+              candidates.length,
+            filtered:
+              uniqueMessages.length -
+              candidates.length,
+            submitted: 0,
+            processed: 0,
+            duplicate: 0,
+            ignored: 0,
+            failed: 0,
+            loanUpdated: 0,
+            savingsUpdated: 0,
+          };
 
-        setStats(initialStats);
+        setStats(
+          initialStats
+        );
 
         setProgress({
           current: 0,
-          total: uniqueMessages.length,
+          total:
+            uniqueMessages.length,
           submitted: 0,
           processed: 0,
           duplicate: 0,
@@ -982,11 +1123,13 @@ export default function SmsInboxMonitor() {
         let loanUpdated = 0;
         let savingsUpdated = 0;
 
-        const resultList: ProcessResult[] = [];
+        const resultList: ProcessResult[] =
+          [];
 
         for (
           let index = 0;
-          index < uniqueMessages.length;
+          index <
+          uniqueMessages.length;
           index++
         ) {
           const sms =
@@ -1017,9 +1160,13 @@ export default function SmsInboxMonitor() {
           ------------------------------------------------- */
 
           const candidateCheck =
-            isFinancialCandidate(sms);
+            isFinancialCandidate(
+              sms
+            );
 
-          if (!candidateCheck.candidate) {
+          if (
+            !candidateCheck.candidate
+          ) {
             continue;
           }
 
@@ -1028,27 +1175,38 @@ export default function SmsInboxMonitor() {
           ------------------------------------------------- */
 
           const body =
-            typeof sms.body === "string"
+            typeof sms.body ===
+            "string"
               ? sms.body.trim()
               : "";
 
           const date =
-            typeof sms.date === "number"
+            typeof sms.date ===
+            "number"
               ? sms.date
-              : Number(sms.date || 0);
+              : Number(
+                  sms.date || 0
+                );
 
           const address =
-            typeof sms.address === "string"
+            typeof sms.address ===
+            "string"
               ? sms.address.trim()
               : "";
 
           const smsId =
-            typeof sms.id === "string" &&
+            typeof sms.id ===
+              "string" &&
             sms.id.trim()
               ? sms.id.trim()
-              : getLocalSmsKey(sms);
+              : getLocalSmsKey(
+                  sms
+                );
 
-          if (!body || !date) {
+          if (
+            !body ||
+            !date
+          ) {
             failed++;
 
             resultList.push({
@@ -1099,7 +1257,9 @@ export default function SmsInboxMonitor() {
              PERFORM FINANCIAL TRANSACTION
           ------------------------------------------------- */
 
-          setPerformingTransaction(true);
+          setPerformingTransaction(
+            true
+          );
 
           submitted++;
 
@@ -1131,14 +1291,18 @@ export default function SmsInboxMonitor() {
                 }
               );
 
-            let payload: ApiRecord = {};
+            let payload: ApiRecord =
+              {};
 
             try {
               const parsed =
                 await response.json();
 
-              if (isRecord(parsed)) {
-                payload = parsed;
+              if (
+                isRecord(parsed)
+              ) {
+                payload =
+                  parsed;
               }
             } catch {
               payload = {};
@@ -1155,47 +1319,59 @@ export default function SmsInboxMonitor() {
               );
 
             const duplicateFlag =
-              payload.duplicate === true ||
+              payload.duplicate ===
+                true ||
               statusValue ===
                 "duplicate";
 
             const ignoredFlag =
-              payload.ignored === true ||
+              payload.ignored ===
+                true ||
               statusValue ===
                 "ignored";
 
             const processedFlag =
-              payload.processed === true ||
+              payload.processed ===
+                true ||
               statusValue ===
                 "success";
 
             const financialChange =
-              payload.financialChange === true;
+              payload.financialChange ===
+              true;
 
-            const result: ProcessResult = {
-              sms,
-              httpStatus:
-                response.status,
-              status:
-                statusValue,
-              type:
-                type || undefined,
-              financialChange,
-              duplicate:
-                duplicateFlag,
-              ignored:
-                ignoredFlag,
-              processed:
-                processedFlag,
-              response:
-                payload,
-            };
+            const result: ProcessResult =
+              {
+                sms,
+                httpStatus:
+                  response.status,
+                status:
+                  statusValue,
+                type:
+                  type ||
+                  undefined,
+                financialChange,
+                duplicate:
+                  duplicateFlag,
+                ignored:
+                  ignoredFlag,
+                processed:
+                  processedFlag,
+                response:
+                  payload,
+              };
 
-            resultList.push(result);
+            resultList.push(
+              result
+            );
 
-            if (duplicateFlag) {
+            if (
+              duplicateFlag
+            ) {
               duplicate++;
-            } else if (ignoredFlag) {
+            } else if (
+              ignoredFlag
+            ) {
               ignored++;
             } else if (
               processedFlag &&
@@ -1272,8 +1448,10 @@ export default function SmsInboxMonitor() {
 
             resultList.push({
               sms,
-              status: "failed",
-              error: message,
+              status:
+                "failed",
+              error:
+                message,
             });
 
             setResults([
@@ -1329,22 +1507,23 @@ export default function SmsInboxMonitor() {
            FINAL STATE
         --------------------------------------------------- */
 
-        const finalStats: ProcessStats = {
-          inbox:
-            uniqueMessages.length,
-          candidates:
-            candidates.length,
-          filtered:
-            uniqueMessages.length -
-            candidates.length,
-          submitted,
-          processed,
-          duplicate,
-          ignored,
-          failed,
-          loanUpdated,
-          savingsUpdated,
-        };
+        const finalStats: ProcessStats =
+          {
+            inbox:
+              uniqueMessages.length,
+            candidates:
+              candidates.length,
+            filtered:
+              uniqueMessages.length -
+              candidates.length,
+            submitted,
+            processed,
+            duplicate,
+            ignored,
+            failed,
+            loanUpdated,
+            savingsUpdated,
+          };
 
         setStats(
           finalStats
@@ -1479,6 +1658,10 @@ export default function SmsInboxMonitor() {
           stats.loanUpdated,
         savingsUpdated:
           stats.savingsUpdated,
+        lastSync:
+          lastSync
+            ? lastSync.toISOString()
+            : null,
       };
     }, [
       status,
@@ -1486,6 +1669,7 @@ export default function SmsInboxMonitor() {
       performingTransaction,
       isNative,
       stats,
+      lastSync,
     ]);
 
   /* =======================================================
@@ -1505,117 +1689,352 @@ export default function SmsInboxMonitor() {
       "
     >
       {/* ===================================================
-          SIMPLE PROCESS DISPLAY
+          COMPACT STATUS / CONTROL BAR
       =================================================== */}
 
-      <div className="px-4 py-4">
-        {scanPhase === "reading" && (
-          <p className="text-sm font-medium text-white">
-            Reading SMS…
-          </p>
-        )}
+      <div
+        className="
+          flex
+          min-h-[52px]
+          items-center
+          gap-3
+          bg-slate-950
+          px-3
+          sm:px-4
+        "
+      >
+        {/* -------------------------------------------------
+            STATUS
+        ------------------------------------------------- */}
 
-        {scanPhase === "processing" && (
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-white">
-              Processing SMS{" "}
-              {progress.current} of{" "}
-              {progress.total}
-            </p>
+        <div className="min-w-0 flex-1">
+          {/* READING */}
 
-            {performingTransaction && (
-              <p className="text-xs text-slate-400">
-                Performing transactions…
-              </p>
-            )}
-
-            <div className="h-1 w-full overflow-hidden rounded-full bg-slate-800">
-              <div
-                className="h-full rounded-full bg-slate-400 transition-all duration-300"
-                style={{
-                  width:
-                    progress.total > 0
-                      ? `${Math.min(
-                          100,
-                          Math.round(
-                            (progress.current /
-                              progress.total) *
-                              100
-                          )
-                        )}%`
-                      : "0%",
-                }}
+          {scanPhase ===
+            "reading" && (
+            <div className="flex items-center gap-2">
+              <span
+                className="
+                  h-1.5
+                  w-1.5
+                  shrink-0
+                  animate-pulse
+                  rounded-full
+                  bg-sky-400
+                  shadow-[0_0_8px_rgba(56,189,248,0.8)]
+                "
               />
+
+              <span
+                className="
+                  truncate
+                  text-xs
+                  font-medium
+                  text-white
+                "
+              >
+                Reading SMS…
+              </span>
             </div>
-          </div>
-        )}
+          )}
 
-        {scanPhase === "complete" && (
-          <p className="text-sm font-medium text-white">
-            {stats.processed}{" "}
-            transactions complete
-          </p>
-        )}
+          {/* PROCESSING */}
 
-        {scanPhase === "error" && (
-          <p className="text-sm font-medium text-white">
-            SMS processing stopped
-          </p>
-        )}
+          {scanPhase ===
+            "processing" && (
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span
+                  className="
+                    h-1.5
+                    w-1.5
+                    shrink-0
+                    animate-pulse
+                    rounded-full
+                    bg-sky-400
+                    shadow-[0_0_8px_rgba(56,189,248,0.8)]
+                  "
+                />
 
-        {scanPhase === "idle" && (
-          <p className="text-sm font-medium text-white">
-            SMS processing ready
-          </p>
-        )}
-      </div>
+                <span
+                  className="
+                    truncate
+                    text-xs
+                    font-medium
+                    text-white
+                  "
+                >
+                  Processing SMS{" "}
+                  <span className="text-slate-500">
+                    {progress.current}/
+                    {
+                      progress.total
+                    }
+                  </span>
+                </span>
+              </div>
 
-      {/* ===================================================
-          ONLY VISIBLE CONTROL
-      =================================================== */}
+              {/* TRANSACTION STATE */}
 
-      <div className="flex justify-center border-t border-slate-800">
-        <button
-          type="button"
-          onClick={() =>
-            setDiagnosticsOpen(
-              (open) => !open
-            )
-          }
-          aria-label={
-            diagnosticsOpen
-              ? "Hide diagnostics"
-              : "Show diagnostics"
-          }
-          title={
-            diagnosticsOpen
-              ? "Hide diagnostics"
-              : "Show diagnostics"
-          }
+              {performingTransaction && (
+                <p
+                  className="
+                    ml-3.5
+                    mt-0.5
+                    truncate
+                    text-[9px]
+                    uppercase
+                    tracking-[0.12em]
+                    text-sky-400/80
+                  "
+                >
+                  Performing transactions…
+                </p>
+              )}
+
+              {/* PROGRESS */}
+
+              <div
+                className="
+                  mt-1.5
+                  h-[2px]
+                  w-full
+                  max-w-[280px]
+                  overflow-hidden
+                  rounded-full
+                  bg-slate-800
+                "
+              >
+                <div
+                  className="
+                    h-full
+                    rounded-full
+                    bg-sky-400
+                    shadow-[0_0_7px_rgba(56,189,248,0.5)]
+                    transition-[width]
+                    duration-300
+                  "
+                  style={{
+                    width:
+                      progress.total >
+                      0
+                        ? `${Math.min(
+                            100,
+                            Math.round(
+                              (progress.current /
+                                progress.total) *
+                                100
+                            )
+                          )}%`
+                        : "0%",
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* COMPLETE */}
+
+          {scanPhase ===
+            "complete" && (
+            <div className="flex items-center gap-2">
+              <span
+                className="
+                  h-1.5
+                  w-1.5
+                  shrink-0
+                  rounded-full
+                  bg-emerald-400
+                  shadow-[0_0_8px_rgba(52,211,153,0.7)]
+                "
+              />
+
+              <span
+                className="
+                  text-xs
+                  font-medium
+                  text-white
+                "
+              >
+                {stats.processed}{" "}
+                <span className="text-slate-500">
+                  transactions
+                  complete
+                </span>
+              </span>
+            </div>
+          )}
+
+          {/* ERROR */}
+
+          {scanPhase ===
+            "error" && (
+            <div className="flex items-center gap-2">
+              <span
+                className="
+                  h-1.5
+                  w-1.5
+                  shrink-0
+                  rounded-full
+                  bg-red-400
+                "
+              />
+
+              <span
+                className="
+                  text-xs
+                  font-medium
+                  text-white
+                "
+              >
+                SMS processing
+                stopped
+              </span>
+            </div>
+          )}
+
+          {/* IDLE */}
+
+          {scanPhase ===
+            "idle" && (
+            <span
+              className="
+                text-xs
+                text-slate-500
+              "
+            >
+              SMS processing
+              ready
+            </span>
+          )}
+        </div>
+
+        {/* -------------------------------------------------
+            CONTROLS — RIGHT SIDE
+        ------------------------------------------------- */}
+
+        <div
           className="
             flex
-            h-8
-            w-10
+            shrink-0
             items-center
-            justify-center
-            text-slate-500
-            transition
-            hover:text-white
-            focus:outline-none
-            focus:ring-1
-            focus:ring-slate-600
+            gap-1.5
           "
         >
-          {diagnosticsOpen ? (
-            <ChevronUp
-              className="h-4 w-4"
+          {/* CHECK SMS */}
+
+          <button
+            type="button"
+            onClick={() => {
+              if (
+                !runningRef.current
+              ) {
+                void processInbox();
+              }
+            }}
+            disabled={
+              runningRef.current ||
+              !isNative
+            }
+            aria-label="Check SMS now"
+            title="Check SMS now"
+            className="
+              flex
+              h-8
+              items-center
+              gap-1.5
+              rounded-lg
+              border
+              border-sky-500/40
+              bg-sky-500/10
+              px-3
+              text-[10px]
+              font-semibold
+              uppercase
+              tracking-[0.08em]
+              text-sky-300
+              transition-all
+              duration-200
+              hover:border-sky-400/70
+              hover:bg-sky-500/20
+              hover:text-white
+              active:scale-[0.98]
+              disabled:pointer-events-none
+              disabled:opacity-40
+            "
+          >
+            <RefreshCw
+              className={`
+                h-3.5
+                w-3.5
+                ${
+                  scanPhase ===
+                    "reading" ||
+                  scanPhase ===
+                    "processing"
+                    ? "animate-spin"
+                    : ""
+                }
+              `}
             />
-          ) : (
-            <ChevronDown
-              className="h-4 w-4"
-            />
-          )}
-        </button>
+
+            <span>
+              Check SMS
+            </span>
+          </button>
+
+          {/* DIAGNOSTICS */}
+
+          <button
+            type="button"
+            onClick={() =>
+              setDiagnosticsOpen(
+                (open) => !open
+              )
+            }
+            aria-label={
+              diagnosticsOpen
+                ? "Hide diagnostics"
+                : "Show diagnostics"
+            }
+            title={
+              diagnosticsOpen
+                ? "Hide diagnostics"
+                : "Show diagnostics"
+            }
+            className="
+              flex
+              h-8
+              w-8
+              shrink-0
+              items-center
+              justify-center
+              rounded-lg
+              border
+              border-slate-800
+              bg-slate-900
+              text-slate-500
+              transition-all
+              duration-200
+              hover:border-slate-700
+              hover:bg-slate-800
+              hover:text-white
+              focus:outline-none
+              focus:ring-1
+              focus:ring-slate-700
+            "
+          >
+            {diagnosticsOpen ? (
+              <ChevronUp
+                className="h-3.5 w-3.5"
+              />
+            ) : (
+              <ChevronDown
+                className="h-3.5 w-3.5"
+              />
+            )}
+          </button>
+        </div>
       </div>
 
       {/* ===================================================
@@ -1637,7 +2056,16 @@ export default function SmsInboxMonitor() {
           ------------------------------------------------- */}
 
           <div className="mb-4">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <h3
+              className="
+                mb-2
+                text-xs
+                font-semibold
+                uppercase
+                tracking-wider
+                text-slate-400
+              "
+            >
               Internal metrics
             </h3>
 
@@ -1666,7 +2094,16 @@ export default function SmsInboxMonitor() {
 
           {readerError && (
             <div className="mb-4">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+              <h3
+                className="
+                  mb-2
+                  text-xs
+                  font-semibold
+                  uppercase
+                  tracking-wider
+                  text-slate-400
+                "
+              >
                 Reader error
               </h3>
 
@@ -1697,7 +2134,16 @@ export default function SmsInboxMonitor() {
           {filteredDiagnostics.length >
             0 && (
             <div className="mb-4">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+              <h3
+                className="
+                  mb-2
+                  text-xs
+                  font-semibold
+                  uppercase
+                  tracking-wider
+                  text-slate-400
+                "
+              >
                 Filtered SMS
               </h3>
 
@@ -1730,8 +2176,20 @@ export default function SmsInboxMonitor() {
                         {item.reason}
                       </summary>
 
-                      <div className="border-t border-slate-800 p-3">
-                        <div className="space-y-1 text-[11px] text-slate-400">
+                      <div
+                        className="
+                          border-t
+                          border-slate-800
+                          p-3
+                        "
+                      >
+                        <div
+                          className="
+                            space-y-1
+                            text-[11px]
+                            text-slate-400
+                          "
+                        >
                           <div>
                             <span className="text-slate-500">
                               ID:
@@ -1789,9 +2247,19 @@ export default function SmsInboxMonitor() {
               API RESULTS
           ------------------------------------------------- */}
 
-          {results.length > 0 && (
+          {results.length >
+            0 && (
             <div>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+              <h3
+                className="
+                  mb-2
+                  text-xs
+                  font-semibold
+                  uppercase
+                  tracking-wider
+                  text-slate-400
+                "
+              >
                 API results
               </h3>
 
@@ -1870,7 +2338,9 @@ export default function SmsInboxMonitor() {
 
                           {result.type && (
                             <span className="ml-2 text-slate-500">
-                              {result.type}
+                              {
+                                result.type
+                              }
                             </span>
                           )}
 
@@ -1885,8 +2355,20 @@ export default function SmsInboxMonitor() {
                           )}
                         </summary>
 
-                        <div className="border-t border-slate-800 p-3">
-                          <div className="space-y-1 text-[11px] text-slate-400">
+                        <div
+                          className="
+                            border-t
+                            border-slate-800
+                            p-3
+                          "
+                        >
+                          <div
+                            className="
+                              space-y-1
+                              text-[11px]
+                              text-slate-400
+                            "
+                          >
                             <div>
                               <span className="text-slate-500">
                                 SMS ID:
@@ -1975,9 +2457,19 @@ export default function SmsInboxMonitor() {
                             </div>
                           </div>
 
+                          {/* LOAN */}
+
                           {loan && (
                             <div className="mt-3">
-                              <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
+                              <div
+                                className="
+                                  mb-1
+                                  text-[10px]
+                                  uppercase
+                                  tracking-wider
+                                  text-slate-500
+                                "
+                              >
                                 Loan
                               </div>
 
@@ -1998,9 +2490,19 @@ export default function SmsInboxMonitor() {
                             </div>
                           )}
 
+                          {/* SAVINGS */}
+
                           {savingsAccount && (
                             <div className="mt-3">
-                              <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
+                              <div
+                                className="
+                                  mb-1
+                                  text-[10px]
+                                  uppercase
+                                  tracking-wider
+                                  text-slate-500
+                                "
+                              >
                                 Savings account
                               </div>
 
@@ -2021,8 +2523,18 @@ export default function SmsInboxMonitor() {
                             </div>
                           )}
 
+                          {/* RAW SMS */}
+
                           <div className="mt-3">
-                            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
+                            <div
+                              className="
+                                mb-1
+                                text-[10px]
+                                uppercase
+                                tracking-wider
+                                text-slate-500
+                              "
+                            >
                               Raw SMS
                             </div>
 
@@ -2046,9 +2558,19 @@ export default function SmsInboxMonitor() {
                             </pre>
                           </div>
 
+                          {/* RAW API RESPONSE */}
+
                           {result.response && (
                             <div className="mt-3">
-                              <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
+                              <div
+                                className="
+                                  mb-1
+                                  text-[10px]
+                                  uppercase
+                                  tracking-wider
+                                  text-slate-500
+                                "
+                              >
                                 Raw API response
                               </div>
 
@@ -2071,9 +2593,19 @@ export default function SmsInboxMonitor() {
                             </div>
                           )}
 
+                          {/* ERROR */}
+
                           {result.error && (
                             <div className="mt-3">
-                              <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
+                              <div
+                                className="
+                                  mb-1
+                                  text-[10px]
+                                  uppercase
+                                  tracking-wider
+                                  text-slate-500
+                                "
+                              >
                                 Error
                               </div>
 
@@ -2088,7 +2620,9 @@ export default function SmsInboxMonitor() {
                                   text-slate-300
                                 "
                               >
-                                {result.error}
+                                {
+                                  result.error
+                                }
                               </pre>
                             </div>
                           )}
