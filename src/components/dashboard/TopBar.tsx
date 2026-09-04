@@ -584,7 +584,7 @@ export default function TopBar() {
             type="button"
             onClick={() =>
               navigateTo(
-                "/dashboard",
+                "/dashboard/summery",
               )
             }
             className="shrink-0"
