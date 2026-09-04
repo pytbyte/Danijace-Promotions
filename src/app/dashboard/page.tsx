@@ -30,13 +30,12 @@ import { Capacitor } from "@capacitor/core";
 
 import {
   authenticateWithAndroidDeviceSecurity,
+  authenticateAndSignAndroidWithDeviceCredential,
   createAndroidRecoveryKey,
   getAndroidRecoveryPublicKey,
   hasAndroidRecoveryKey,
   isAndroidDeviceSecurityAvailable,
-  signAndroidRecoveryChallenge,
 } from "@/lib/auth/androidDeviceSecurity";
-
 /* =========================================================
    TYPES
 ========================================================= */
@@ -232,7 +231,9 @@ function formatKES(value: number): string {
     style: "currency",
     currency: "KES",
     maximumFractionDigits: 0,
-  }).format(Number.isFinite(value) ? value : 0);
+  }).format(
+    Number.isFinite(value) ? value : 0,
+  );
 }
 
 function formatDate(value?: string): string {
@@ -1195,17 +1196,6 @@ function IdentityScreen({
 
   /* =======================================================
      VERIFY DEVICE
-     
-     Normal identity verification.
-     
-     The native Android implementation is responsible for
-     showing the appropriate device security prompt:
-     
-       • fingerprint
-       • face
-       • device PIN
-       • device pattern
-       • device password
   ======================================================= */
 
   const verifyDevice = async () => {
@@ -1258,17 +1248,36 @@ function IdentityScreen({
   /* =======================================================
      START ANDROID FORGOT PIN RECOVERY
      
-     Required flow:
+     Recovery authorization:
      
-       1. Check recovery key
-       2. Create recovery key if necessary
-       3. Read public key
-       4. Register public key
-       5. Request challenge
-       6. Native Android authorizes/signs challenge
-       7. Send signature to server
-       8. Receive short-lived authorization
-       9. Show new PIN screen
+       Google session
+            ↓
+       Android recovery key
+            ↓
+       Public key registration
+            ↓
+       Server challenge
+            ↓
+       Android device authentication
+            ↓
+       Signature
+            ↓
+       Server verification
+            ↓
+       Short-lived authorization token
+            ↓
+       New PIN
+     
+     IMPORTANT:
+     
+     The native recovery authentication method accepts
+     the Android device's configured security:
+     
+       • fingerprint
+       • face
+       • device PIN
+       • device pattern
+       • device password
   ======================================================= */
 
   const startAndroidRecovery =
@@ -1287,13 +1296,17 @@ function IdentityScreen({
         return;
       }
 
+      if (checking) {
+        return;
+      }
+
       setChecking(true);
       setError("");
 
       try {
         /* -------------------------------------------------
            STEP 1
-           Check for existing recovery key.
+           Check recovery key.
         ------------------------------------------------- */
 
         const keyStatus =
@@ -1309,8 +1322,7 @@ function IdentityScreen({
 
         /* -------------------------------------------------
            STEP 2
-           Create recovery key when this device has not
-           enrolled a recovery key yet.
+           Create recovery key if necessary.
         ------------------------------------------------- */
 
         if (!keyStatus.exists) {
@@ -1328,9 +1340,9 @@ function IdentityScreen({
 
         /* -------------------------------------------------
            STEP 3
-           Obtain public key.
+           Read public key.
            
-           PRIVATE KEY MUST NEVER LEAVE ANDROID KEYSTORE.
+           The private key remains inside Android Keystore.
         ------------------------------------------------- */
 
         const publicKeyResult =
@@ -1338,7 +1350,9 @@ function IdentityScreen({
 
         if (
           !publicKeyResult.success ||
-          !publicKeyResult.publicKey
+          typeof publicKeyResult.publicKey !==
+            "string" ||
+          !publicKeyResult.publicKey.trim()
         ) {
           throw new Error(
             publicKeyResult.error ||
@@ -1347,10 +1361,12 @@ function IdentityScreen({
           );
         }
 
+        const publicKey =
+          publicKeyResult.publicKey.trim();
+
         /* -------------------------------------------------
            STEP 4
-           Register public key with current authenticated
-           GEO-SHUA account.
+           Register public key.
         ------------------------------------------------- */
 
         const optionsResponse =
@@ -1367,8 +1383,7 @@ function IdentityScreen({
               credentials: "include",
               cache: "no-store",
               body: JSON.stringify({
-                publicKey:
-                  publicKeyResult.publicKey,
+                publicKey,
               }),
             },
           );
@@ -1399,7 +1414,7 @@ function IdentityScreen({
 
         /* -------------------------------------------------
            STEP 5
-           Request one-time challenge.
+           Request cryptographic challenge.
         ------------------------------------------------- */
 
         const challengeResponse =
@@ -1408,8 +1423,6 @@ function IdentityScreen({
             {
               method: "POST",
               headers: {
-                "Content-Type":
-                  "application/json",
                 Accept:
                   "application/json",
               },
@@ -1431,25 +1444,65 @@ function IdentityScreen({
           );
         }
 
+        /* -------------------------------------------------
+           STEP 6
+           STRICT CHALLENGE VALIDATION.
+           
+           NEVER call Android with an empty challenge.
+        ------------------------------------------------- */
+
+        if (!challengeResponse.ok) {
+          throw new Error(
+            challengeResult.error ||
+              challengeResult.message ||
+              "Unable to create the Android recovery challenge.",
+          );
+        }
+
         if (
-          !challengeResponse.ok ||
-          challengeResult.success !== true ||
-          !challengeResult.challenge ||
-          !challengeResult.challengeId
+          challengeResult.success !== true
         ) {
           throw new Error(
             challengeResult.error ||
               challengeResult.message ||
-              "Unable to start Android PIN recovery.",
+              "The Android recovery challenge was rejected.",
           );
         }
 
+        if (
+          typeof challengeResult.challengeId !==
+            "string" ||
+          !challengeResult.challengeId.trim()
+        ) {
+          throw new Error(
+            "The recovery server did not return a valid challenge ID.",
+          );
+        }
+
+        if (
+          typeof challengeResult.challenge !==
+            "string" ||
+          !challengeResult.challenge.trim()
+        ) {
+          throw new Error(
+            "The recovery server did not return a valid recovery challenge.",
+          );
+        }
+
+        const challenge =
+          challengeResult.challenge.trim();
+
+        const challengeId =
+          challengeResult.challengeId.trim();
+
         /* -------------------------------------------------
-           STEP 6
-           Native Android authentication + signing.
+           STEP 7
+           ANDROID DEVICE AUTHENTICATION + SIGNING
            
-           Depending on native implementation, Android may
-           show:
+           This native method deliberately uses the Android
+           device credential-capable authentication path.
+           
+           It supports:
            
              • fingerprint
              • face
@@ -1459,13 +1512,12 @@ function IdentityScreen({
         ------------------------------------------------- */
 
         const signedResult =
-          await signAndroidRecoveryChallenge(
-            challengeResult.challenge,
-          );
+        await authenticateAndSignAndroidWithDeviceCredential(
+          challengeResult.challenge,
+        );
 
         if (
-          !signedResult.success ||
-          !signedResult.signature
+          !signedResult.success
         ) {
           throw new Error(
             signedResult.error ||
@@ -1474,9 +1526,22 @@ function IdentityScreen({
           );
         }
 
+        if (
+          typeof signedResult.signature !==
+            "string" ||
+          !signedResult.signature.trim()
+        ) {
+          throw new Error(
+            "Android device security completed, but no recovery signature was returned.",
+          );
+        }
+
+        const signature =
+          signedResult.signature.trim();
+
         /* -------------------------------------------------
-           STEP 7
-           Send cryptographic proof to backend.
+           STEP 8
+           Verify signature with server.
         ------------------------------------------------- */
 
         const verifyResponse =
@@ -1493,12 +1558,9 @@ function IdentityScreen({
               credentials: "include",
               cache: "no-store",
               body: JSON.stringify({
-                challengeId:
-                  challengeResult.challengeId,
-                challenge:
-                  challengeResult.challenge,
-                signature:
-                  signedResult.signature,
+                challengeId,
+                challenge,
+                signature,
               }),
             },
           );
@@ -1516,10 +1578,22 @@ function IdentityScreen({
           );
         }
 
+        /* -------------------------------------------------
+           STEP 9
+           Validate authorization.
+        ------------------------------------------------- */
+
+        if (!verifyResponse.ok) {
+          throw new Error(
+            verifyResult.error ||
+              verifyResult.message ||
+              "Android recovery verification failed.",
+          );
+        }
+
         if (
-          !verifyResponse.ok ||
           verifyResult.success !== true ||
-          !verifyResult.authorizationToken
+          verifyResult.verified !== true
         ) {
           throw new Error(
             verifyResult.error ||
@@ -1528,19 +1602,23 @@ function IdentityScreen({
           );
         }
 
+        if (
+          typeof verifyResult.authorizationToken !==
+            "string" ||
+          !verifyResult.authorizationToken.trim()
+        ) {
+          throw new Error(
+            "The recovery server did not issue a valid authorization token.",
+          );
+        }
+
         /* -------------------------------------------------
-           STEP 8
-           
-           Keep authorization token ONLY in React memory.
-           
-           NEVER store it in:
-             • localStorage
-             • sessionStorage
-             • cookies created by frontend
+           STEP 10
+           Keep token ONLY in React memory.
         ------------------------------------------------- */
 
         setRecoveryToken(
-          verifyResult.authorizationToken,
+          verifyResult.authorizationToken.trim(),
         );
 
         setRecoveryMode(true);
@@ -1598,15 +1676,6 @@ function IdentityScreen({
           setError("");
           setAttempts(0);
           setMethod("pin");
-
-          /*
-           * The backend invalidates the old security
-           * sessions after a successful PIN reset.
-           *
-           * Therefore we deliberately return to the
-           * Identity screen rather than directly opening
-           * the workspace.
-           */
         }}
         onCancel={cancelRecovery}
       />
@@ -1627,8 +1696,6 @@ function IdentityScreen({
 
       <div className="relative flex h-full items-center justify-center px-4 py-4">
         <section className="w-full max-w-sm rounded-[1.75rem] border border-white/[0.08] bg-white/[0.035] p-5 shadow-2xl shadow-black/60 backdrop-blur-2xl sm:p-6">
-          {/* BRAND */}
-
           <div className="text-center">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.25rem] border border-sky-400/20 bg-sky-400/[0.06]">
               <span className="text-lg font-black tracking-[0.18em] text-sky-300">
@@ -1649,8 +1716,6 @@ function IdentityScreen({
             </p>
           </div>
 
-          {/* GOOGLE */}
-
           <div className="mt-4 flex items-center gap-3 rounded-xl border border-white/[0.06] bg-black/25 p-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.06]">
               <CheckCircle2 className="h-4 w-4 text-sky-300" />
@@ -1668,8 +1733,6 @@ function IdentityScreen({
 
             <ShieldCheck className="h-4 w-4 shrink-0 text-sky-300/60" />
           </div>
-
-          {/* METHODS */}
 
           <div className="mt-3 grid grid-cols-2 gap-1.5 rounded-xl border border-white/[0.06] bg-black/25 p-1">
             <button
@@ -1709,8 +1772,6 @@ function IdentityScreen({
               Device
             </button>
           </div>
-
-          {/* PIN */}
 
           {method === "pin" ? (
             <div className="mt-4">
@@ -1838,10 +1899,6 @@ function IdentityScreen({
               ) : null}
             </div>
           ) : (
-            /* =================================================
-               DEVICE IDENTITY
-            ================================================= */
-
             <div className="mt-5 text-center">
               <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-[1.5rem] border border-sky-400/15 bg-sky-400/[0.05]">
                 <Fingerprint className="h-10 w-10 text-sky-300" />
@@ -2022,10 +2079,6 @@ export default function DashboardPage(): ReactNode {
   const [identityVerified, setIdentityVerified] =
     useState(false);
 
-  /* =======================================================
-     DASHBOARD DATA
-  ======================================================= */
-
   const [loading, setLoading] =
     useState(false);
 
@@ -2104,14 +2157,13 @@ export default function DashboardPage(): ReactNode {
           );
         }
 
-        const configured =
-          result.configured === true;
+        setPinConfigured(
+          result.configured === true,
+        );
 
-        const verified =
-          result.verified === true;
-
-        setPinConfigured(configured);
-        setIdentityVerified(verified);
+        setIdentityVerified(
+          result.verified === true,
+        );
       } catch (error) {
         console.error(
           "SECURITY STATUS ERROR:",
@@ -2219,8 +2271,6 @@ export default function DashboardPage(): ReactNode {
           let notifications: NotificationRecord[] =
             [];
 
-          /* SAVINGS */
-
           if (
             savingsResponse.status ===
               "fulfilled" &&
@@ -2233,8 +2283,6 @@ export default function DashboardPage(): ReactNode {
               savings = {};
             }
           }
-
-          /* MEMBERS */
 
           if (
             membersResponse.status ===
@@ -2254,8 +2302,6 @@ export default function DashboardPage(): ReactNode {
             }
           }
 
-          /* LOANS */
-
           if (
             loansResponse.status ===
               "fulfilled" &&
@@ -2273,8 +2319,6 @@ export default function DashboardPage(): ReactNode {
               loans = [];
             }
           }
-
-          /* NOTIFICATIONS */
 
           if (
             notificationsResponse.status ===
@@ -2294,16 +2338,12 @@ export default function DashboardPage(): ReactNode {
             }
           }
 
-          /* MEMBERS */
-
           const activeMembers =
             members.filter(
               (member) =>
                 member.status?.toLowerCase() ===
                 "active",
             ).length;
-
-          /* LOANS */
 
           const activeLoans =
             loans.filter((loan) => {
@@ -2343,16 +2383,12 @@ export default function DashboardPage(): ReactNode {
               );
             }).length;
 
-          /* NOTIFICATIONS */
-
           const unreadNotifications =
             notifications.filter(
               (notification) =>
                 notification.read !== true &&
                 notification.isRead !== true,
             ).length;
-
-          /* SAVINGS */
 
           const savingsBalance =
             Number(
@@ -2389,8 +2425,6 @@ export default function DashboardPage(): ReactNode {
             totalReversals,
           });
 
-          /* RECENT MEMBERS */
-
           const recentMembers =
             [...members]
               .sort(
@@ -2422,8 +2456,6 @@ export default function DashboardPage(): ReactNode {
                 type:
                   "member" as const,
               }));
-
-          /* RECENT LOANS */
 
           const recentLoans =
             [...loans]
@@ -2464,8 +2496,6 @@ export default function DashboardPage(): ReactNode {
                 type:
                   "loan" as const,
               }));
-
-          /* RECENT NOTIFICATIONS */
 
           const recentNotifications =
             [...notifications]
@@ -2569,10 +2599,6 @@ export default function DashboardPage(): ReactNode {
       [stats],
     );
 
-  /*
-   * Dashboard summary cards are intentionally retained
-   * for DashboardUI / dashboard summary usage.
-   */
   void dashboardCards;
   void activities;
   void loading;
