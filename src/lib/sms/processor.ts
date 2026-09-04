@@ -13,7 +13,7 @@
  *       ↓
  *   parser.ts
  *       ↓
- *   bank account classification
+ *   bank destination classification
  *       ↓
  *   member resolution
  *       ↓
@@ -32,11 +32,13 @@
  *   createSavingsDeposit()
  *   createLoanRepayment()
  *
- * IMPORTANT
+ * =========================================================
+ *
+ * CRITICAL BANK ACCOUNT SEMANTIC
  * ---------------------------------------------------------
  *
  * The account number appearing in the bank SMS is a BANK
- * collection account.
+ * COLLECTION / DESTINATION ACCOUNT.
  *
  * It is NOT:
  *
@@ -44,6 +46,11 @@
  * - a GEO-SHUA savings account ID
  * - a GEO-SHUA loan ID
  * - a GEO-SHUA loan number
+ *
+ * The destination account determines the transaction route:
+ *
+ *   082083  → loan
+ *   2650821 → savings
  *
  * The sender name identifies the GEO-SHUA member.
  *
@@ -84,13 +91,13 @@ import type {
 ========================================================= */
 
 /**
- * GEO-SHUA bank collection accounts.
+ * GEO-SHUA BANK COLLECTION / DESTINATION ACCOUNTS.
  *
  * IMPORTANT:
  *
- * These are BANK account numbers from the SMS.
+ * These are NOT GEO-SHUA member financial accounts.
  *
- * They do NOT identify GEO-SHUA financial accounts.
+ * They are routing identifiers contained in the bank SMS.
  */
 const LOAN_BANK_ACCOUNT =
   "082083";
@@ -172,7 +179,7 @@ export type ProcessIncomingTransactionResult =
     };
 
 /* =========================================================
-   BANK ACCOUNT CLASSIFICATION
+   BANK DESTINATION CLASSIFICATION
 ========================================================= */
 
 /**
@@ -183,7 +190,7 @@ export type ProcessIncomingTransactionResult =
  *
  * parser.ts only extracts:
  *
- *   accountNumber = "2650821"
+ *   destinationAccountNumber = "2650821"
  *
  * This function determines:
  *
@@ -191,12 +198,40 @@ export type ProcessIncomingTransactionResult =
  *   082083  → loan
  *
  * Unknown accounts are NEVER guessed.
+ *
+ * IMPORTANT:
+ *
+ * This function does NOT query:
+ *
+ * - savingsAccounts
+ * - loans
+ * - members
+ *
+ * It only identifies the configured BANK collection
+ * destination.
  */
 function classifyBankAccount(
-  accountNumber: string,
+  destinationAccountNumber: string,
 ): BankPaymentType {
+  /**
+   * IMPORTANT:
+   *
+   * Keep this as a STRING.
+   *
+   * Do NOT convert to Number().
+   *
+   * Otherwise:
+   *
+   *   "082083"
+   *
+   * could become:
+   *
+   *   "82083"
+   */
   const clean =
-    accountNumber.trim();
+    destinationAccountNumber
+      .trim()
+      .replace(/\s+/g, "");
 
   if (
     clean ===
@@ -226,15 +261,15 @@ function classifyBankAccount(
  *
  *   transactionType = "unknown"
  *
- * The processor then classifies it using the BANK account
- * number.
+ * The processor then classifies it using the BANK
+ * destination account number.
  */
 function classifyTransaction(
   parsed: ParsedBankSms,
 ): ClassifiedBankTransaction {
   const transactionType =
     classifyBankAccount(
-      parsed.accountNumber,
+      parsed.destinationAccountNumber,
     );
 
   return {
@@ -250,16 +285,6 @@ function classifyTransaction(
 
 /**
  * Normalize names before comparison.
- *
- * Examples:
- *
- *   Francis Mwangi Kamau
- *   FRANCIS MWANGI KAMAU
- *   Francis  Mwangi   Kamau
- *
- * all become:
- *
- *   FRANCIS MWANGI KAMAU
  */
 function normalizeName(
   value: string,
@@ -373,17 +398,12 @@ function getMemberName(
  *
  * IMPORTANT:
  *
+ * Member identity comes from senderName.
+ *
+ * The bank destination account is NOT used to resolve
+ * the member.
+ *
  * The final financial identity decision is EXACT.
- *
- * We do NOT:
- *
- * - fuzzy match
- * - choose the closest person
- * - choose the first result
- * - match only part of the name
- *
- * We first collect candidates through getMembers(),
- * then perform exact normalized full-name matching.
  */
 async function resolveMemberBySmsName(
   senderName: string,
@@ -635,16 +655,16 @@ async function resolveMemberBySmsName(
 ========================================================= */
 
 /**
- * Every member should have exactly one fixed savings
- * account.
- *
- * createMember() creates it automatically.
- *
- * getOrCreateSavingsAccount() is used here so legacy
- * members created before the invariant was enforced can
- * still be repaired safely.
+ * Every member should have exactly one savings account.
  *
  * The savings service owns the unique-member constraint.
+ *
+ * NOTE:
+ *
+ * We intentionally do NOT compare this GEO-SHUA savings
+ * account number with the bank destination account.
+ *
+ * The two values have completely different meanings.
  */
 async function resolveSavingsAccount(
   member: ResolvedMember,
@@ -676,6 +696,12 @@ async function resolveSavingsAccount(
     );
   }
 
+  /**
+   * Existing GEO-SHUA savings service currently expects
+   * the account type to be "fixed".
+   *
+   * We preserve that existing invariant here.
+   */
   if (
     account.accountType !==
     "fixed"
@@ -810,8 +836,11 @@ function createSmsId(
 ): string {
   return [
     transaction.reference,
+
     transaction.smsDate,
-    transaction.accountNumber,
+
+    transaction.destinationAccountNumber,
+
     transaction.address ||
       "",
   ].join(":");
@@ -860,20 +889,20 @@ async function processSavingsTransaction(
       amount:
         classified.amount,
 
-      /*
+      /**
        * This transaction entered GEO-SHUA through the
        * Android SMS ingestion pipeline.
        */
       source:
         "sms",
 
-      /*
+      /**
        * Immutable bank transaction reference.
        */
       reference:
         classified.reference,
 
-      /*
+      /**
        * Deterministic Android SMS identity.
        */
       smsId:
@@ -881,15 +910,17 @@ async function processSavingsTransaction(
           transaction,
         ),
 
-      /*
-       * The BANK collection account.
+      /**
+       * IMPORTANT:
        *
-       * This is NOT the GEO-SHUA savings account ID.
+       * This is the BANK destination account.
+       *
+       * It is NOT the GEO-SHUA savings account ID.
        */
       sourceReference:
-        classified.accountNumber,
+        classified.destinationAccountNumber,
 
-      /*
+      /**
        * Bank-reported transaction time.
        */
       transactionAt:
@@ -995,9 +1026,9 @@ async function processLoanTransaction(
  *
  *   ParsedBankSms
  *       ↓
- *   classify bank account
+ *   classify BANK destination
  *       ↓
- *   resolve member
+ *   resolve GEO-SHUA member from sender name
  *       ↓
  *   savings OR loan
  */
@@ -1057,13 +1088,14 @@ export async function processIncomingTransaction(
   }
 
   if (
-    typeof parsedTransaction.accountNumber !==
+    typeof parsedTransaction.destinationAccountNumber !==
       "string" ||
-    parsedTransaction.accountNumber.trim()
+    parsedTransaction.destinationAccountNumber
+      .trim()
       .length === 0
   ) {
     throw new Error(
-      "Parsed bank transaction bank account number is required.",
+      "Parsed bank transaction bank destination account number is required.",
     );
   }
 
@@ -1091,7 +1123,7 @@ export async function processIncomingTransaction(
   }
 
   /* =======================================================
-     CLASSIFY BANK ACCOUNT
+     CLASSIFY BANK DESTINATION
   ======================================================= */
 
   const classified =
@@ -1100,7 +1132,7 @@ export async function processIncomingTransaction(
     );
 
   /* =======================================================
-     UNKNOWN BANK ACCOUNT
+     UNKNOWN BANK DESTINATION
   ======================================================= */
 
   if (
@@ -1108,7 +1140,7 @@ export async function processIncomingTransaction(
     "unknown"
   ) {
     throw new Error(
-      `Bank account "${classified.accountNumber}" is not configured for GEO-SHUA savings or loan payments.`,
+      `Bank destination account "${classified.destinationAccountNumber}" is not configured as a GEO-SHUA loan or savings collection destination.`,
     );
   }
 
@@ -1200,7 +1232,7 @@ export async function processIncomingTransaction(
   ======================================================= */
 
   throw new Error(
-    `Bank account "${classified.accountNumber}" could not be routed.`,
+    `Bank destination account "${classified.destinationAccountNumber}" could not be routed.`,
   );
 }
 

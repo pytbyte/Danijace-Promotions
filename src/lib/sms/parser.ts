@@ -30,11 +30,13 @@
  *      ↓
  * ParsedBankSms
  *      ↓
- * classifier.ts
+ * processor.ts
+ *      ↓
+ * bank destination classification
  *      ↓
  * loan / savings / unknown
  *      ↓
- * processor.ts
+ * member resolution
  *      ↓
  * savings service / loan service
  *
@@ -42,7 +44,7 @@
  * ---------------------------------------------------------
  *
  * The account number contained in the bank SMS is a BANK
- * collection account.
+ * COLLECTION / DESTINATION ACCOUNT.
  *
  * It is NOT:
  *
@@ -50,6 +52,15 @@
  * - a GEO-SHUA savings account ID
  * - a GEO-SHUA loan ID
  * - a GEO-SHUA loan number
+ *
+ * The destination account is used by processor.ts to decide
+ * whether the payment is:
+ *
+ *   082083  → loan
+ *   2650821 → savings
+ *
+ * The sender name is then used to resolve the GEO-SHUA
+ * member.
  *
  * Example:
  *
@@ -63,7 +74,7 @@
  *   reference: "UHTHY4Z1PL",
  *   amount: 1400,
  *   senderName: "FRANCIS MWANGI KAMAU",
- *   accountNumber: "2650821",
+ *   destinationAccountNumber: "2650821",
  *   transactionType: "unknown",
  *   transactionDate: Date,
  *   address: "BANK",
@@ -72,7 +83,7 @@
  *   status: "confirmed"
  * }
  *
- * classifier.ts is responsible for changing:
+ * processor.ts is responsible for changing:
  *
  *   "unknown"
  *
@@ -104,7 +115,7 @@ export type BankPaymentType =
  * At parser level transactionType is ALWAYS "unknown".
  *
  * Classification is intentionally delegated to
- * classifier.ts.
+ * processor.ts.
  */
 export type ParsedBankSms = {
   /**
@@ -126,8 +137,7 @@ export type ParsedBankSms = {
   amount: number;
 
   /**
-   * Sender/member name supplied by the bank SMS
-   * after basic whitespace/Unicode normalization.
+   * Sender/member name supplied by the bank SMS.
    *
    * Example:
    *
@@ -136,12 +146,21 @@ export type ParsedBankSms = {
   senderName: string;
 
   /**
-   * Bank collection account number appearing
+   * BANK collection/destination account number appearing
    * in the SMS.
    *
-   * This is a routing value only.
+   * IMPORTANT:
+   *
+   * This is a routing value.
+   *
+   * It is NOT a GEO-SHUA member financial account.
+   *
+   * Example:
+   *
+   * 082083
+   * 2650821
    */
-  accountNumber: string;
+  destinationAccountNumber: string;
 
   /**
    * Financial destination.
@@ -187,13 +206,9 @@ export type ParsedBankSms = {
 ========================================================= */
 
 export class SmsParseError extends Error {
-  constructor(
-    message: string,
-  ) {
+  constructor(message: string) {
     super(message);
-
-    this.name =
-      "SmsParseError";
+    this.name = "SmsParseError";
   }
 }
 
@@ -266,14 +281,28 @@ function normalizeName(
 }
 
 /**
- * Normalize bank account number.
+ * Normalize bank destination account number.
  *
- * Digits are preserved exactly.
+ * IMPORTANT:
+ *
+ * We preserve the value as a STRING.
+ *
+ * This is critical because:
+ *
+ *   082083
+ *
+ * must NOT become:
+ *
+ *   82083
+ *
+ * Leading zeroes are part of the bank routing value.
  */
-function normalizeAccountNumber(
+function normalizeDestinationAccountNumber(
   value: string,
 ): string {
-  return value.trim();
+  return value
+    .trim()
+    .replace(/\s+/g, "");
 }
 
 /* =========================================================
@@ -400,7 +429,7 @@ function parseAmountFromBody(
 ): number {
   const match =
     body.match(
-      /\bKES\s*([\d,]+(?:\.\d{1,2})?)\b/i,
+      /\bKES\s+([\d,]+(?:\.\d{1,2})?)\b/i,
     );
 
   if (!match?.[1]) {
@@ -458,7 +487,7 @@ function parseSenderName(
 }
 
 /* =========================================================
-   BANK ACCOUNT NUMBER
+   BANK DESTINATION ACCOUNT NUMBER
 ========================================================= */
 
 /**
@@ -472,12 +501,18 @@ function parseSenderName(
  *
  * IMPORTANT:
  *
- * This is the BANK collection account.
+ * This is the BANK COLLECTION / DESTINATION ACCOUNT.
  *
- * The parser DOES NOT decide whether this means
- * savings or loan.
+ * It is NOT a GEO-SHUA savings account.
+ *
+ * It is NOT a GEO-SHUA loan account.
+ *
+ * processor.ts decides:
+ *
+ *   2650821 → savings
+ *   082083  → loan
  */
-function parseAccountNumber(
+function parseDestinationAccountNumber(
   body: string,
 ): string {
   const match =
@@ -487,24 +522,34 @@ function parseAccountNumber(
 
   if (!match?.[1]) {
     throw new SmsParseError(
-      "Could not identify the bank account number.",
+      "Could not identify the bank destination account number.",
     );
   }
 
-  const accountNumber =
-    normalizeAccountNumber(
+  const destinationAccountNumber =
+    normalizeDestinationAccountNumber(
       match[1],
     );
 
   if (
-    accountNumber.length === 0
+    destinationAccountNumber.length === 0
   ) {
     throw new SmsParseError(
-      "Bank account number is empty.",
+      "Bank destination account number is empty.",
     );
   }
 
-  return accountNumber;
+  if (
+    !/^\d+$/.test(
+      destinationAccountNumber,
+    )
+  ) {
+    throw new SmsParseError(
+      "Bank destination account number contains invalid characters.",
+    );
+  }
+
+  return destinationAccountNumber;
 }
 
 /* =========================================================
@@ -632,10 +677,6 @@ function parseTransactionDate(
   /**
    * Validate the calendar date independently before
    * constructing the final timestamp.
-   *
-   * This rejects impossible dates such as:
-   *
-   * 31/02/26
    */
   const calendarCheck =
     new Date(
@@ -765,8 +806,7 @@ export function parseBankSms(
    * Android timestamp is required.
    */
   if (
-    typeof sms.date !==
-      "number" ||
+    typeof sms.date !== "number" ||
     !Number.isFinite(
       sms.date,
     ) ||
@@ -791,7 +831,7 @@ export function parseBankSms(
     );
 
   /**
-   * Parse each immutable bank field.
+   * Parse immutable bank fields.
    */
   const reference =
     parseReference(
@@ -808,8 +848,8 @@ export function parseBankSms(
       normalizedBody,
     );
 
-  const accountNumber =
-    parseAccountNumber(
+  const destinationAccountNumber =
+    parseDestinationAccountNumber(
       normalizedBody,
     );
 
@@ -828,7 +868,7 @@ export function parseBankSms(
    *
    * Parser does NOT classify the destination.
    *
-   * classifier.ts owns:
+   * processor.ts owns:
    *
    *   loan
    *   savings
@@ -845,7 +885,7 @@ export function parseBankSms(
 
     senderName,
 
-    accountNumber,
+    destinationAccountNumber,
 
     transactionType,
 
@@ -904,13 +944,13 @@ export function parseBankSmsBatch(
   }
 
   return messages.map(
-    (
-      sms,
-    ) => {
+    (sms) => {
       try {
         return {
           success: true,
+
           sms,
+
           parsed:
             parseBankSms(
               sms,
@@ -919,10 +959,11 @@ export function parseBankSmsBatch(
       } catch (error) {
         return {
           success: false,
+
           sms,
+
           error:
-            error instanceof
-              Error
+            error instanceof Error
               ? error.message
               : "Unable to parse SMS.",
         };

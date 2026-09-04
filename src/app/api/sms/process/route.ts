@@ -1,32 +1,47 @@
 /**
  * =========================================================
  * GEO-SHUA
- * BANK SMS PROCESS API
+ * SMS PROCESS API
  * =========================================================
  *
  * RESPONSIBILITY
  * ---------------------------------------------------------
- * This route is the ingestion/orchestration boundary.
  *
- * It:
- *   1. receives and validates the Android SMS envelope
- *   2. parses the bank SMS
- *   3. protects against impossible timestamps
- *   4. delegates financial decisions to processor.ts
- *   5. reports the exact processing outcome
+ * HTTP boundary for Android foreground SMS ingestion.
  *
- * It does NOT:
- *   - create savings transactions directly
- *   - create loans directly
- *   - modify balances directly
+ * Flow:
  *
- * Financial idempotency MUST be enforced by the processor
- * and persistence layer.
+ * Android SmsReader
+ *       ↓
+ * POST /api/sms/process
+ *       ↓
+ * validate envelope
+ *       ↓
+ * parseBankSms()
+ *       ↓
+ * processIncomingTransaction()
+ *       ↓
+ * savings service / loan service
+ *
+ * IMPORTANT
+ * ---------------------------------------------------------
+ *
+ * The bank destination account in the SMS is a BANK
+ * COLLECTION / DESTINATION ACCOUNT.
+ *
+ * It determines:
+ *
+ *   082083  → loan
+ *   2650821 → savings
+ *
+ * It is NOT looked up as a GEO-SHUA financial account.
+ *
+ * Member identity comes from the sender name in the SMS.
+ *
  * =========================================================
  */
 
 import {
-  NextRequest,
   NextResponse,
 } from "next/server";
 
@@ -43,88 +58,54 @@ import {
    TYPES
 ========================================================= */
 
-type IncomingSmsRequest = {
+type SmsProcessRequest = {
   smsId?: unknown;
   address?: unknown;
   body?: unknown;
   date?: unknown;
 };
 
-/**
- * We intentionally keep this tolerant because the processor
- * is the financial authority and its result may evolve.
- */
-type ProcessorResult = {
-  status?: unknown;
-  type?: unknown;
-
-  duplicate?: unknown;
-  ignored?: unknown;
-  financialChange?: unknown;
-
-  member?: unknown;
-  savingsAccount?: unknown;
-  savingsTransaction?: unknown;
-
-  loan?: unknown;
-  repayment?: unknown;
-
-  result?: unknown;
-};
+type ApiStatus =
+  | "success"
+  | "duplicate"
+  | "ignored"
+  | "error";
 
 /* =========================================================
    CONSTANTS
 ========================================================= */
 
 /**
- * Bank timestamps should never legitimately be meaningfully
- * ahead of server time.
+ * Future SMS tolerance.
  *
- * Small tolerance protects against minor phone/bank/server
- * clock differences.
+ * Android/device clocks can differ slightly from the
+ * server clock.
  */
 const FUTURE_SMS_TOLERANCE_MS =
   5 * 60 * 1000;
 
 /**
- * Used only for diagnostics.
+ * Diagnostic threshold only.
  *
- * IMPORTANT:
- * This does NOT determine whether an old SMS is financially
- * valid. Historical-event policy belongs in processor.ts.
- *
- * We deliberately do not blanket-reject old SMS messages here
- * because legitimate inbox sweeps may ingest older messages.
+ * We do NOT automatically reject old SMS here because
+ * legitimate old bank messages may be encountered when
+ * the foreground inbox is first read.
  */
-const VERY_OLD_SMS_WARNING_MS =
+const OLD_SMS_WARNING_MS =
   30 * 24 * 60 * 60 * 1000;
 
 /* =========================================================
-   RESPONSE
+   HELPERS
 ========================================================= */
 
-function jsonResponse(
-  data: unknown,
-  status = 200,
-) {
-  return NextResponse.json(
-    data,
-    {
-      status,
-    },
-  );
-}
-
-/* =========================================================
-   ADDRESS
-========================================================= */
-
-function normalizeAddress(
+/**
+ * Safely extract a string.
+ */
+function getOptionalString(
   value: unknown,
 ): string | null {
   if (
-    typeof value !==
-    "string"
+    typeof value !== "string"
   ) {
     return null;
   }
@@ -132,196 +113,70 @@ function normalizeAddress(
   const clean =
     value.trim();
 
-  return clean.length > 0
+  return clean.length >
+    0
     ? clean
-    : null;
-}
-
-/* =========================================================
-   SMS ID
-========================================================= */
-
-function normalizeSmsId(
-  value: unknown,
-): string | null {
-  if (
-    typeof value !==
-    "string"
-  ) {
-    return null;
-  }
-
-  const clean =
-    value.trim();
-
-  return clean.length > 0
-    ? clean
-    : null;
-}
-
-/* =========================================================
-   DATE HELPERS
-========================================================= */
-
-function isReasonableSmsDate(
-  value: number,
-): boolean {
-  if (
-    !Number.isFinite(value)
-  ) {
-    return false;
-  }
-
-  if (value <= 0) {
-    return false;
-  }
-
-  return true;
-}
-
-function isFutureSmsDate(
-  value: number,
-): boolean {
-  const now =
-    Date.now();
-
-  return (
-    value >
-    now +
-      FUTURE_SMS_TOLERANCE_MS
-  );
-}
-
-function isVeryOldSmsDate(
-  value: number,
-): boolean {
-  const now =
-    Date.now();
-
-  return (
-    now - value >
-    VERY_OLD_SMS_WARNING_MS
-  );
-}
-
-/* =========================================================
-   RESULT HELPERS
-========================================================= */
-
-function asProcessorResult(
-  value: unknown,
-): ProcessorResult {
-  if (
-    typeof value !==
-      "object" ||
-    value === null ||
-    Array.isArray(value)
-  ) {
-    return {};
-  }
-
-  return value as ProcessorResult;
-}
-
-function asString(
-  value: unknown,
-): string | null {
-  return typeof value ===
-    "string"
-    ? value
-    : null;
-}
-
-function asBoolean(
-  value: unknown,
-): boolean | null {
-  return typeof value ===
-    "boolean"
-    ? value
     : null;
 }
 
 /**
- * The processor should eventually return these explicitly.
- *
- * For backward compatibility we derive sensible defaults
- * instead of blindly claiming success.
+ * Safely extract a positive SMS timestamp.
  */
-function getProcessorStatus(
-  result: ProcessorResult,
+function getSmsDate(
+  value: unknown,
+): number | null {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value <= 0
+  ) {
+    return null;
+  }
+
+  return value;
+}
+
+/**
+ * Extract a useful error message.
+ */
+function getErrorMessage(
+  error: unknown,
 ): string {
-  return (
-    asString(
-      result.status,
-    ) ??
-    "processed"
-  );
+  if (
+    error instanceof Error &&
+    error.message.trim()
+      .length > 0
+  ) {
+    return error.message;
+  }
+
+  if (
+    typeof error === "string" &&
+    error.trim().length > 0
+  ) {
+    return error.trim();
+  }
+
+  return "SMS processing failed.";
 }
 
-function getProcessorType(
-  result: ProcessorResult,
-  parsedType: string,
-): string {
-  return (
-    asString(
-      result.type,
-    ) ??
-    parsedType
-  );
-}
-
-function getProcessorDuplicate(
-  result: ProcessorResult,
-): boolean {
-  return (
-    asBoolean(
-      result.duplicate,
-    ) === true
-  );
-}
-
-function getProcessorIgnored(
-  result: ProcessorResult,
-): boolean {
-  return (
-    asBoolean(
-      result.ignored,
-    ) === true
-  );
-}
-
-function getProcessorFinancialChange(
-  result: ProcessorResult,
-): boolean {
-  /**
-   * Financial change MUST be explicitly true.
-   *
-   * We do not infer it from "processed", "success", or
-   * the existence of an object.
-   */
-  return (
-    asBoolean(
-      result.financialChange,
-    ) === true
-  );
-}
-
-/* =========================================================
-   RECEIVED PAYLOAD
-========================================================= */
-
-function buildReceived(
-  smsId: string | null,
-  address: string | null,
-  date: number,
-  body: string,
+/**
+ * Build a standardized API response.
+ */
+function response(
+  body: Record<string, unknown>,
+  status = 200,
 ) {
-  return {
-    smsId,
-    address,
-    date,
+  return NextResponse.json(
     body,
-  };
+    {
+      status,
+      headers: {
+        "Cache-Control":
+          "no-store",
+      },
+    },
+  );
 }
 
 /* =========================================================
@@ -329,198 +184,209 @@ function buildReceived(
 ========================================================= */
 
 export async function POST(
-  request: NextRequest,
+  request: Request,
 ) {
   const receivedAt =
-    new Date().toISOString();
+    Date.now();
 
   /* =======================================================
-     RECEIVE JSON
+     READ REQUEST BODY
   ======================================================= */
 
-  let body: unknown;
+  let payload:
+    | SmsProcessRequest
+    | null = null;
 
   try {
-    body =
-      await request.json();
+    payload =
+      (await request.json()) as SmsProcessRequest;
   } catch {
-    return jsonResponse(
+    return response(
       {
-        success: false,
-        status: "error",
-        stage: "received",
-        processed: false,
-        duplicate: false,
-        ignored: false,
-        financialChange: false,
-        error:
+        status:
+          "error" satisfies ApiStatus,
+
+        processed:
+          false,
+
+        financialChange:
+          false,
+
+        reason:
+          "invalid_json",
+
+        message:
           "Request body must contain valid JSON.",
-        receivedAt,
+      },
+      400,
+    );
+  }
+
+  if (
+    !payload ||
+    typeof payload !==
+      "object"
+  ) {
+    return response(
+      {
+        status:
+          "error" satisfies ApiStatus,
+
+        processed:
+          false,
+
+        financialChange:
+          false,
+
+        reason:
+          "invalid_request",
+
+        message:
+          "SMS request payload is invalid.",
       },
       400,
     );
   }
 
   /* =======================================================
-     VALIDATE OBJECT
+     EXTRACT ENVELOPE
   ======================================================= */
-
-  if (
-    typeof body !==
-      "object" ||
-    body === null ||
-    Array.isArray(body)
-  ) {
-    return jsonResponse(
-      {
-        success: false,
-        status: "error",
-        stage: "received",
-        processed: false,
-        duplicate: false,
-        ignored: false,
-        financialChange: false,
-        error:
-          "Request body must be a valid SMS object.",
-        receivedAt,
-      },
-      400,
-    );
-  }
-
-  const sms =
-    body as IncomingSmsRequest;
 
   const smsId =
-    normalizeSmsId(
-      sms.smsId,
+    getOptionalString(
+      payload.smsId,
     );
-
-  /* =======================================================
-     VALIDATE BODY
-  ======================================================= */
-
-  if (
-    typeof sms.body !==
-      "string" ||
-    sms.body.trim().length ===
-      0
-  ) {
-    return jsonResponse(
-      {
-        success: false,
-        status: "error",
-        stage: "received",
-        processed: false,
-        duplicate: false,
-        ignored: false,
-        financialChange: false,
-        error:
-          "SMS body is required.",
-        receivedAt,
-      },
-      400,
-    );
-  }
-
-  const smsBody =
-    sms.body.trim();
-
-  /* =======================================================
-     VALIDATE DATE
-  ======================================================= */
-
-  if (
-    typeof sms.date !==
-      "number" ||
-    !isReasonableSmsDate(
-      sms.date,
-    )
-  ) {
-    return jsonResponse(
-      {
-        success: false,
-        status: "error",
-        stage: "received",
-        processed: false,
-        duplicate: false,
-        ignored: false,
-        financialChange: false,
-        error:
-          "SMS date is invalid.",
-        receivedAt,
-      },
-      400,
-    );
-  }
-
-  const smsDate =
-    sms.date;
 
   const address =
-    normalizeAddress(
-      sms.address,
+    getOptionalString(
+      payload.address,
     );
 
-  const received =
-    buildReceived(
-      smsId,
-      address,
-      smsDate,
-      smsBody,
+  const body =
+    getOptionalString(
+      payload.body,
+    );
+
+  const smsDate =
+    getSmsDate(
+      payload.date,
     );
 
   /* =======================================================
-     FUTURE-DATED SMS PROTECTION
+     VALIDATE SMS BODY
+  ======================================================= */
+
+  if (!body) {
+    return response(
+      {
+        status:
+          "error" satisfies ApiStatus,
+
+        processed:
+          false,
+
+        financialChange:
+          false,
+
+        reason:
+          "missing_body",
+
+        message:
+          "SMS body is required.",
+
+        smsId,
+      },
+      400,
+    );
+  }
+
+  /* =======================================================
+     VALIDATE SMS DATE
   ======================================================= */
 
   if (
-    isFutureSmsDate(
-      smsDate,
-    )
+    smsDate ===
+    null
   ) {
-    return jsonResponse(
+    return response(
       {
-        success: true,
-        status: "ignored",
-        stage: "received",
-        processed: false,
-        duplicate: false,
-        ignored: true,
-        financialChange: false,
-        type: "unknown",
+        status:
+          "error" satisfies ApiStatus,
 
-        received,
+        processed:
+          false,
 
-        parser: {
-          success: false,
-          error:
-            "SMS timestamp is in the future.",
-        },
+        financialChange:
+          false,
 
-        classifier: {
-          success: false,
-          transactionType:
-            "unknown",
-          reason:
-            "Future-dated SMS messages are not eligible for automatic financial processing.",
-        },
+        reason:
+          "invalid_date",
 
-        processor: {
-          success: false,
-          skipped: true,
-          reason:
-            "Processing did not start because the SMS timestamp is invalid for the current ingestion window.",
-        },
+        message:
+          "SMS timestamp must be a valid positive number.",
+
+        smsId,
+      },
+      400,
+    );
+  }
+
+  /* =======================================================
+     FUTURE SMS PROTECTION
+  ======================================================= */
+
+  const futureDifference =
+    smsDate -
+    receivedAt;
+
+  if (
+    futureDifference >
+    FUTURE_SMS_TOLERANCE_MS
+  ) {
+    return response(
+      {
+        status:
+          "ignored" satisfies ApiStatus,
+
+        processed:
+          false,
+
+        financialChange:
+          false,
+
+        reason:
+          "future_sms",
+
+        message:
+          "SMS timestamp is in the future and was not processed.",
+
+        smsId,
 
         receivedAt,
+
+        smsDate,
+
+        futureDifferenceMs:
+          futureDifference,
       },
       200,
     );
   }
 
   /* =======================================================
-     PARSE
+     AGE DIAGNOSTIC
+  ======================================================= */
+
+  const ageMs =
+    receivedAt -
+    smsDate;
+
+  const oldSms =
+    ageMs >
+    OLD_SMS_WARNING_MS;
+
+  /* =======================================================
+     PARSE SMS
   ======================================================= */
 
   let parsed;
@@ -528,667 +394,559 @@ export async function POST(
   try {
     parsed =
       parseBankSms({
+        id:
+          smsId,
+
         address,
-        body: smsBody,
-        date: smsDate,
+
+        body,
+
+        date:
+          smsDate,
       });
   } catch (error) {
-    if (
-      error instanceof
-      SmsParseError
-    ) {
-      return jsonResponse({
-        success: true,
+    const message =
+      getErrorMessage(
+        error,
+      );
 
-        status: "ignored",
-
-        stage: "parser",
-
-        processed: false,
-
-        duplicate: false,
-
-        ignored: true,
-
-        financialChange: false,
-
-        type: "unknown",
-
-        received,
-
-        parser: {
-          success: false,
-
-          error:
-            error.message,
-        },
-
-        classifier: {
-          success: false,
-
-          transactionType:
-            "unknown",
-
-          reason:
-            "SMS did not match the supported GEO-SHUA bank transaction format.",
-        },
-
-        processor: {
-          success: false,
-
-          skipped: true,
-
-          reason:
-            "Processing did not start because parsing failed.",
-        },
-
-        receivedAt,
-      });
-    }
-
-    console.error(
-      "POST /api/sms/process parser failure:",
-      error,
-    );
-
-    return jsonResponse(
+    /**
+     * Parsing failures are intentionally returned as
+     * HTTP 200 because an inbox contains many unrelated
+     * messages and one non-bank SMS should not be treated
+     * as an API/server failure.
+     */
+    return response(
       {
-        success: false,
+        status:
+          "ignored" satisfies ApiStatus,
 
-        status: "error",
+        processed:
+          false,
 
-        stage: "parser",
+        financialChange:
+          false,
 
-        processed: false,
+        reason:
+          "parse_failed",
 
-        duplicate: false,
+        message,
 
-        ignored: false,
+        smsId,
 
-        financialChange: false,
+        address,
 
-        type: "unknown",
+        smsDate,
 
-        received,
+        oldSms,
 
-        parser: {
-          success: false,
+        rawMessage:
+          body,
 
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unexpected SMS parser failure.",
-        },
-
-        receivedAt,
+        parserError:
+          error instanceof
+          SmsParseError,
       },
-      500,
+      200,
     );
   }
 
   /* =======================================================
-     POST-PARSE SAFETY
+     PARSED DIAGNOSTICS
   ======================================================= */
 
   /**
-   * The parser determines loan/savings routing exclusively
-   * from the GEO-SHUA collection account.
+   * At this point we know:
    *
-   * Unknown must NEVER reach financial processing.
+   * - reference
+   * - amount
+   * - senderName
+   * - destinationAccountNumber
+   * - transactionDate
+   *
+   * Parser deliberately leaves transactionType as
+   * "unknown".
    */
-  if (
-    parsed.transactionType ===
-    "unknown"
-  ) {
-    return jsonResponse({
-      success: true,
+  const parsedDiagnostic = {
+    reference:
+      parsed.reference,
 
-      status: "ignored",
+    amount:
+      parsed.amount,
 
-      stage: "classifier",
+    senderName:
+      parsed.senderName,
 
-      processed: false,
+    destinationAccountNumber:
+      parsed.destinationAccountNumber,
 
-      duplicate: false,
+    transactionType:
+      parsed.transactionType,
 
-      ignored: true,
+    transactionDate:
+      parsed.transactionDate
+        .toISOString(),
 
-      financialChange: false,
+    address:
+      parsed.address,
 
-      type: "unknown",
-
-      received,
-
-      parser: {
-        success: true,
-
-        data: parsed,
-      },
-
-      classifier: {
-        success: false,
-
-        transactionType:
-          "unknown",
-
-        accountNumber:
-          parsed.accountNumber,
-
-        reason:
-          "The bank account in the SMS is not a registered GEO-SHUA financial destination.",
-      },
-
-      processor: {
-        success: false,
-
-        skipped: true,
-
-        reason:
-          "Financial processing was blocked for an unknown destination.",
-      },
-
-      receivedAt,
-    });
-  }
-
-  /* =======================================================
-     HISTORICAL SMS DIAGNOSTIC
-  ======================================================= */
-
-  const historicalWarning =
-    isVeryOldSmsDate(
+    smsDate:
       parsed.smsDate,
-    )
-      ? {
-          historical: true,
-          warning:
-            "SMS is older than the automatic-ingestion diagnostic threshold. The processor must determine whether the underlying bank event is still eligible for financial action.",
-        }
-      : {
-          historical: false,
-        };
+
+    status:
+      parsed.status,
+  };
 
   /* =======================================================
-     PROCESS
+     PROCESS FINANCIAL TRANSACTION
   ======================================================= */
-
-  let result: unknown;
 
   try {
-    /**
-     * IMPORTANT:
-     *
-     * processor.ts remains the financial authority.
-     *
-     * The processor must:
-     *
-     *   - enforce idempotency
-     *   - match existing loans for repayments
-     *   - never create a new loan merely because an old SMS
-     *     says money was received
-     *   - atomically persist financial effects
-     */
-    result =
+    const result =
       await processIncomingTransaction(
         parsed,
       );
+
+    /* =====================================================
+       SAVINGS
+    ===================================================== */
+
+    if (
+      result.type ===
+      "savings"
+    ) {
+      return response(
+        {
+          status:
+            "success" satisfies ApiStatus,
+
+          processed:
+            true,
+
+          financialChange:
+            true,
+
+          reason:
+            "savings_deposit_processed",
+
+          message:
+            "Bank SMS was processed as a GEO-SHUA savings deposit.",
+
+          smsId,
+
+          parsed:
+            {
+              ...parsedDiagnostic,
+
+              transactionType:
+                "savings",
+            },
+
+          member:
+            result.member,
+
+          savingsAccount:
+            result.savingsAccount,
+
+          savingsTransaction:
+            result.savingsTransaction,
+
+          oldSms,
+        },
+        200,
+      );
+    }
+
+    /* =====================================================
+       LOAN
+    ===================================================== */
+
+    if (
+      result.type ===
+      "loan"
+    ) {
+      return response(
+        {
+          status:
+            "success" satisfies ApiStatus,
+
+          processed:
+            true,
+
+          financialChange:
+            true,
+
+          reason:
+            "loan_repayment_processed",
+
+          message:
+            "Bank SMS was processed as a GEO-SHUA loan repayment.",
+
+          smsId,
+
+          parsed:
+            {
+              ...parsedDiagnostic,
+
+              transactionType:
+                "loan",
+            },
+
+          member:
+            result.member,
+
+          loan:
+            result.loan,
+
+          repayment:
+            result.repayment,
+
+          oldSms,
+        },
+        200,
+      );
+    }
+
+    /* =====================================================
+       DEFENSIVE FALLBACK
+    ===================================================== */
+
+    return response(
+      {
+        status:
+          "error" satisfies ApiStatus,
+
+        processed:
+          false,
+
+        financialChange:
+          false,
+
+        reason:
+          "unknown_processor_result",
+
+        message:
+          "SMS processor returned an unsupported result.",
+
+        smsId,
+
+        parsed:
+          parsedDiagnostic,
+
+        oldSms,
+      },
+      500,
+    );
   } catch (error) {
+    const message =
+      getErrorMessage(
+        error,
+      );
+
+    /* =====================================================
+       DUPLICATE DETECTION
+    ===================================================== */
+
+    /**
+     * Current financial services are responsible for
+     * idempotency.
+     *
+     * We recognize common duplicate wording here so the
+     * foreground SMS monitor can display it correctly.
+     */
+    const lowerMessage =
+      message.toLowerCase();
+
+    const isDuplicate =
+      lowerMessage.includes(
+        "duplicate",
+      ) ||
+      lowerMessage.includes(
+        "already processed",
+      ) ||
+      lowerMessage.includes(
+        "already exists",
+      ) ||
+      lowerMessage.includes(
+        "already recorded",
+      ) ||
+      lowerMessage.includes(
+        "transaction reference",
+      ) &&
+        lowerMessage.includes(
+          "exists",
+        );
+
+    if (
+      isDuplicate
+    ) {
+      return response(
+        {
+          status:
+            "duplicate" satisfies ApiStatus,
+
+          processed:
+            false,
+
+          financialChange:
+            false,
+
+          reason:
+            "duplicate_transaction",
+
+          message:
+            "This bank transaction has already been processed.",
+
+          smsId,
+
+          parsed:
+            parsedDiagnostic,
+
+          oldSms,
+        },
+        200,
+      );
+    }
+
+    /* =====================================================
+       UNKNOWN DESTINATION
+    ===================================================== */
+
+    if (
+      lowerMessage.includes(
+        "destination account",
+      ) &&
+      lowerMessage.includes(
+        "not configured",
+      )
+    ) {
+      return response(
+        {
+          status:
+            "ignored" satisfies ApiStatus,
+
+          processed:
+            false,
+
+          financialChange:
+            false,
+
+          reason:
+            "unknown_bank_destination",
+
+          message,
+
+          smsId,
+
+          parsed:
+            parsedDiagnostic,
+
+          destinationAccountNumber:
+            parsed.destinationAccountNumber,
+
+          oldSms,
+        },
+        200,
+      );
+    }
+
+    /* =====================================================
+       MEMBER NOT FOUND
+    ===================================================== */
+
+    if (
+      lowerMessage.includes(
+        "no geo-shua member",
+      ) ||
+      lowerMessage.includes(
+        "did not exactly match",
+      ) ||
+      lowerMessage.includes(
+        "multiple geo-shua members",
+      ) ||
+      lowerMessage.includes(
+        "member",
+      ) &&
+        lowerMessage.includes(
+          "not active",
+        )
+    ) {
+      return response(
+        {
+          status:
+            "ignored" satisfies ApiStatus,
+
+          processed:
+            false,
+
+          financialChange:
+            false,
+
+          reason:
+            "member_resolution_failed",
+
+          message,
+
+          smsId,
+
+          parsed:
+            parsedDiagnostic,
+
+          memberName:
+            parsed.senderName,
+
+          oldSms,
+        },
+        200,
+      );
+    }
+
+    /* =====================================================
+       LOAN/SAVINGS ROUTING FAILURE
+    ===================================================== */
+
+    if (
+      lowerMessage.includes(
+        "no active geo-shua loan",
+      ) ||
+      lowerMessage.includes(
+        "multiple active loans",
+      )
+    ) {
+      return response(
+        {
+          status:
+            "ignored" satisfies ApiStatus,
+
+          processed:
+            false,
+
+          financialChange:
+            false,
+
+          reason:
+            "loan_resolution_failed",
+
+          message,
+
+          smsId,
+
+          parsed:
+            parsedDiagnostic,
+
+          memberName:
+            parsed.senderName,
+
+          oldSms,
+        },
+        200,
+      );
+    }
+
+    /* =====================================================
+       SAVINGS ACCOUNT FAILURE
+    ===================================================== */
+
+    if (
+      lowerMessage.includes(
+        "savings account",
+      )
+    ) {
+      return response(
+        {
+          status:
+            "ignored" satisfies ApiStatus,
+
+          processed:
+            false,
+
+          financialChange:
+            false,
+
+          reason:
+            "savings_account_resolution_failed",
+
+          message,
+
+          smsId,
+
+          parsed:
+            parsedDiagnostic,
+
+          memberName:
+            parsed.senderName,
+
+          oldSms,
+        },
+        200,
+      );
+    }
+
+    /* =====================================================
+       UNEXPECTED PROCESSOR ERROR
+    ===================================================== */
+
     console.error(
-      "POST /api/sms/process processor failure:",
+      "[GEO-SHUA SMS PROCESS] Unexpected processor error:",
       error,
     );
 
-    return jsonResponse(
+    return response(
       {
-        success: false,
+        status:
+          "error" satisfies ApiStatus,
 
-        status: "error",
+        processed:
+          false,
 
-        stage: "processor",
+        financialChange:
+          false,
 
-        processed: false,
+        reason:
+          "processor_failed",
 
-        duplicate: false,
+        message,
 
-        ignored: false,
+        smsId,
 
-        financialChange: false,
+        parsed:
+          parsedDiagnostic,
 
-        type:
-          parsed.transactionType,
-
-        received,
-
-        parser: {
-          success: true,
-
-          data: parsed,
-        },
-
-        classifier: {
-          success: true,
-
-          transactionType:
-            parsed.transactionType,
-
-          accountNumber:
-            parsed.accountNumber,
-
-          reason:
-            parsed.transactionType ===
-            "loan"
-              ? "Bank collection account classified as loan payment destination."
-              : "Bank collection account classified as savings payment destination.",
-        },
-
-        processor: {
-          success: false,
-
-          error:
-            error instanceof Error
-              ? error.message
-              : "Bank transaction processing failed.",
-        },
-
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to process incoming SMS.",
-
-        historical:
-          historicalWarning,
-
-        receivedAt,
+        oldSms,
       },
       500,
     );
   }
+}
 
-  /* =======================================================
-     NORMALIZE PROCESSOR RESULT
-  ======================================================= */
+/* =========================================================
+   OPTIONAL METHOD HANDLING
+========================================================= */
 
-  const processorResult =
-    asProcessorResult(
-      result,
-    );
-
-  const transactionType =
-    getProcessorType(
-      processorResult,
-      parsed.transactionType,
-    );
-
-  const duplicate =
-    getProcessorDuplicate(
-      processorResult,
-    );
-
-  const ignored =
-    getProcessorIgnored(
-      processorResult,
-    );
-
-  const financialChange =
-    getProcessorFinancialChange(
-      processorResult,
-    );
-
-  const processorStatus =
-    getProcessorStatus(
-      processorResult,
-    );
-
-  /* =======================================================
-     FINAL SAFETY CHECK
-  ======================================================= */
-
-  if (
-    transactionType !==
-      "savings" &&
-    transactionType !==
-      "loan"
-  ) {
-    console.error(
-      "POST /api/sms/process invalid processor type:",
-      result,
-    );
-
-    return jsonResponse(
-      {
-        success: false,
-
-        status: "error",
-
-        stage: "processor",
-
-        processed: false,
-
-        duplicate,
-
-        ignored: false,
-
-        financialChange: false,
-
-        type: "unknown",
-
-        received,
-
-        parser: {
-          success: true,
-
-          data: parsed,
-        },
-
-        classifier: {
-          success: false,
-
-          transactionType:
-            "unknown",
-
-          accountNumber:
-            parsed.accountNumber,
-
-          reason:
-            "The processor did not return a valid financial destination.",
-        },
-
-        processor: {
-          success: false,
-
-          error:
-            "Invalid processor transaction type.",
-        },
-
-        result,
-
-        receivedAt,
-      },
-      500,
-    );
-  }
-
-  /* =======================================================
-     DUPLICATE
-  ======================================================= */
-
-  if (
-    duplicate
-  ) {
-    return jsonResponse({
-      success: true,
-
-      status: "duplicate",
-
-      stage: "processor",
-
-      processed: false,
-
-      duplicate: true,
-
-      ignored: false,
-
-      financialChange: false,
-
-      type: transactionType,
-
-      received,
-
-      parser: {
-        success: true,
-
-        data: parsed,
-      },
-
-      classifier: {
-        success: true,
-
-        transactionType,
-
-        accountNumber:
-          parsed.accountNumber,
-
-        reason:
-          transactionType ===
-          "loan"
-            ? "Loan payment destination."
-            : "Savings payment destination.",
-      },
-
-      processor: {
-        success: true,
-
-        duplicate: true,
-
-        message:
-          "The bank transaction has already been processed. No new financial entry was created.",
-      },
-
-      result,
-
-      historical:
-        historicalWarning,
-
-      receivedAt,
-    });
-  }
-
-  /* =======================================================
-     IGNORED WITHOUT FINANCIAL CHANGE
-  ======================================================= */
-
-  if (
-    ignored &&
-    !financialChange
-  ) {
-    return jsonResponse({
-      success: true,
-
-      status:
-        processorStatus ===
-        "processed"
-          ? "ignored"
-          : processorStatus,
-
-      stage: "processor",
-
-      processed: false,
-
-      duplicate: false,
-
-      ignored: true,
-
-      financialChange: false,
-
-      type: transactionType,
-
-      received,
-
-      parser: {
-        success: true,
-
-        data: parsed,
-      },
-
-      classifier: {
-        success: true,
-
-        transactionType,
-
-        accountNumber:
-          parsed.accountNumber,
-
-        reason:
-          transactionType ===
-          "loan"
-            ? "Loan payment destination."
-            : "Savings payment destination.",
-      },
-
-      processor: {
-        success: true,
-
-        skipped: true,
-
-        result,
-      },
-
-      historical:
-        historicalWarning,
-
-      receivedAt,
-    });
-  }
-
-  /* =======================================================
-     SUCCESS
-  ======================================================= */
-
-  if (
-    financialChange
-  ) {
-    return jsonResponse({
-      success: true,
-
-      status:
-        processorStatus,
-
-      stage: "processor",
-
-      processed: true,
-
-      duplicate: false,
-
-      ignored: false,
-
-      financialChange: true,
-
-      type: transactionType,
-
-      received,
-
-      parser: {
-        success: true,
-
-        data: parsed,
-      },
-
-      classifier: {
-        success: true,
-
-        transactionType,
-
-        accountNumber:
-          parsed.accountNumber,
-
-        reason:
-          transactionType ===
-          "loan"
-            ? "Bank collection account was classified as a GEO-SHUA loan payment."
-            : "Bank collection account was classified as a GEO-SHUA savings payment.",
-      },
-
-      processor:
-        transactionType ===
-        "savings"
-          ? {
-              success: true,
-
-              member:
-                processorResult.member,
-
-              savingsAccount:
-                processorResult.savingsAccount,
-
-              savingsTransaction:
-                processorResult.savingsTransaction,
-            }
-          : {
-              success: true,
-
-              member:
-                processorResult.member,
-
-              loan:
-                processorResult.loan,
-
-              repayment:
-                processorResult.repayment,
-            },
-
-      result,
-
-      historical:
-        historicalWarning,
-
-      receivedAt,
-    });
-  }
-
-  /* =======================================================
-     UNSAFE / INCOMPLETE PROCESSOR RESULT
-  ======================================================= */
-
-  console.error(
-    "POST /api/sms/process processor returned an incomplete financial result:",
-    result,
-  );
-
-  return jsonResponse(
+export async function GET() {
+  return response(
     {
-      success: false,
+      status:
+        "success" satisfies ApiStatus,
 
-      status: "error",
+      service:
+        "GEO-SHUA SMS Processing API",
 
-      stage: "processor",
+      message:
+        "SMS processing endpoint is available. Use POST to process an Android bank SMS.",
 
-      processed: false,
+      architecture:
+        "foreground-only",
 
-      duplicate: false,
+      classification:
+        {
+          loan:
+            "082083",
 
-      ignored: false,
-
-      financialChange: false,
-
-      type: transactionType,
-
-      received,
-
-      parser: {
-        success: true,
-
-        data: parsed,
-      },
-
-      classifier: {
-        success: true,
-
-        transactionType,
-
-        accountNumber:
-          parsed.accountNumber,
-
-        reason:
-          transactionType ===
-          "loan"
-            ? "Loan payment destination."
-            : "Savings payment destination.",
-      },
-
-      processor: {
-        success: false,
-
-        error:
-          "Processor returned without explicitly confirming the financial outcome.",
-      },
-
-      result,
-
-      historical:
-        historicalWarning,
-
-      receivedAt,
+          savings:
+            "2650821",
+        },
     },
-    500,
+    200,
   );
 }
