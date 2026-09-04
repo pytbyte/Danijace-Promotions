@@ -26,6 +26,16 @@ import {
 } from "react";
 
 import { useRouter } from "next/navigation";
+import { Capacitor } from "@capacitor/core";
+
+import {
+  authenticateWithAndroidDeviceSecurity,
+  createAndroidRecoveryKey,
+  getAndroidRecoveryPublicKey,
+  hasAndroidRecoveryKey,
+  isAndroidDeviceSecurityAvailable,
+  signAndroidRecoveryChallenge,
+} from "@/lib/auth/androidDeviceSecurity";
 
 /* =========================================================
    TYPES
@@ -133,6 +143,52 @@ interface SecurityStatusResponse {
 interface SecuritySetupResponse {
   success?: boolean;
   configured?: boolean;
+  error?: string;
+  message?: string;
+}
+
+/* =========================================================
+   DEVICE RECOVERY TYPES
+========================================================= */
+
+interface DeviceRecoveryOptionsResponse {
+  success?: boolean;
+  registered?: boolean;
+  platform?: string;
+  algorithm?: string;
+  error?: string;
+  message?: string;
+}
+
+interface DeviceRecoveryChallengeResponse {
+  success?: boolean;
+  challenge?: string;
+  challengeId?: string;
+  expiresAt?: string;
+  expiresInSeconds?: number;
+  error?: string;
+  message?: string;
+}
+
+interface DeviceRecoveryVerifyResponse {
+  success?: boolean;
+  verified?: boolean;
+  authorizationToken?: string;
+  authorizationExpiresAt?: string;
+  expiresInSeconds?: number;
+  method?: string;
+  platform?: string;
+  algorithm?: string;
+  error?: string;
+  message?: string;
+}
+
+interface DeviceRecoveryResetResponse {
+  success?: boolean;
+  reset?: boolean;
+  requiresVerification?: boolean;
+  method?: string;
+  platform?: string;
   error?: string;
   message?: string;
 }
@@ -323,6 +379,7 @@ function PinSetupScreen({
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            Accept: "application/json",
           },
           credentials: "include",
           cache: "no-store",
@@ -333,8 +390,17 @@ function PinSetupScreen({
         },
       );
 
-      const result =
-        (await response.json()) as SecuritySetupResponse;
+      let result: SecuritySetupResponse =
+        {};
+
+      try {
+        result =
+          (await response.json()) as SecuritySetupResponse;
+      } catch {
+        throw new Error(
+          "The security server returned an invalid response.",
+        );
+      }
 
       if (
         !response.ok ||
@@ -353,9 +419,16 @@ function PinSetupScreen({
       setConfirmPin("");
 
       onSuccess();
-    } catch {
+    } catch (error) {
+      console.error(
+        "PIN SETUP ERROR:",
+        error,
+      );
+
       setError(
-        "Unable to configure your security PIN. Please try again.",
+        error instanceof Error
+          ? error.message
+          : "Unable to configure your security PIN. Please try again.",
       );
     } finally {
       setChecking(false);
@@ -372,7 +445,6 @@ function PinSetupScreen({
 
       <div className="relative flex h-full items-center justify-center px-4 py-4">
         <section className="w-full max-w-sm rounded-[1.75rem] border border-white/[0.08] bg-white/[0.035] p-5 shadow-2xl shadow-black/60 backdrop-blur-2xl sm:p-6">
-
           <div className="text-center">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.25rem] border border-sky-400/20 bg-sky-400/[0.06]">
               <span className="text-lg font-black tracking-[0.18em] text-sky-300">
@@ -561,74 +633,32 @@ function PinSetupScreen({
 }
 
 /* =========================================================
-   IDENTITY
+   DEVICE RECOVERY PIN RESET
 ========================================================= */
 
-function IdentityScreen({
+function DeviceRecoveryResetScreen({
+  authorizationToken,
   onSuccess,
+  onCancel,
 }: {
+  authorizationToken: string;
   onSuccess: () => void;
+  onCancel: () => void;
 }): ReactNode {
-  const [method, setMethod] =
-    useState<SecurityMethod>("pin");
-
   const [pin, setPin] = useState("");
+  const [confirmPin, setConfirmPin] =
+    useState("");
+
   const [showPin, setShowPin] =
+    useState(false);
+
+  const [showConfirmPin, setShowConfirmPin] =
     useState(false);
 
   const [checking, setChecking] =
     useState(false);
 
   const [error, setError] = useState("");
-
-  const [deviceAvailable, setDeviceAvailable] =
-    useState(false);
-
-  const [attempts, setAttempts] = useState(0);
-
-  /* -------------------------------------------------------
-     DEVICE AVAILABILITY
-  ------------------------------------------------------- */
-
-  useEffect(() => {
-    let active = true;
-
-    const checkDevice = async () => {
-      try {
-        if (
-          typeof window === "undefined" ||
-          !window.PublicKeyCredential
-        ) {
-          if (active) {
-            setDeviceAvailable(false);
-          }
-
-          return;
-        }
-
-        const available =
-          await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-
-        if (active) {
-          setDeviceAvailable(available);
-        }
-      } catch {
-        if (active) {
-          setDeviceAvailable(false);
-        }
-      }
-    };
-
-    void checkDevice();
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  /* -------------------------------------------------------
-     PIN
-  ------------------------------------------------------- */
 
   const handlePinChange = (
     event: ChangeEvent<HTMLInputElement>,
@@ -641,9 +671,425 @@ function IdentityScreen({
     setError("");
   };
 
-  /* -------------------------------------------------------
+  const handleConfirmPinChange = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const value = event.target.value
+      .replace(/\D/g, "")
+      .slice(0, 6);
+
+    setConfirmPin(value);
+    setError("");
+  };
+
+  const resetPin = async () => {
+    if (pin.length < 4 || pin.length > 6) {
+      setError(
+        "Your PIN must contain 4 to 6 digits.",
+      );
+      return;
+    }
+
+    if (confirmPin.length < 4) {
+      setError("Confirm your new PIN.");
+      return;
+    }
+
+    if (pin !== confirmPin) {
+      setError("PINs do not match.");
+      return;
+    }
+
+    if (!authorizationToken) {
+      setError(
+        "Recovery authorization has expired. Please start again.",
+      );
+      return;
+    }
+
+    setChecking(true);
+    setError("");
+
+    try {
+      const response = await fetch(
+        "/api/auth/security/device-recovery/reset-pin",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          credentials: "include",
+          cache: "no-store",
+          body: JSON.stringify({
+            authorizationToken,
+            pin,
+            confirmPin,
+          }),
+        },
+      );
+
+      let result: DeviceRecoveryResetResponse =
+        {};
+
+      try {
+        result =
+          (await response.json()) as DeviceRecoveryResetResponse;
+      } catch {
+        throw new Error(
+          "The recovery server returned an invalid response.",
+        );
+      }
+
+      if (
+        !response.ok ||
+        result.success !== true ||
+        result.reset !== true
+      ) {
+        throw new Error(
+          result.error ||
+            result.message ||
+            "Unable to reset your security PIN.",
+        );
+      }
+
+      setPin("");
+      setConfirmPin("");
+
+      onSuccess();
+    } catch (error) {
+      console.error(
+        "DEVICE RECOVERY PIN RESET ERROR:",
+        error,
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Unable to reset your security PIN. Please try again.",
+      );
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <main className="relative h-[100dvh] min-h-[100dvh] overflow-hidden bg-black text-white">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500/[0.055] blur-3xl" />
+
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_25%,rgba(0,0,0,0.8)_100%)]" />
+      </div>
+
+      <div className="relative flex h-full items-center justify-center px-4 py-4">
+        <section className="w-full max-w-sm rounded-[1.75rem] border border-white/[0.08] bg-white/[0.035] p-5 shadow-2xl shadow-black/60 backdrop-blur-2xl sm:p-6">
+          <div className="text-center">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.25rem] border border-sky-400/20 bg-sky-400/[0.06]">
+              <span className="text-lg font-black tracking-[0.18em] text-sky-300">
+                GS
+              </span>
+            </div>
+
+            <p className="mt-3 text-[9px] font-bold uppercase tracking-[0.45em] text-sky-300/80">
+              GEO-SHUA
+            </p>
+
+            <h1 className="mt-1.5 text-xl font-semibold">
+              Reset security PIN
+            </h1>
+
+            <p className="mx-auto mt-1 max-w-[270px] text-[11px] leading-4 text-white/35">
+              Your Android device has authorized this PIN
+              reset. Create a new 4–6 digit PIN.
+            </p>
+          </div>
+
+          <div className="mt-4 flex items-center gap-3 rounded-xl border border-sky-400/10 bg-sky-400/[0.035] p-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-400/[0.06]">
+              <Fingerprint className="h-4 w-4 text-sky-300" />
+            </div>
+
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-white">
+                Android recovery verified
+              </p>
+
+              <p className="mt-0.5 text-[10px] text-white/30">
+                Your previous security sessions will be
+                invalidated.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5">
+            <p className="text-[11px] text-white/40">
+              New security PIN
+            </p>
+
+            <div className="relative mt-2.5">
+              <input
+                autoFocus
+                value={pin}
+                onChange={handlePinChange}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="new-password"
+                type={
+                  showPin ? "text" : "password"
+                }
+                maxLength={6}
+                placeholder="Enter new PIN"
+                className="h-12 w-full rounded-xl border border-white/[0.08] bg-black/40 px-4 pr-12 text-center text-lg font-bold tracking-[0.45em] text-white outline-none transition placeholder:text-xs placeholder:font-normal placeholder:tracking-normal placeholder:text-white/20 focus:border-sky-400/40"
+              />
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowPin(
+                    (value) => !value,
+                  )
+                }
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-white/30 hover:text-white"
+              >
+                {showPin ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            </div>
+
+            <div className="mt-2 flex justify-center gap-2">
+              {Array.from({ length: 6 }).map(
+                (_, index) => (
+                  <span
+                    key={index}
+                    className={`h-1.5 w-5 rounded-full ${
+                      index < pin.length
+                        ? "bg-sky-300"
+                        : "bg-white/10"
+                    }`}
+                  />
+                ),
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-[11px] text-white/40">
+              Confirm new PIN
+            </p>
+
+            <div className="relative mt-2.5">
+              <input
+                value={confirmPin}
+                onChange={
+                  handleConfirmPinChange
+                }
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="new-password"
+                type={
+                  showConfirmPin
+                    ? "text"
+                    : "password"
+                }
+                maxLength={6}
+                placeholder="Confirm new PIN"
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    pin.length >= 4 &&
+                    confirmPin.length >= 4 &&
+                    !checking
+                  ) {
+                    void resetPin();
+                  }
+                }}
+                className="h-12 w-full rounded-xl border border-white/[0.08] bg-black/40 px-4 pr-12 text-center text-lg font-bold tracking-[0.45em] text-white outline-none transition placeholder:text-xs placeholder:font-normal placeholder:tracking-normal placeholder:text-white/20 focus:border-sky-400/40"
+              />
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowConfirmPin(
+                    (value) => !value,
+                  )
+                }
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-white/30 hover:text-white"
+              >
+                {showConfirmPin ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {error ? (
+            <p className="mt-3 text-center text-[10px] font-medium text-red-300">
+              {error}
+            </p>
+          ) : (
+            <p className="mt-3 text-center text-[9px] text-white/20">
+              Your new PIN is securely hashed on the server.
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void resetPin()}
+            disabled={
+              pin.length < 4 ||
+              confirmPin.length < 4 ||
+              checking
+            }
+            className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-sky-400 text-xs font-bold text-black shadow-lg shadow-sky-500/15 transition hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            {checking ? (
+              <>
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Resetting PIN
+              </>
+            ) : (
+              <>
+                Set new PIN
+                <ArrowRight className="h-4 w-4" />
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={checking}
+            className="mt-2 h-10 w-full rounded-xl text-[10px] font-semibold text-white/30 transition hover:bg-white/[0.03] hover:text-white/60 disabled:opacity-30"
+          >
+            Cancel recovery
+          </button>
+
+          <div className="mt-4 flex items-center justify-center gap-1.5 text-[8px] font-semibold uppercase tracking-[0.25em] text-white/15">
+            <ShieldCheck className="h-3 w-3" />
+            GEO-SHUA
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+/* =========================================================
+   IDENTITY
+========================================================= */
+
+function IdentityScreen({
+  onSuccess,
+}: {
+  onSuccess: () => void;
+}): ReactNode {
+  const [method, setMethod] =
+    useState<SecurityMethod>("pin");
+
+  const [pin, setPin] = useState("");
+
+  const [showPin, setShowPin] =
+    useState(false);
+
+  const [checking, setChecking] =
+    useState(false);
+
+  const [error, setError] = useState("");
+
+  const [deviceAvailable, setDeviceAvailable] =
+    useState(false);
+
+  const [isAndroid, setIsAndroid] =
+    useState(false);
+
+  const [attempts, setAttempts] =
+    useState(0);
+
+  const [recoveryMode, setRecoveryMode] =
+    useState(false);
+
+  const [recoveryToken, setRecoveryToken] =
+    useState("");
+
+  /* =======================================================
+     PLATFORM
+  ======================================================= */
+
+  useEffect(() => {
+    const nativeAndroid =
+      Capacitor.isNativePlatform() &&
+      Capacitor.getPlatform() === "android";
+
+    setIsAndroid(nativeAndroid);
+  }, []);
+
+  /* =======================================================
+     DEVICE AVAILABILITY
+  ======================================================= */
+
+  useEffect(() => {
+    let active = true;
+
+    const checkDevice = async () => {
+      if (!isAndroid) {
+        if (active) {
+          setDeviceAvailable(false);
+        }
+
+        return;
+      }
+
+      try {
+        const result =
+          await isAndroidDeviceSecurityAvailable();
+
+        if (active) {
+          setDeviceAvailable(
+            result === true,
+          );
+        }
+      } catch (error) {
+        console.error(
+          "ANDROID DEVICE SECURITY AVAILABILITY ERROR:",
+          error,
+        );
+
+        if (active) {
+          setDeviceAvailable(false);
+        }
+      }
+    };
+
+    void checkDevice();
+
+    return () => {
+      active = false;
+    };
+  }, [isAndroid]);
+
+  /* =======================================================
+     PIN INPUT
+  ======================================================= */
+
+  const handlePinChange = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const value = event.target.value
+      .replace(/\D/g, "")
+      .slice(0, 6);
+
+    setPin(value);
+    setError("");
+  };
+
+  /* =======================================================
      VERIFY PIN
-  ------------------------------------------------------- */
+  ======================================================= */
 
   const verifyPin = async () => {
     if (pin.length < 4) {
@@ -668,6 +1114,7 @@ function IdentityScreen({
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            Accept: "application/json",
           },
           credentials: "include",
           cache: "no-store",
@@ -678,8 +1125,17 @@ function IdentityScreen({
         },
       );
 
-      const result =
-        (await response.json()) as SecurityVerifyResponse;
+      let result: SecurityVerifyResponse =
+        {};
+
+      try {
+        result =
+          (await response.json()) as SecurityVerifyResponse;
+      } catch {
+        throw new Error(
+          "The security server returned an invalid response.",
+        );
+      }
 
       if (
         !response.ok ||
@@ -713,6 +1169,7 @@ function IdentityScreen({
           );
         }
 
+        setPin("");
         return;
       }
 
@@ -720,159 +1177,445 @@ function IdentityScreen({
       setAttempts(0);
 
       onSuccess();
-    } catch {
+    } catch (error) {
+      console.error(
+        "PIN VERIFICATION ERROR:",
+        error,
+      );
+
       setError(
-        "Unable to verify your identity. Please try again.",
+        error instanceof Error
+          ? error.message
+          : "Unable to verify your identity. Please try again.",
       );
     } finally {
       setChecking(false);
     }
   };
 
-  /* -------------------------------------------------------
+  /* =======================================================
      VERIFY DEVICE
-  ------------------------------------------------------- */
+     
+     Normal identity verification.
+     
+     The native Android implementation is responsible for
+     showing the appropriate device security prompt:
+     
+       • fingerprint
+       • face
+       • device PIN
+       • device pattern
+       • device password
+  ======================================================= */
 
   const verifyDevice = async () => {
+    if (!isAndroid) {
+      setError(
+        "Android device security is available in the GEO-SHUA Android app.",
+      );
+      return;
+    }
+
+    if (!deviceAvailable) {
+      setError(
+        "No supported Android device security method is available.",
+      );
+      return;
+    }
+
     setChecking(true);
     setError("");
 
     try {
-      const optionsResponse =
-        await fetch(
-          "/api/auth/security/webauthn/options",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            credentials: "include",
-            cache: "no-store",
-          },
-        );
+      const result =
+        await authenticateWithAndroidDeviceSecurity();
 
-      if (!optionsResponse.ok) {
+      if (!result.success) {
         throw new Error(
-          "Device security is not available right now.",
+          result.message ||
+            "Android device verification failed.",
         );
       }
 
-      const optionsResult =
-        (await optionsResponse.json()) as {
-          publicKey?: PublicKeyCredentialRequestOptions;
-        };
-
-      if (!optionsResult.publicKey) {
-        throw new Error(
-          "Device security configuration is unavailable.",
-        );
-      }
-
-      const credential =
-        await navigator.credentials.get({
-          publicKey:
-            optionsResult.publicKey,
-        });
-
-      if (!credential) {
-        throw new Error(
-          "No device credential was returned.",
-        );
-      }
-
-      const assertion =
-        credential as PublicKeyCredential;
-
-      const assertionResponse =
-        assertion.response as AuthenticatorAssertionResponse;
-
-      const response = await fetch(
-        "/api/auth/security/webauthn/verify",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          credentials: "include",
-          cache: "no-store",
-          body: JSON.stringify({
-            id: assertion.id,
-            rawId: Array.from(
-              new Uint8Array(
-                assertion.rawId,
-              ),
-            ),
-            type: assertion.type,
-            response: {
-              authenticatorData:
-                Array.from(
-                  new Uint8Array(
-                    assertionResponse.authenticatorData,
-                  ),
-                ),
-
-              clientDataJSON:
-                Array.from(
-                  new Uint8Array(
-                    assertionResponse.clientDataJSON,
-                  ),
-                ),
-
-              signature: Array.from(
-                new Uint8Array(
-                  assertionResponse.signature,
-                ),
-              ),
-
-              userHandle:
-                assertionResponse.userHandle
-                  ? Array.from(
-                      new Uint8Array(
-                        assertionResponse.userHandle,
-                      ),
-                    )
-                  : null,
-            },
-          }),
-        },
+      setError("");
+      onSuccess();
+    } catch (error) {
+      console.error(
+        "ANDROID DEVICE VERIFICATION ERROR:",
+        error,
       );
 
-      const result =
-        (await response.json()) as SecurityVerifyResponse;
-
-      if (
-        !response.ok ||
-        result.verified !== true
-      ) {
-        throw new Error(
-          result.error ||
-            result.message ||
-            "Device verification failed.",
-        );
-      }
-
-      onSuccess();
-    } catch (err) {
-      if (
-        err instanceof DOMException &&
-        err.name === "NotAllowedError"
-      ) {
-        setError(
-          "Device verification was cancelled.",
-        );
-      } else {
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Device verification failed.",
-        );
-      }
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Android device verification failed.",
+      );
     } finally {
       setChecking(false);
     }
   };
+
+  /* =======================================================
+     START ANDROID FORGOT PIN RECOVERY
+     
+     Required flow:
+     
+       1. Check recovery key
+       2. Create recovery key if necessary
+       3. Read public key
+       4. Register public key
+       5. Request challenge
+       6. Native Android authorizes/signs challenge
+       7. Send signature to server
+       8. Receive short-lived authorization
+       9. Show new PIN screen
+  ======================================================= */
+
+  const startAndroidRecovery =
+    async () => {
+      if (!isAndroid) {
+        setError(
+          "PIN recovery with device security is available in the GEO-SHUA Android app.",
+        );
+        return;
+      }
+
+      if (!deviceAvailable) {
+        setError(
+          "No supported Android device security method is available.",
+        );
+        return;
+      }
+
+      setChecking(true);
+      setError("");
+
+      try {
+        /* -------------------------------------------------
+           STEP 1
+           Check for existing recovery key.
+        ------------------------------------------------- */
+
+        const keyStatus =
+          await hasAndroidRecoveryKey();
+
+        if (!keyStatus.success) {
+          throw new Error(
+            keyStatus.error ||
+              keyStatus.message ||
+              "Unable to check Android recovery security.",
+          );
+        }
+
+        /* -------------------------------------------------
+           STEP 2
+           Create recovery key when this device has not
+           enrolled a recovery key yet.
+        ------------------------------------------------- */
+
+        if (!keyStatus.exists) {
+          const created =
+            await createAndroidRecoveryKey();
+
+          if (!created.success) {
+            throw new Error(
+              created.error ||
+                created.message ||
+                "Unable to create the Android recovery key.",
+            );
+          }
+        }
+
+        /* -------------------------------------------------
+           STEP 3
+           Obtain public key.
+           
+           PRIVATE KEY MUST NEVER LEAVE ANDROID KEYSTORE.
+        ------------------------------------------------- */
+
+        const publicKeyResult =
+          await getAndroidRecoveryPublicKey();
+
+        if (
+          !publicKeyResult.success ||
+          !publicKeyResult.publicKey
+        ) {
+          throw new Error(
+            publicKeyResult.error ||
+              publicKeyResult.message ||
+              "Unable to access the Android recovery public key.",
+          );
+        }
+
+        /* -------------------------------------------------
+           STEP 4
+           Register public key with current authenticated
+           GEO-SHUA account.
+        ------------------------------------------------- */
+
+        const optionsResponse =
+          await fetch(
+            "/api/auth/security/device-recovery/options",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Accept:
+                  "application/json",
+              },
+              credentials: "include",
+              cache: "no-store",
+              body: JSON.stringify({
+                publicKey:
+                  publicKeyResult.publicKey,
+              }),
+            },
+          );
+
+        let optionsResult:
+          DeviceRecoveryOptionsResponse =
+          {};
+
+        try {
+          optionsResult =
+            (await optionsResponse.json()) as DeviceRecoveryOptionsResponse;
+        } catch {
+          throw new Error(
+            "The recovery registration server returned an invalid response.",
+          );
+        }
+
+        if (
+          !optionsResponse.ok ||
+          optionsResult.success !== true
+        ) {
+          throw new Error(
+            optionsResult.error ||
+              optionsResult.message ||
+              "Android recovery could not be registered.",
+          );
+        }
+
+        /* -------------------------------------------------
+           STEP 5
+           Request one-time challenge.
+        ------------------------------------------------- */
+
+        const challengeResponse =
+          await fetch(
+            "/api/auth/security/device-recovery/challenge",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Accept:
+                  "application/json",
+              },
+              credentials: "include",
+              cache: "no-store",
+            },
+          );
+
+        let challengeResult:
+          DeviceRecoveryChallengeResponse =
+          {};
+
+        try {
+          challengeResult =
+            (await challengeResponse.json()) as DeviceRecoveryChallengeResponse;
+        } catch {
+          throw new Error(
+            "The recovery challenge server returned an invalid response.",
+          );
+        }
+
+        if (
+          !challengeResponse.ok ||
+          challengeResult.success !== true ||
+          !challengeResult.challenge ||
+          !challengeResult.challengeId
+        ) {
+          throw new Error(
+            challengeResult.error ||
+              challengeResult.message ||
+              "Unable to start Android PIN recovery.",
+          );
+        }
+
+        /* -------------------------------------------------
+           STEP 6
+           Native Android authentication + signing.
+           
+           Depending on native implementation, Android may
+           show:
+           
+             • fingerprint
+             • face
+             • device PIN
+             • pattern
+             • password
+        ------------------------------------------------- */
+
+        const signedResult =
+          await signAndroidRecoveryChallenge(
+            challengeResult.challenge,
+          );
+
+        if (
+          !signedResult.success ||
+          !signedResult.signature
+        ) {
+          throw new Error(
+            signedResult.error ||
+              signedResult.message ||
+              "Android device security did not authorize PIN recovery.",
+          );
+        }
+
+        /* -------------------------------------------------
+           STEP 7
+           Send cryptographic proof to backend.
+        ------------------------------------------------- */
+
+        const verifyResponse =
+          await fetch(
+            "/api/auth/security/device-recovery/verify",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Accept:
+                  "application/json",
+              },
+              credentials: "include",
+              cache: "no-store",
+              body: JSON.stringify({
+                challengeId:
+                  challengeResult.challengeId,
+                challenge:
+                  challengeResult.challenge,
+                signature:
+                  signedResult.signature,
+              }),
+            },
+          );
+
+        let verifyResult:
+          DeviceRecoveryVerifyResponse =
+          {};
+
+        try {
+          verifyResult =
+            (await verifyResponse.json()) as DeviceRecoveryVerifyResponse;
+        } catch {
+          throw new Error(
+            "The recovery verification server returned an invalid response.",
+          );
+        }
+
+        if (
+          !verifyResponse.ok ||
+          verifyResult.success !== true ||
+          !verifyResult.authorizationToken
+        ) {
+          throw new Error(
+            verifyResult.error ||
+              verifyResult.message ||
+              "Android recovery authorization failed.",
+          );
+        }
+
+        /* -------------------------------------------------
+           STEP 8
+           
+           Keep authorization token ONLY in React memory.
+           
+           NEVER store it in:
+             • localStorage
+             • sessionStorage
+             • cookies created by frontend
+        ------------------------------------------------- */
+
+        setRecoveryToken(
+          verifyResult.authorizationToken,
+        );
+
+        setRecoveryMode(true);
+
+        setPin("");
+        setAttempts(0);
+        setError("");
+      } catch (error) {
+        console.error(
+          "ANDROID PIN RECOVERY ERROR:",
+          error,
+        );
+
+        setError(
+          error instanceof Error
+            ? error.message
+            : "Android PIN recovery failed. Please try again.",
+        );
+      } finally {
+        setChecking(false);
+      }
+    };
+
+  /* =======================================================
+     EXIT RECOVERY
+  ======================================================= */
+
+  const cancelRecovery = () => {
+    setRecoveryMode(false);
+    setRecoveryToken("");
+    setPin("");
+    setError("");
+    setAttempts(0);
+    setChecking(false);
+    setMethod("pin");
+  };
+
+  /* =======================================================
+     RECOVERY RESET SCREEN
+  ======================================================= */
+
+  if (
+    recoveryMode &&
+    recoveryToken
+  ) {
+    return (
+      <DeviceRecoveryResetScreen
+        authorizationToken={
+          recoveryToken
+        }
+        onSuccess={() => {
+          setRecoveryMode(false);
+          setRecoveryToken("");
+          setPin("");
+          setError("");
+          setAttempts(0);
+          setMethod("pin");
+
+          /*
+           * The backend invalidates the old security
+           * sessions after a successful PIN reset.
+           *
+           * Therefore we deliberately return to the
+           * Identity screen rather than directly opening
+           * the workspace.
+           */
+        }}
+        onCancel={cancelRecovery}
+      />
+    );
+  }
+
+  /* =======================================================
+     IDENTITY SCREEN
+  ======================================================= */
 
   return (
     <main className="relative h-[100dvh] min-h-[100dvh] overflow-hidden bg-black text-white">
@@ -884,6 +1627,7 @@ function IdentityScreen({
 
       <div className="relative flex h-full items-center justify-center px-4 py-4">
         <section className="w-full max-w-sm rounded-[1.75rem] border border-white/[0.08] bg-white/[0.035] p-5 shadow-2xl shadow-black/60 backdrop-blur-2xl sm:p-6">
+          {/* BRAND */}
 
           <div className="text-center">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.25rem] border border-sky-400/20 bg-sky-400/[0.06]">
@@ -905,6 +1649,8 @@ function IdentityScreen({
             </p>
           </div>
 
+          {/* GOOGLE */}
+
           <div className="mt-4 flex items-center gap-3 rounded-xl border border-white/[0.06] bg-black/25 p-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.06]">
               <CheckCircle2 className="h-4 w-4 text-sky-300" />
@@ -922,6 +1668,8 @@ function IdentityScreen({
 
             <ShieldCheck className="h-4 w-4 shrink-0 text-sky-300/60" />
           </div>
+
+          {/* METHODS */}
 
           <div className="mt-3 grid grid-cols-2 gap-1.5 rounded-xl border border-white/[0.06] bg-black/25 p-1">
             <button
@@ -961,6 +1709,8 @@ function IdentityScreen({
               Device
             </button>
           </div>
+
+          {/* PIN */}
 
           {method === "pin" ? (
             <div className="mt-4">
@@ -1060,8 +1810,38 @@ function IdentityScreen({
                   </>
                 )}
               </button>
+
+              {/* =================================================
+                 FORGOT PIN
+              ================================================= */}
+
+              {isAndroid ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    void startAndroidRecovery()
+                  }
+                  disabled={
+                    checking ||
+                    !deviceAvailable
+                  }
+                  className="mx-auto mt-3 flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-semibold text-sky-300/75 transition hover:bg-sky-400/[0.05] hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  {checking ? (
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Fingerprint className="h-3 w-3" />
+                  )}
+
+                  Forgot PIN?
+                </button>
+              ) : null}
             </div>
           ) : (
+            /* =================================================
+               DEVICE IDENTITY
+            ================================================= */
+
             <div className="mt-5 text-center">
               <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-[1.5rem] border border-sky-400/15 bg-sky-400/[0.05]">
                 <Fingerprint className="h-10 w-10 text-sky-300" />
@@ -1071,8 +1851,9 @@ function IdentityScreen({
                 Device security
               </h2>
 
-              <p className="mx-auto mt-1.5 max-w-[260px] text-[10px] leading-4 text-white/35">
-                Use the security method configured on this device.
+              <p className="mx-auto mt-1.5 max-w-[270px] text-[10px] leading-4 text-white/35">
+                Use your fingerprint, face unlock,
+                device PIN, pattern, or password.
               </p>
 
               {error ? (
@@ -1117,7 +1898,6 @@ function IdentityScreen({
   );
 }
 
-
 /* =========================================================
    GEO-SHUA NAVIGATOR
 ========================================================= */
@@ -1154,23 +1934,14 @@ function GeoShuaNavigator(): ReactNode {
 
   return (
     <main className="relative min-h-[100dvh] overflow-hidden bg-black text-white">
-      {/* BACKGROUND */}
-
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute left-1/2 top-1/2 h-[380px] w-[380px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500/[0.04] blur-3xl" />
 
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_25%,rgba(0,0,0,0.88)_100%)]" />
       </div>
 
-      {/* CONTENT */}
-
       <div className="relative flex min-h-[100dvh] items-center justify-center px-4 py-6 sm:px-6">
         <section className="w-full max-w-md">
-
-          {/* =================================================
-             BRAND
-          ================================================= */}
-
           <div className="text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-sky-400/15 bg-white/[0.035] shadow-lg shadow-sky-500/[0.04]">
               <span className="text-sm font-black tracking-[0.16em] text-sky-300">
@@ -1191,10 +1962,6 @@ function GeoShuaNavigator(): ReactNode {
             </p>
           </div>
 
-          {/* =================================================
-             NAVIGATION
-          ================================================= */}
-
           <div className="mt-6 grid grid-cols-2 gap-2.5 sm:gap-3">
             {navigation.map((item) => {
               const Icon = item.icon;
@@ -1208,8 +1975,6 @@ function GeoShuaNavigator(): ReactNode {
                   }
                   className="group rounded-xl border border-white/[0.07] bg-white/[0.035] p-3.5 text-left backdrop-blur-xl transition duration-200 hover:border-sky-400/20 hover:bg-white/[0.055] active:scale-[0.98] sm:p-4"
                 >
-                  {/* TOP ROW */}
-
                   <div className="flex items-center justify-between">
                     <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-400/[0.055]">
                       <Icon className="h-4.5 w-4.5 text-sky-300" />
@@ -1217,8 +1982,6 @@ function GeoShuaNavigator(): ReactNode {
 
                     <ArrowRight className="h-4 w-4 text-white/15 transition duration-200 group-hover:translate-x-0.5 group-hover:text-sky-300/70" />
                   </div>
-
-                  {/* TEXT */}
 
                   <h2 className="mt-3 text-sm font-semibold text-white">
                     {item.title}
@@ -1231,10 +1994,6 @@ function GeoShuaNavigator(): ReactNode {
               );
             })}
           </div>
-
-          {/* =================================================
-             FOOTER
-          ================================================= */}
 
           <div className="mt-5 flex items-center justify-center gap-1.5 text-[8px] font-medium uppercase tracking-[0.28em] text-white/15">
             <ShieldCheck className="h-3 w-3" />
@@ -1316,8 +2075,17 @@ export default function DashboardPage(): ReactNode {
           },
         );
 
-        const result =
-          (await response.json()) as SecurityStatusResponse;
+        let result: SecurityStatusResponse =
+          {};
+
+        try {
+          result =
+            (await response.json()) as SecurityStatusResponse;
+        } catch {
+          throw new Error(
+            "The security status server returned an invalid response.",
+          );
+        }
 
         if (
           response.status === 401 ||
@@ -1380,12 +2148,6 @@ export default function DashboardPage(): ReactNode {
 
   /* =======================================================
      IDENTITY COMPLETE
-     
-     IMPORTANT:
-     After identity verification we stay on
-     /dashboard and show the NAVIGATOR.
-     
-     We do NOT automatically open the summary.
   ======================================================= */
 
   const handleIdentitySuccess =
@@ -1395,7 +2157,7 @@ export default function DashboardPage(): ReactNode {
 
   /* =======================================================
      LOAD SUMMARY DATA
-======================================================= */
+  ======================================================= */
 
   const loadDashboard =
     useCallback(
@@ -1426,13 +2188,13 @@ export default function DashboardPage(): ReactNode {
               fetch("/api/members", {
                 credentials:
                   "include",
-                cache: "no-store",
+                  cache: "no-store",
               }),
 
               fetch("/api/loans", {
                 credentials:
                   "include",
-                cache: "no-store",
+                  cache: "no-store",
               }),
 
               fetch(
@@ -1451,7 +2213,8 @@ export default function DashboardPage(): ReactNode {
           let members: MemberRecord[] =
             [];
 
-          let loans: LoanRecord[] = [];
+          let loans: LoanRecord[] =
+            [];
 
           let notifications: NotificationRecord[] =
             [];
@@ -1759,9 +2522,6 @@ export default function DashboardPage(): ReactNode {
 
   /* =======================================================
      DASHBOARD CARDS
-     
-     Kept here because /dashboard/summery will use them
-     through DashboardUI.
   ======================================================= */
 
   const dashboardCards =
@@ -1809,7 +2569,15 @@ export default function DashboardPage(): ReactNode {
       [stats],
     );
 
+  /*
+   * Dashboard summary cards are intentionally retained
+   * for DashboardUI / dashboard summary usage.
+   */
   void dashboardCards;
+  void activities;
+  void loading;
+  void refreshing;
+  void loadDashboard;
 
   /* =======================================================
      HYDRATION
@@ -1856,9 +2624,7 @@ export default function DashboardPage(): ReactNode {
   }
 
   /* =======================================================
-     AFTER LOGIN → NAVIGATOR
-     
-     THIS IS NOW ALWAYS THE DEFAULT.
+     AFTER SECURITY → NAVIGATOR
   ======================================================= */
 
   return <GeoShuaNavigator />;

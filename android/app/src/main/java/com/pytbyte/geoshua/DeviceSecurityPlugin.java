@@ -33,11 +33,38 @@ public class DeviceSecurityPlugin extends Plugin {
     private static final String KEYSTORE_NAME =
             "AndroidKeyStore";
 
+    /*
+     * Versioned recovery-key alias.
+     *
+     * V2 supports:
+     *
+     * - strong biometric
+     * - device PIN
+     * - device pattern
+     * - device password
+     *
+     * The versioned alias prevents an old V1 key from being
+     * accidentally reused with the new authentication policy.
+     */
     private static final String RECOVERY_KEY_ALIAS =
-            "geoshua_device_recovery_key";
+            "geoshua_device_recovery_key_v2";
 
     private static final String SIGNATURE_ALGORITHM =
             "SHA256withECDSA";
+
+    /*
+     * Device-credential recovery uses a very short authentication
+     * validity window.
+     *
+     * This allows:
+     *
+     * 1. User authenticates with PIN/pattern/password.
+     * 2. Android Keystore records the recent authentication.
+     * 3. GEO-SHUA immediately signs the server challenge.
+     *
+     * The window is intentionally short.
+     */
+    private static final int DEVICE_AUTH_VALIDITY_SECONDS = 30;
 
     /*
      * =========================================================
@@ -46,9 +73,12 @@ public class DeviceSecurityPlugin extends Plugin {
      */
 
     @PluginMethod
-    public void isAvailable(PluginCall call) {
+    public void isAvailable(
+            PluginCall call
+    ) {
 
-        Activity activity = getActivity();
+        Activity activity =
+                getActivity();
 
         if (!(activity instanceof FragmentActivity)) {
 
@@ -63,7 +93,9 @@ public class DeviceSecurityPlugin extends Plugin {
                 (FragmentActivity) activity;
 
         BiometricManager biometricManager =
-                BiometricManager.from(fragmentActivity);
+                BiometricManager.from(
+                        fragmentActivity
+                );
 
         int result =
                 biometricManager.canAuthenticate(
@@ -155,8 +187,6 @@ public class DeviceSecurityPlugin extends Plugin {
      * NORMAL ANDROID IDENTITY AUTHENTICATION
      * =========================================================
      *
-     * Used by the normal GEO-SHUA Identity screen.
-     *
      * Supports:
      *
      * - fingerprint
@@ -164,18 +194,15 @@ public class DeviceSecurityPlugin extends Plugin {
      * - device PIN
      * - device pattern
      * - device password
-     *
-     * This method does NOT create server-verifiable
-     * cryptographic proof.
-     *
-     * Recovery cryptographic proof is handled by
-     * signChallenge().
      */
 
     @PluginMethod
-    public void authenticate(PluginCall call) {
+    public void authenticate(
+            PluginCall call
+    ) {
 
-        Activity activity = getActivity();
+        Activity activity =
+                getActivity();
 
         if (!(activity instanceof FragmentActivity)) {
 
@@ -190,7 +217,9 @@ public class DeviceSecurityPlugin extends Plugin {
                 (FragmentActivity) activity;
 
         BiometricManager biometricManager =
-                BiometricManager.from(fragmentActivity);
+                BiometricManager.from(
+                        fragmentActivity
+                );
 
         int availability =
                 biometricManager.canAuthenticate(
@@ -311,8 +340,7 @@ public class DeviceSecurityPlugin extends Plugin {
                         /*
                          * Do not resolve here.
                          *
-                         * Android may permit another
-                         * biometric attempt.
+                         * Android may allow another biometric attempt.
                          */
                     }
                 };
@@ -350,13 +378,15 @@ public class DeviceSecurityPlugin extends Plugin {
      *
      * Creates an EC key pair inside Android Keystore.
      *
-     * PRIVATE KEY:
+     * The private key NEVER leaves Android Keystore.
      *
-     * Never leaves Android Keystore.
+     * The key is configured so that:
      *
-     * PUBLIC KEY:
+     * - strong biometric authentication is accepted
+     * - device credential authentication is accepted
      *
-     * Can be sent to the GEO-SHUA server for registration.
+     * Device-credential authentication has a very short
+     * 30-second validity window.
      */
 
     @PluginMethod
@@ -374,8 +404,7 @@ public class DeviceSecurityPlugin extends Plugin {
             keyStore.load(null);
 
             /*
-             * Never replace an existing recovery key
-             * automatically.
+             * Never replace an existing V2 key.
              */
 
             if (keyStore.containsAlias(
@@ -391,6 +420,11 @@ public class DeviceSecurityPlugin extends Plugin {
 
                 JSObject response =
                         new JSObject();
+
+                response.put(
+                        "success",
+                        true
+                );
 
                 response.put(
                         "created",
@@ -412,6 +446,11 @@ public class DeviceSecurityPlugin extends Plugin {
                         encodeBase64(
                                 publicKey.getEncoded()
                         )
+                );
+
+                response.put(
+                        "message",
+                        "GEO-SHUA Android recovery key already exists."
                 );
 
                 call.resolve(response);
@@ -444,20 +483,22 @@ public class DeviceSecurityPlugin extends Plugin {
             /*
              * Android 11+.
              *
-             * The key requires user authentication.
+             * Allow:
              *
-             * The key itself permits strong biometric
-             * or device credential authentication.
+             * - strong biometric
+             * - device credential
              *
-             * The cryptographic BiometricPrompt path
-             * below intentionally uses BIOMETRIC_STRONG.
+             * A short authentication validity window is used
+             * because device-credential authentication cannot
+             * be directly combined with the CryptoObject
+             * signing prompt.
              */
 
             if (Build.VERSION.SDK_INT >=
                     Build.VERSION_CODES.R) {
 
                 builder.setUserAuthenticationParameters(
-                        0,
+                        DEVICE_AUTH_VALIDITY_SECONDS,
                         KeyProperties.AUTH_BIOMETRIC_STRONG
                                 | KeyProperties.AUTH_DEVICE_CREDENTIAL
                 );
@@ -467,14 +508,15 @@ public class DeviceSecurityPlugin extends Plugin {
                 /*
                  * Android 7 through Android 10.
                  *
-                 * Legacy Keystore authentication API.
+                 * Legacy Keystore API.
                  *
-                 * -1 means authentication is required
-                 * for every use.
+                 * A short validity period allows the
+                 * authenticated user to perform the signing
+                 * operation immediately after authentication.
                  */
 
                 builder.setUserAuthenticationValidityDurationSeconds(
-                        -1
+                        DEVICE_AUTH_VALIDITY_SECONDS
                 );
             }
 
@@ -483,10 +525,6 @@ public class DeviceSecurityPlugin extends Plugin {
             );
 
             generator.generateKeyPair();
-
-            /*
-             * Retrieve the public key.
-             */
 
             PublicKey publicKey =
                     keyStore
@@ -497,6 +535,11 @@ public class DeviceSecurityPlugin extends Plugin {
 
             JSObject response =
                     new JSObject();
+
+            response.put(
+                    "success",
+                    true
+            );
 
             response.put(
                     "created",
@@ -518,6 +561,11 @@ public class DeviceSecurityPlugin extends Plugin {
                     encodeBase64(
                             publicKey.getEncoded()
                     )
+            );
+
+            response.put(
+                    "message",
+                    "GEO-SHUA Android recovery key created successfully."
             );
 
             call.resolve(response);
@@ -558,6 +606,11 @@ public class DeviceSecurityPlugin extends Plugin {
 
             JSObject response =
                     new JSObject();
+
+            response.put(
+                    "success",
+                    true
+            );
 
             response.put(
                     "exists",
@@ -617,6 +670,11 @@ public class DeviceSecurityPlugin extends Plugin {
                     new JSObject();
 
             response.put(
+                    "success",
+                    true
+            );
+
+            response.put(
                     "algorithm",
                     "ECDSA-SHA256"
             );
@@ -644,32 +702,37 @@ public class DeviceSecurityPlugin extends Plugin {
      * SIGN RECOVERY CHALLENGE
      * =========================================================
      *
-     * This is the cryptographic recovery operation.
+     * There are TWO supported authentication paths.
      *
-     * FLOW:
+     * ---------------------------------------------------------
+     * PATH 1 — STRONG BIOMETRIC
+     * ---------------------------------------------------------
      *
-     * GEO-SHUA SERVER
-     *       |
-     *       | random challenge
-     *       v
-     * Android application
-     *       |
-     *       v
-     * Android Keystore
-     *       |
-     *       v
      * BiometricPrompt CryptoObject
-     *       |
-     *       v
-     * Strong biometric authentication
-     *       |
-     *       v
+     *         ↓
+     * Strong biometric
+     *         ↓
+     * Authenticated Signature
+     *         ↓
      * ECDSA signature
-     *       |
-     *       v
-     * GEO-SHUA server
      *
-     * The private key NEVER leaves Android Keystore.
+     * ---------------------------------------------------------
+     * PATH 2 — DEVICE CREDENTIAL
+     * ---------------------------------------------------------
+     *
+     * PIN / pattern / password
+     *         ↓
+     * Normal BiometricPrompt
+     *         ↓
+     * Authentication accepted
+     *         ↓
+     * Android Keystore
+     *         ↓
+     * ECDSA signature
+     *
+     * The CryptoObject path remains BIOMETRIC_STRONG only
+     * because Android does not permit DEVICE_CREDENTIAL to
+     * be combined with a CryptoObject authentication prompt.
      */
 
     @PluginMethod
@@ -691,10 +754,6 @@ public class DeviceSecurityPlugin extends Plugin {
 
             return;
         }
-
-        /*
-         * Prevent unnecessarily large payloads.
-         */
 
         if (challenge.length() > 4096) {
 
@@ -722,20 +781,12 @@ public class DeviceSecurityPlugin extends Plugin {
 
         try {
 
-            /*
-             * Load Android Keystore.
-             */
-
             KeyStore keyStore =
                     KeyStore.getInstance(
                             KEYSTORE_NAME
                     );
 
             keyStore.load(null);
-
-            /*
-             * Recovery key must already exist.
-             */
 
             if (!keyStore.containsAlias(
                     RECOVERY_KEY_ALIAS
@@ -747,12 +798,6 @@ public class DeviceSecurityPlugin extends Plugin {
 
                 return;
             }
-
-            /*
-             * Retrieve the private key.
-             *
-             * This remains inside Android Keystore.
-             */
 
             PrivateKey privateKey =
                     (PrivateKey)
@@ -771,7 +816,13 @@ public class DeviceSecurityPlugin extends Plugin {
             }
 
             /*
-             * Create the ECDSA signature operation.
+             * -------------------------------------------------
+             * CRYPTOGRAPHIC BIOMETRIC PATH
+             * -------------------------------------------------
+             *
+             * We first attempt the CryptoObject path.
+             *
+             * Only BIOMETRIC_STRONG is specified here.
              */
 
             Signature signature =
@@ -783,11 +834,6 @@ public class DeviceSecurityPlugin extends Plugin {
                     privateKey
             );
 
-            /*
-             * Bind the signature operation to
-             * BiometricPrompt.
-             */
-
             BiometricPrompt.CryptoObject cryptoObject =
                     new BiometricPrompt.CryptoObject(
                             signature
@@ -798,7 +844,7 @@ public class DeviceSecurityPlugin extends Plugin {
                             fragmentActivity
                     );
 
-            BiometricPrompt.AuthenticationCallback callback =
+            BiometricPrompt.AuthenticationCallback cryptoCallback =
                     new BiometricPrompt.AuthenticationCallback() {
 
                         @Override
@@ -812,35 +858,16 @@ public class DeviceSecurityPlugin extends Plugin {
 
                             try {
 
-                                /*
-                                 * Android returns the authenticated
-                                 * CryptoObject.
-                                 */
-
                                 BiometricPrompt.CryptoObject authenticatedCrypto =
                                         result.getCryptoObject();
 
                                 if (authenticatedCrypto == null) {
 
-                                    JSObject response =
-                                            new JSObject();
-
-                                    response.put(
-                                            "success",
-                                            false
-                                    );
-
-                                    response.put(
-                                            "code",
-                                            "CRYPTO_OPERATION_UNAVAILABLE"
-                                    );
-
-                                    response.put(
-                                            "message",
+                                    resolveFailure(
+                                            call,
+                                            "CRYPTO_OPERATION_UNAVAILABLE",
                                             "Android did not return the authenticated cryptographic operation."
                                     );
-
-                                    call.resolve(response);
 
                                     return;
                                 }
@@ -850,58 +877,26 @@ public class DeviceSecurityPlugin extends Plugin {
 
                                 if (authenticatedSignature == null) {
 
-                                    JSObject response =
-                                            new JSObject();
-
-                                    response.put(
-                                            "success",
-                                            false
-                                    );
-
-                                    response.put(
-                                            "code",
-                                            "SIGNATURE_OPERATION_UNAVAILABLE"
-                                    );
-
-                                    response.put(
-                                            "message",
+                                    resolveFailure(
+                                            call,
+                                            "SIGNATURE_OPERATION_UNAVAILABLE",
                                             "Android did not return an authenticated signature operation."
                                     );
 
-                                    call.resolve(response);
-
                                     return;
                                 }
-
-                                /*
-                                 * Convert the exact server challenge
-                                 * to UTF-8 bytes.
-                                 */
 
                                 byte[] challengeBytes =
                                         challenge.getBytes(
                                                 StandardCharsets.UTF_8
                                         );
 
-                                /*
-                                 * Add the challenge to the
-                                 * authenticated signature operation.
-                                 */
-
                                 authenticatedSignature.update(
                                         challengeBytes
                                 );
 
-                                /*
-                                 * Produce ECDSA signature.
-                                 */
-
                                 byte[] signedBytes =
                                         authenticatedSignature.sign();
-
-                                /*
-                                 * Retrieve corresponding public key.
-                                 */
 
                                 KeyStore authenticatedKeyStore =
                                         KeyStore.getInstance(
@@ -916,10 +911,6 @@ public class DeviceSecurityPlugin extends Plugin {
                                                         RECOVERY_KEY_ALIAS
                                                 )
                                                 .getPublicKey();
-
-                                /*
-                                 * Build response.
-                                 */
 
                                 JSObject response =
                                         new JSObject();
@@ -960,32 +951,377 @@ public class DeviceSecurityPlugin extends Plugin {
 
                                 response.put(
                                         "message",
-                                        "Recovery challenge signed successfully."
+                                        "Recovery challenge signed successfully with strong biometric authentication."
                                 );
 
-                                call.resolve(response);
+                                call.resolve(
+                                        response
+                                );
 
                             } catch (Exception error) {
+
+                                resolveFailure(
+                                        call,
+                                        "BIOMETRIC_SIGNATURE_FAILED",
+                                        "Unable to sign the recovery challenge with biometric authentication: "
+                                                + safeErrorMessage(error)
+                                );
+                            }
+                        }
+
+                        @Override
+                        public void onAuthenticationError(
+                                int errorCode,
+                                @NonNull CharSequence errString
+                        ) {
+
+                            super.onAuthenticationError(
+                                    errorCode,
+                                    errString
+                            );
+
+                            /*
+                             * IMPORTANT:
+                             *
+                             * We do not silently switch from a failed
+                             * biometric attempt to device credential.
+                             *
+                             * Android's combined credential UI must be
+                             * used separately because CryptoObject
+                             * authentication only supports
+                             * BIOMETRIC_STRONG.
+                             *
+                             * If the user cancels/fails this prompt,
+                             * the frontend receives the actual error.
+                             */
+
+                            JSObject response =
+                                    new JSObject();
+
+                            response.put(
+                                    "success",
+                                    false
+                            );
+
+                            response.put(
+                                    "code",
+                                    getAuthenticationErrorCode(
+                                            errorCode
+                                    )
+                            );
+
+                            response.put(
+                                    "errorCode",
+                                    errorCode
+                            );
+
+                            response.put(
+                                    "message",
+                                    errString.toString()
+                            );
+
+                            response.put(
+                                    "method",
+                                    "android-biometric-crypto"
+                            );
+
+                            call.resolve(
+                                    response
+                            );
+                        }
+
+                        @Override
+                        public void onAuthenticationFailed() {
+
+                            super.onAuthenticationFailed();
+
+                            /*
+                             * Do not resolve here.
+                             */
+                        }
+                    };
+
+            BiometricPrompt biometricPrompt =
+                    new BiometricPrompt(
+                            fragmentActivity,
+                            executor,
+                            cryptoCallback
+                    );
+
+            BiometricPrompt.PromptInfo promptInfo =
+                    new BiometricPrompt.PromptInfo.Builder()
+                            .setTitle(
+                                    "Confirm PIN recovery"
+                            )
+                            .setSubtitle(
+                                    "Use your fingerprint or face to authorize PIN recovery"
+                            )
+                            .setAllowedAuthenticators(
+                                    BiometricManager.Authenticators.BIOMETRIC_STRONG
+                            )
+                            .build();
+
+            biometricPrompt.authenticate(
+                    promptInfo,
+                    cryptoObject
+            );
+
+        } catch (Exception error) {
+
+            /*
+             * If the CryptoObject cannot be initialized because
+             * the device is not currently capable of performing
+             * the biometric cryptographic operation, return the
+             * diagnostic native error.
+             *
+             * The frontend can then offer the device-credential
+             * recovery path.
+             */
+
+            JSObject response =
+                    new JSObject();
+
+            response.put(
+                    "success",
+                    false
+            );
+
+            response.put(
+                    "code",
+                    "CRYPTO_AUTHENTICATION_UNAVAILABLE"
+            );
+
+            response.put(
+                    "message",
+                    "Unable to start GEO-SHUA Android cryptographic authentication: "
+                            + safeErrorMessage(error)
+            );
+
+            response.put(
+                    "method",
+                    "android-biometric-crypto"
+            );
+
+            call.resolve(
+                    response
+            );
+        }
+    }
+
+    /*
+     * =========================================================
+     * SIGN CHALLENGE AFTER DEVICE CREDENTIAL
+     * =========================================================
+     *
+     * This method is deliberately separate from signChallenge().
+     *
+     * It is used by the frontend when the user chooses:
+     *
+     * - PIN
+     * - pattern
+     * - password
+     *
+     * The user must first authenticate through the device
+     * credential prompt.
+     */
+
+    @PluginMethod
+    public void authenticateAndSignWithDeviceCredential(
+            PluginCall call
+    ) {
+
+        String challenge =
+                call.getString(
+                        "challenge"
+                );
+
+        if (challenge == null ||
+                challenge.trim().isEmpty()) {
+
+            call.reject(
+                    "A recovery challenge is required."
+            );
+
+            return;
+        }
+
+        if (challenge.length() > 4096) {
+
+            call.reject(
+                    "Recovery challenge is too large."
+            );
+
+            return;
+        }
+
+        Activity activity =
+                getActivity();
+
+        if (!(activity instanceof FragmentActivity)) {
+
+            call.reject(
+                    "GEO-SHUA Android activity does not support device credential authentication."
+            );
+
+            return;
+        }
+
+        FragmentActivity fragmentActivity =
+                (FragmentActivity) activity;
+
+        try {
+
+            KeyStore keyStore =
+                    KeyStore.getInstance(
+                            KEYSTORE_NAME
+                    );
+
+            keyStore.load(null);
+
+            if (!keyStore.containsAlias(
+                    RECOVERY_KEY_ALIAS
+            )) {
+
+                call.reject(
+                        "GEO-SHUA Android recovery key does not exist."
+                );
+
+                return;
+            }
+
+            Executor executor =
+                    ContextCompat.getMainExecutor(
+                            fragmentActivity
+                    );
+
+            BiometricPrompt.AuthenticationCallback callback =
+                    new BiometricPrompt.AuthenticationCallback() {
+
+                        @Override
+                        public void onAuthenticationSucceeded(
+                                @NonNull BiometricPrompt.AuthenticationResult result
+                        ) {
+
+                            super.onAuthenticationSucceeded(
+                                    result
+                            );
+
+                            try {
+
+                                /*
+                                 * Authentication has now been
+                                 * performed using device credential.
+                                 *
+                                 * Immediately perform the Keystore
+                                 * signing operation while the short
+                                 * authentication validity window is
+                                 * active.
+                                 */
+
+                                KeyStore authenticatedKeyStore =
+                                        KeyStore.getInstance(
+                                                KEYSTORE_NAME
+                                        );
+
+                                authenticatedKeyStore.load(null);
+
+                                PrivateKey privateKey =
+                                        (PrivateKey)
+                                                authenticatedKeyStore.getKey(
+                                                        RECOVERY_KEY_ALIAS,
+                                                        null
+                                                );
+
+                                if (privateKey == null) {
+
+                                    resolveFailure(
+                                            call,
+                                            "PRIVATE_KEY_UNAVAILABLE",
+                                            "GEO-SHUA Android recovery private key is unavailable after device authentication."
+                                    );
+
+                                    return;
+                                }
+
+                                Signature signature =
+                                        Signature.getInstance(
+                                                SIGNATURE_ALGORITHM
+                                        );
+
+                                signature.initSign(
+                                        privateKey
+                                );
+
+                                signature.update(
+                                        challenge.getBytes(
+                                                StandardCharsets.UTF_8
+                                        )
+                                );
+
+                                byte[] signedBytes =
+                                        signature.sign();
+
+                                PublicKey publicKey =
+                                        authenticatedKeyStore
+                                                .getCertificate(
+                                                        RECOVERY_KEY_ALIAS
+                                                )
+                                                .getPublicKey();
 
                                 JSObject response =
                                         new JSObject();
 
                                 response.put(
                                         "success",
-                                        false
+                                        true
                                 );
 
                                 response.put(
-                                        "code",
-                                        "SIGNATURE_FAILED"
+                                        "method",
+                                        "android-device-credential"
+                                );
+
+                                response.put(
+                                        "algorithm",
+                                        "ECDSA-SHA256"
+                                );
+
+                                response.put(
+                                        "challenge",
+                                        challenge
+                                );
+
+                                response.put(
+                                        "signature",
+                                        encodeBase64(
+                                                signedBytes
+                                        )
+                                );
+
+                                response.put(
+                                        "publicKey",
+                                        encodeBase64(
+                                                publicKey.getEncoded()
+                                        )
                                 );
 
                                 response.put(
                                         "message",
-                                        "Unable to sign the recovery challenge."
+                                        "Recovery challenge signed successfully with device credential authentication."
                                 );
 
-                                call.resolve(response);
+                                call.resolve(
+                                        response
+                                );
+
+                            } catch (Exception error) {
+
+                                resolveFailure(
+                                        call,
+                                        "DEVICE_CREDENTIAL_SIGNATURE_FAILED",
+                                        "Device authentication succeeded, but Android Keystore could not sign the recovery challenge: "
+                                                + safeErrorMessage(error)
+                                );
                             }
                         }
 
@@ -1021,11 +1357,18 @@ public class DeviceSecurityPlugin extends Plugin {
                             );
 
                             response.put(
+                                    "method",
+                                    "android-device-credential"
+                            );
+
+                            response.put(
                                     "message",
                                     errString.toString()
                             );
 
-                            call.resolve(response);
+                            call.resolve(
+                                    response
+                            );
                         }
 
                         @Override
@@ -1034,20 +1377,12 @@ public class DeviceSecurityPlugin extends Plugin {
                             super.onAuthenticationFailed();
 
                             /*
-                             * Do not resolve here.
+                             * Do not resolve.
                              *
-                             * Android can allow another attempt.
+                             * Android may allow another attempt.
                              */
                         }
                     };
-
-            /*
-             * CryptoObject authentication must use
-             * BIOMETRIC_STRONG.
-             *
-             * DEVICE_CREDENTIAL is deliberately NOT included
-             * in this CryptoObject prompt.
-             */
 
             BiometricPrompt biometricPrompt =
                     new BiometricPrompt(
@@ -1056,37 +1391,42 @@ public class DeviceSecurityPlugin extends Plugin {
                             callback
                     );
 
+            /*
+             * IMPORTANT:
+             *
+             * This prompt deliberately has NO CryptoObject.
+             *
+             * That is what allows Android to present:
+             *
+             * - PIN
+             * - pattern
+             * - password
+             *
+             * together with strong biometric authentication.
+             */
+
             BiometricPrompt.PromptInfo promptInfo =
                     new BiometricPrompt.PromptInfo.Builder()
                             .setTitle(
                                     "Confirm PIN recovery"
                             )
                             .setSubtitle(
-                                    "Use your fingerprint or face to authorize PIN recovery"
+                                    "Use your fingerprint, face, PIN, pattern, or password"
                             )
                             .setAllowedAuthenticators(
                                     BiometricManager.Authenticators.BIOMETRIC_STRONG
+                                            | BiometricManager.Authenticators.DEVICE_CREDENTIAL
                             )
                             .build();
 
-            /*
-             * AndroidX Biometric 1.1.0:
-             *
-             * authenticate(
-             *     PromptInfo,
-             *     CryptoObject
-             * )
-             */
-
             biometricPrompt.authenticate(
-                    promptInfo,
-                    cryptoObject
+                    promptInfo
             );
 
         } catch (Exception error) {
 
             call.reject(
-                    "Unable to start GEO-SHUA Android cryptographic authentication: "
+                    "Unable to start GEO-SHUA device credential recovery: "
                             + safeErrorMessage(error)
             );
         }
@@ -1094,10 +1434,43 @@ public class DeviceSecurityPlugin extends Plugin {
 
     /*
      * =========================================================
+     * FAILURE RESPONSE
+     * =========================================================
+     */
+
+    private void resolveFailure(
+            PluginCall call,
+            String code,
+            String message
+    ) {
+
+        JSObject response =
+                new JSObject();
+
+        response.put(
+                "success",
+                false
+        );
+
+        response.put(
+                "code",
+                code
+        );
+
+        response.put(
+                "message",
+                message
+        );
+
+        call.resolve(
+                response
+        );
+    }
+
+    /*
+     * =========================================================
      * BASE64
      * =========================================================
-     *
-     * android.util.Base64 is compatible with minSdk 24.
      */
 
     private String encodeBase64(
