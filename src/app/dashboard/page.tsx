@@ -1513,7 +1513,7 @@ function IdentityScreen({
 
         const signedResult =
         await authenticateAndSignAndroidWithDeviceCredential(
-          challengeResult.challenge,
+          challenge,
         );
 
         if (

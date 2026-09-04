@@ -3,6 +3,7 @@ import { registerPlugin } from "@capacitor/core";
 export type DeviceSecurityAvailability = {
   available: boolean;
   code: string;
+  message?: string;
 };
 
 export type DeviceSecurityResult = {
@@ -45,10 +46,39 @@ export type SignChallengeResult = {
   algorithm?: string;
   method?: string;
   challenge?: string;
+  code?: string;
+  errorCode?: number;
   error?: string;
   message?: string;
 };
 
+/**
+ * IMPORTANT
+ *
+ * Capacitor plugin methods receive an object.
+ *
+ * Native Java expects:
+ *
+ *     call.getString("challenge")
+ *
+ * Therefore JavaScript MUST call:
+ *
+ *     DeviceSecurity.signChallenge({ challenge })
+ *
+ * and:
+ *
+ *     DeviceSecurity.authenticateAndSignWithDeviceCredential({
+ *       challenge,
+ *     })
+ *
+ * NOT:
+ *
+ *     DeviceSecurity.signChallenge(challenge)
+ *
+ * and NOT:
+ *
+ *     DeviceSecurity.authenticateAndSignWithDeviceCredential(challenge)
+ */
 export interface DeviceSecurityPlugin {
   isAvailable(): Promise<DeviceSecurityAvailability>;
 
@@ -60,35 +90,16 @@ export interface DeviceSecurityPlugin {
 
   getRecoveryPublicKey(): Promise<RecoveryPublicKeyResult>;
 
-  /**
-   * Strong biometric cryptographic recovery.
-   *
-   * Uses:
-   * - fingerprint
-   * - face
-   *
-   * The Android native implementation uses
-   * BiometricPrompt + CryptoObject.
-   */
   signChallenge(
-    challenge: string,
+    options: {
+      challenge: string;
+    },
   ): Promise<SignChallengeResult>;
 
-  /**
-   * Device-credential recovery.
-   *
-   * Uses:
-   * - device PIN
-   * - device pattern
-   * - device password
-   *
-   * The native implementation first authenticates
-   * the user with Android device security and then
-   * signs the server challenge using the Android
-   * Keystore recovery key.
-   */
   authenticateAndSignWithDeviceCredential(
-    challenge: string,
+    options: {
+      challenge: string;
+    },
   ): Promise<SignChallengeResult>;
 }
 
@@ -99,11 +110,10 @@ const DeviceSecurity =
 
 export default DeviceSecurity;
 
-/**
- * =========================================================
- * ANDROID DEVICE SECURITY AVAILABILITY
- * =========================================================
- */
+/* =========================================================
+   AVAILABILITY
+========================================================= */
+
 export async function isAndroidDeviceSecurityAvailable(): Promise<boolean> {
   try {
     const result =
@@ -125,26 +135,10 @@ export async function isAndroidDeviceSecurityAvailable(): Promise<boolean> {
   }
 }
 
-/**
- * =========================================================
- * NORMAL ANDROID DEVICE AUTHENTICATION
- * =========================================================
- *
- * Opens the native Android security prompt.
- *
- * Supports:
- *
- * - fingerprint
- * - face
- * - device PIN
- * - device pattern
- * - device password
- *
- * This is the normal Identity authentication flow.
- *
- * It does NOT produce server-verifiable cryptographic
- * proof.
- */
+/* =========================================================
+   NORMAL DEVICE AUTHENTICATION
+========================================================= */
+
 export async function authenticateWithAndroidDeviceSecurity(): Promise<DeviceSecurityResult> {
   try {
     const result =
@@ -177,15 +171,10 @@ export async function authenticateWithAndroidDeviceSecurity(): Promise<DeviceSec
   }
 }
 
-/**
- * =========================================================
- * CREATE ANDROID RECOVERY KEY
- * =========================================================
- *
- * Creates the recovery key inside Android Keystore.
- *
- * The private key never leaves the Android device.
- */
+/* =========================================================
+   CREATE RECOVERY KEY
+========================================================= */
+
 export async function createAndroidRecoveryKey(): Promise<RecoveryKeyResult> {
   try {
     const result =
@@ -221,14 +210,10 @@ export async function createAndroidRecoveryKey(): Promise<RecoveryKeyResult> {
   }
 }
 
-/**
- * =========================================================
- * CHECK ANDROID RECOVERY KEY
- * =========================================================
- *
- * Checks whether the recovery key exists in
- * Android Keystore.
- */
+/* =========================================================
+   CHECK RECOVERY KEY
+========================================================= */
+
 export async function hasAndroidRecoveryKey(): Promise<RecoveryKeyExistsResult> {
   try {
     const result =
@@ -257,11 +242,6 @@ export async function hasAndroidRecoveryKey(): Promise<RecoveryKeyExistsResult> 
         ? error.message
         : String(error);
 
-    console.error(
-      "ANDROID RECOVERY KEY CHECK ERROR MESSAGE:",
-      message,
-    );
-
     return {
       success: false,
       exists: false,
@@ -275,15 +255,10 @@ export async function hasAndroidRecoveryKey(): Promise<RecoveryKeyExistsResult> 
   }
 }
 
-/**
- * =========================================================
- * GET ANDROID RECOVERY PUBLIC KEY
- * =========================================================
- *
- * Gets only the public portion of the recovery key.
- *
- * The private key remains inside Android Keystore.
- */
+/* =========================================================
+   GET RECOVERY PUBLIC KEY
+========================================================= */
+
 export async function getAndroidRecoveryPublicKey(): Promise<RecoveryPublicKeyResult> {
   try {
     const result =
@@ -323,40 +298,19 @@ export async function getAndroidRecoveryPublicKey(): Promise<RecoveryPublicKeyRe
   }
 }
 
-/**
- * =========================================================
- * SIGN ANDROID RECOVERY CHALLENGE
- * =========================================================
- *
- * STRONG BIOMETRIC RECOVERY
- *
- * Signs a server-issued recovery challenge using
- * the private key stored inside Android Keystore.
- *
- * Authentication:
- *
- * - fingerprint
- * - face
- *
- * Native implementation:
- *
- * BiometricPrompt
- *       +
- * CryptoObject
- *       +
- * Android Keystore
- *
- * Returns an ECDSA signature that the server can
- * verify against the registered public key.
- */
+/* =========================================================
+   STRONG BIOMETRIC CHALLENGE SIGNING
+========================================================= */
+
 export async function signAndroidRecoveryChallenge(
   challenge: string,
 ): Promise<SignChallengeResult> {
+  const normalizedChallenge =
+    typeof challenge === "string"
+      ? challenge.trim()
+      : "";
 
-  if (
-    !challenge ||
-    challenge.trim().length === 0
-  ) {
+  if (!normalizedChallenge) {
     return {
       success: false,
       error:
@@ -366,7 +320,9 @@ export async function signAndroidRecoveryChallenge(
     };
   }
 
-  if (challenge.length > 4096) {
+  if (
+    normalizedChallenge.length > 4096
+  ) {
     return {
       success: false,
       error:
@@ -377,10 +333,20 @@ export async function signAndroidRecoveryChallenge(
   }
 
   try {
+    /*
+     * IMPORTANT:
+     *
+     * Capacitor requires an object here.
+     *
+     * Java receives:
+     *
+     * call.getString("challenge")
+     */
     const result =
-      await DeviceSecurity.signChallenge(
-        challenge,
-      );
+      await DeviceSecurity.signChallenge({
+        challenge:
+          normalizedChallenge,
+      });
 
     console.log(
       "ANDROID RECOVERY CHALLENGE SIGN RESULT:",
@@ -419,48 +385,19 @@ export async function signAndroidRecoveryChallenge(
   }
 }
 
-/**
- * =========================================================
- * ANDROID DEVICE-CREDENTIAL RECOVERY
- * =========================================================
- *
- * DEVICE-CREDENTIAL RECOVERY
- *
- * Supports:
- *
- * - device PIN
- * - device pattern
- * - device password
- *
- * This is intentionally a separate native method from
- * signAndroidRecoveryChallenge().
- *
- * Android does not allow DEVICE_CREDENTIAL to be combined
- * with the CryptoObject authentication flow used for the
- * strong biometric signature operation.
- *
- * Native flow:
- *
- * Android device credential
- *       ↓
- * Authentication succeeds
- *       ↓
- * Android Keystore
- *       ↓
- * ECDSA signature
- *       ↓
- * GEO-SHUA server
- *
- * The private key never leaves Android Keystore.
- */
+/* =========================================================
+   DEVICE CREDENTIAL CHALLENGE SIGNING
+========================================================= */
+
 export async function authenticateAndSignAndroidWithDeviceCredential(
   challenge: string,
 ): Promise<SignChallengeResult> {
+  const normalizedChallenge =
+    typeof challenge === "string"
+      ? challenge.trim()
+      : "";
 
-  if (
-    !challenge ||
-    challenge.trim().length === 0
-  ) {
+  if (!normalizedChallenge) {
     return {
       success: false,
       error:
@@ -470,7 +407,9 @@ export async function authenticateAndSignAndroidWithDeviceCredential(
     };
   }
 
-  if (challenge.length > 4096) {
+  if (
+    normalizedChallenge.length > 4096
+  ) {
     return {
       success: false,
       error:
@@ -481,9 +420,39 @@ export async function authenticateAndSignAndroidWithDeviceCredential(
   }
 
   try {
+    console.log(
+      "ANDROID DEVICE CREDENTIAL RECOVERY: sending challenge",
+      {
+        challengeLength:
+          normalizedChallenge.length,
+      },
+    );
+
+    /*
+     * =====================================================
+     * CRITICAL FIX
+     * =====================================================
+     *
+     * DO NOT DO THIS:
+     *
+     * DeviceSecurity.authenticateAndSignWithDeviceCredential(
+     *   normalizedChallenge
+     * );
+     *
+     * Native Java expects:
+     *
+     * call.getString("challenge")
+     *
+     * Therefore we MUST send:
+     *
+     * { challenge: normalizedChallenge }
+     */
     const result =
       await DeviceSecurity.authenticateAndSignWithDeviceCredential(
-        challenge,
+        {
+          challenge:
+            normalizedChallenge,
+        },
       );
 
     console.log(
