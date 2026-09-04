@@ -1,10 +1,14 @@
 "use client";
 
 import {
+  AlertCircle,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  CircleDollarSign,
+  FileSearch,
   Inbox,
+  Info,
   Loader2,
   RefreshCw,
   ShieldCheck,
@@ -12,6 +16,7 @@ import {
   TriangleAlert,
   XCircle,
 } from "lucide-react";
+
 import {
   useCallback,
   useEffect,
@@ -33,12 +38,10 @@ import SmsReader, {
 const PROCESS_URL = "/api/sms/process";
 
 /*
- * These terms are only a LOCAL candidate filter.
+ * These terms are ONLY a local candidate filter.
  *
- * IMPORTANT:
+ * Passing this filter does NOT mean the SMS is valid.
  * The server remains authoritative.
- * A message passing this filter does NOT mean
- * it is financially valid.
  */
 const FINANCIAL_TERMS = [
   "kes",
@@ -55,6 +58,14 @@ const FINANCIAL_TERMS = [
   "repayment",
 ];
 
+/*
+ * Maximum number of locally filtered messages retained
+ * for diagnostics during one scan.
+ *
+ * We do not send these messages to the server.
+ */
+const MAX_FILTERED_DIAGNOSTICS = 10;
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -66,22 +77,34 @@ type MonitorStatus =
   | "attention"
   | "error";
 
+type ApiRecord = Record<string, unknown>;
+
 type ProcessResult = {
   sms: SmsMessage;
+
   httpStatus?: number;
+
   status?: string;
+
   type?: string;
+
   financialChange?: boolean;
+
   duplicate?: boolean;
+
   ignored?: boolean;
+
   processed?: boolean;
+
   error?: string;
+
   response?: unknown;
 };
 
 type ProcessStats = {
   inbox: number;
   candidates: number;
+  filtered: number;
   submitted: number;
   processed: number;
   duplicate: number;
@@ -96,8 +119,25 @@ type ReaderError = {
   raw?: unknown;
 };
 
+type ScanProgress = {
+  current: number;
+  total: number;
+  submitted: number;
+  processed: number;
+  duplicate: number;
+  ignored: number;
+  failed: number;
+  currentAddress?: string;
+  currentSmsId?: string;
+};
+
+type FilteredDiagnostic = {
+  sms: SmsMessage;
+  reason: string;
+};
+
 /* =========================================================
-   HELPERS
+   BASIC HELPERS
 ========================================================= */
 
 function isFinancialCandidate(
@@ -112,19 +152,19 @@ function isFinancialCandidate(
 }
 
 /*
- * Creates a deterministic local key for the Android
+ * Creates a deterministic local key for an Android
  * inbox row.
  *
- * We prefer the native SMS _id.
+ * We prefer Android's native SMS _id.
  *
- * If Android does not provide an id, we fall back to
- * address + date + body.
+ * If Android does not provide one, we use:
  *
- * This is ONLY used to prevent submitting the same
- * inbox row twice during a single foreground run.
+ * address + date + body
  *
- * The server remains responsible for financial
- * idempotency.
+ * This protects only the current foreground run.
+ *
+ * The SERVER remains responsible for permanent
+ * financial idempotency.
  */
 function getLocalSmsKey(
   sms: SmsMessage,
@@ -143,6 +183,10 @@ function getLocalSmsKey(
     `body:${sms.body ?? ""}`,
   ].join("|");
 }
+
+/* =========================================================
+   DATE / TIME
+========================================================= */
 
 function formatTime(
   timestamp: number,
@@ -177,12 +221,41 @@ function formatDate(
       {
         day: "2-digit",
         month: "short",
+        year: "numeric",
       },
     ).format(new Date(timestamp));
   } catch {
     return "";
   }
 }
+
+function formatFullDateTime(
+  timestamp: number,
+): string {
+  if (!timestamp) {
+    return "Unknown date";
+  }
+
+  try {
+    return new Intl.DateTimeFormat(
+      "en-KE",
+      {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      },
+    ).format(new Date(timestamp));
+  } catch {
+    return "Unknown date";
+  }
+}
+
+/* =========================================================
+   STRING HELPERS
+========================================================= */
 
 function truncate(
   value: string,
@@ -193,6 +266,518 @@ function truncate(
   }
 
   return `${value.slice(0, length)}…`;
+}
+
+function toRecord(
+  value: unknown,
+): ApiRecord | null {
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  ) {
+    return value as ApiRecord;
+  }
+
+  return null;
+}
+
+function getString(
+  value: unknown,
+): string | undefined {
+  if (
+    typeof value === "string" &&
+    value.trim()
+  ) {
+    return value.trim();
+  }
+
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return String(value);
+  }
+
+  return undefined;
+}
+
+function getBoolean(
+  value: unknown,
+): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  return undefined;
+}
+
+/* =========================================================
+   API DIAGNOSTIC HELPERS
+========================================================= */
+
+/*
+ * Searches the API response for a useful human-readable
+ * explanation.
+ *
+ * This intentionally supports several possible response
+ * shapes because different API stages may expose their
+ * diagnostic under different keys.
+ */
+function getApiReason(
+  value: unknown,
+): string | undefined {
+  const root =
+    toRecord(value);
+
+  if (!root) {
+    return undefined;
+  }
+
+  const directKeys = [
+    "reason",
+    "message",
+    "error",
+  ];
+
+  for (const key of directKeys) {
+    const text =
+      getString(root[key]);
+
+    if (text) {
+      return text;
+    }
+  }
+
+  const diagnostic =
+    toRecord(root.diagnostic);
+
+  if (diagnostic) {
+    for (const key of directKeys) {
+      const text =
+        getString(
+          diagnostic[key],
+        );
+
+      if (text) {
+        return text;
+      }
+    }
+  }
+
+  const result =
+    toRecord(root.result);
+
+  if (result) {
+    for (const key of directKeys) {
+      const text =
+        getString(result[key]);
+
+      if (text) {
+        return text;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+/*
+ * Extract a likely reference from whatever API object
+ * the server returns.
+ */
+function getApiReference(
+  value: unknown,
+): string | undefined {
+  const root =
+    toRecord(value);
+
+  if (!root) {
+    return undefined;
+  }
+
+  const direct =
+    getString(root.reference) ??
+    getString(root.transactionReference);
+
+  if (direct) {
+    return direct;
+  }
+
+  const parsed =
+    toRecord(root.parsed);
+
+  if (parsed) {
+    const parsedReference =
+      getString(parsed.reference) ??
+      getString(
+        parsed.transactionReference,
+      );
+
+    if (parsedReference) {
+      return parsedReference;
+    }
+  }
+
+  const transaction =
+    toRecord(root.transaction);
+
+  if (transaction) {
+    const transactionReference =
+      getString(
+        transaction.reference,
+      ) ??
+      getString(
+        transaction.transactionReference,
+      );
+
+    if (transactionReference) {
+      return transactionReference;
+    }
+  }
+
+  const repayment =
+    toRecord(root.repayment);
+
+  if (repayment) {
+    const repaymentReference =
+      getString(
+        repayment.transactionReference,
+      ) ??
+      getString(
+        repayment.reference,
+      );
+
+    if (repaymentReference) {
+      return repaymentReference;
+    }
+  }
+
+  return undefined;
+}
+
+/*
+ * Extract amount from API response.
+ */
+function getApiAmount(
+  value: unknown,
+): string | undefined {
+  const root =
+    toRecord(value);
+
+  if (!root) {
+    return undefined;
+  }
+
+  const direct =
+    root.amount;
+
+  if (
+    typeof direct === "number" ||
+    typeof direct === "string"
+  ) {
+    return String(direct);
+  }
+
+  const parsed =
+    toRecord(root.parsed);
+
+  if (parsed) {
+    const amount =
+      parsed.amount;
+
+    if (
+      typeof amount === "number" ||
+      typeof amount === "string"
+    ) {
+      return String(amount);
+    }
+  }
+
+  const transaction =
+    toRecord(root.transaction);
+
+  if (transaction) {
+    const amount =
+      transaction.amount;
+
+    if (
+      typeof amount === "number" ||
+      typeof amount === "string"
+    ) {
+      return String(amount);
+    }
+  }
+
+  return undefined;
+}
+
+/*
+ * Extract account number.
+ */
+function getApiAccountNumber(
+  value: unknown,
+): string | undefined {
+  const root =
+    toRecord(value);
+
+  if (!root) {
+    return undefined;
+  }
+
+  const direct =
+    getString(root.accountNumber);
+
+  if (direct) {
+    return direct;
+  }
+
+  const parsed =
+    toRecord(root.parsed);
+
+  if (parsed) {
+    const account =
+      getString(
+        parsed.accountNumber,
+      );
+
+    if (account) {
+      return account;
+    }
+  }
+
+  return undefined;
+}
+
+/*
+ * Extract sender/member name.
+ */
+function getApiSenderName(
+  value: unknown,
+): string | undefined {
+  const root =
+    toRecord(value);
+
+  if (!root) {
+    return undefined;
+  }
+
+  const direct =
+    getString(root.senderName) ??
+    getString(root.memberName);
+
+  if (direct) {
+    return direct;
+  }
+
+  const parsed =
+    toRecord(root.parsed);
+
+  if (parsed) {
+    const sender =
+      getString(
+        parsed.senderName,
+      );
+
+    if (sender) {
+      return sender;
+    }
+  }
+
+  const member =
+    toRecord(root.member);
+
+  if (member) {
+    const memberName =
+      getString(member.name) ??
+      getString(member.fullName);
+
+    if (memberName) {
+      return memberName;
+    }
+  }
+
+  return undefined;
+}
+
+/*
+ * Extract transaction date returned by parser/API.
+ */
+function getApiTransactionDate(
+  value: unknown,
+): string | undefined {
+  const root =
+    toRecord(value);
+
+  if (!root) {
+    return undefined;
+  }
+
+  const direct =
+    root.transactionDate;
+
+  if (
+    typeof direct === "string" ||
+    typeof direct === "number"
+  ) {
+    return String(direct);
+  }
+
+  const parsed =
+    toRecord(root.parsed);
+
+  if (parsed) {
+    const parsedDate =
+      parsed.transactionDate;
+
+    if (
+      typeof parsedDate === "string" ||
+      typeof parsedDate === "number"
+    ) {
+      return String(parsedDate);
+    }
+  }
+
+  return undefined;
+}
+
+/*
+ * Extract loan information.
+ */
+function getApiLoan(
+  value: unknown,
+): ApiRecord | null {
+  const root =
+    toRecord(value);
+
+  if (!root) {
+    return null;
+  }
+
+  const directLoan =
+    toRecord(root.loan);
+
+  if (directLoan) {
+    return directLoan;
+  }
+
+  const result =
+    toRecord(root.result);
+
+  if (result) {
+    const resultLoan =
+      toRecord(result.loan);
+
+    if (resultLoan) {
+      return resultLoan;
+    }
+  }
+
+  return null;
+}
+
+/*
+ * Extract savings account information.
+ */
+function getApiSavingsAccount(
+  value: unknown,
+): ApiRecord | null {
+  const root =
+    toRecord(value);
+
+  if (!root) {
+    return null;
+  }
+
+  return (
+    toRecord(
+      root.savingsAccount,
+    ) ??
+    toRecord(
+      root.account,
+    )
+  );
+}
+
+/*
+ * Safely serializes API/native diagnostic objects.
+ */
+function serializeValue(
+  value: unknown,
+): string {
+  try {
+    const result =
+      JSON.stringify(
+        value,
+        null,
+        2,
+      );
+
+    return result ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/* =========================================================
+   RESULT PRESENTATION HELPERS
+========================================================= */
+
+function getResultKind(
+  item: ProcessResult,
+):
+  | "processed"
+  | "duplicate"
+  | "ignored"
+  | "failed" {
+  if (item.processed) {
+    return "processed";
+  }
+
+  if (item.duplicate) {
+    return "duplicate";
+  }
+
+  if (item.ignored) {
+    return "ignored";
+  }
+
+  return "failed";
+}
+
+function getResultLabel(
+  item: ProcessResult,
+): string {
+  const kind =
+    getResultKind(item);
+
+  switch (kind) {
+    case "processed":
+      return item.type
+        ? `Processed · ${item.type}`
+        : "Processed";
+
+    case "duplicate":
+      return "Already synced";
+
+    case "ignored":
+      return "Ignored";
+
+    default:
+      return "Needs attention";
+  }
+}
+
+function getResultReason(
+  item: ProcessResult,
+): string | undefined {
+  if (item.error) {
+    return item.error;
+  }
+
+  return getApiReason(
+    item.response,
+  );
 }
 
 /* =========================================================
@@ -262,20 +847,6 @@ function extractReaderError(
   };
 }
 
-function serializeValue(
-  value: unknown,
-): string {
-  try {
-    return JSON.stringify(
-      value,
-      null,
-      2,
-    );
-  } catch {
-    return String(value);
-  }
-}
-
 /* =========================================================
    COMPONENT
 ========================================================= */
@@ -288,6 +859,7 @@ export default function SmsInboxMonitor() {
     useState<ProcessStats>({
       inbox: 0,
       candidates: 0,
+      filtered: 0,
       submitted: 0,
       processed: 0,
       duplicate: 0,
@@ -298,6 +870,9 @@ export default function SmsInboxMonitor() {
   const [results, setResults] =
     useState<ProcessResult[]>([]);
 
+  const [filteredDiagnostics, setFilteredDiagnostics] =
+    useState<FilteredDiagnostic[]>([]);
+
   const [lastSync, setLastSync] =
     useState<number | null>(null);
 
@@ -307,45 +882,31 @@ export default function SmsInboxMonitor() {
   const [readerError, setReaderError] =
     useState<ReaderError | null>(null);
 
+  const [progress, setProgress] =
+    useState<ScanProgress | null>(null);
+
   /*
-   * Prevents two foreground processing operations
-   * from running at the same time.
+   * Prevent two foreground operations from running
+   * simultaneously.
    */
   const runningRef =
     useRef(false);
 
   /*
-   * Prevents the automatic startup processing from
-   * running more than once for the current mounted
-   * component instance.
+   * Prevent automatic startup processing from running
+   * twice for this mounted component instance.
    */
   const startupProcessedRef =
     useRef(false);
 
   /* =======================================================
      PROCESS INBOX
-     
-     This function may be triggered by:
-
-     1. Automatic foreground startup
-     2. Manual "Process SMS" button
-
-     There is deliberately NO:
-
-     - Android BroadcastReceiver
-     - background service
-     - background task
-     - sweep receiver
-     - interval
-     - periodic polling
-     ======================================================= */
+  ======================================================= */
 
   const processInbox =
     useCallback(async () => {
       /*
-       * SMS reading is Android-native functionality.
-       *
-       * On web/PWA browser builds this simply does nothing.
+       * SMS reading is Android-native.
        */
       if (
         runningRef.current ||
@@ -358,14 +919,23 @@ export default function SmsInboxMonitor() {
 
       setStatus("scanning");
       setReaderError(null);
+      setProgress(null);
 
       console.log(
-        "GEO-SHUA SMS: foreground inbox processing started.",
+        "=================================================",
+      );
+
+      console.log(
+        "GEO-SHUA SMS: FOREGROUND PROCESSING START",
+      );
+
+      console.log(
+        "=================================================",
       );
 
       try {
         /* =================================================
-           STEP 1 — READ ANDROID SMS INBOX
+           STEP 1 — READ ANDROID INBOX
         ================================================= */
 
         console.log(
@@ -387,18 +957,8 @@ export default function SmsInboxMonitor() {
           );
 
           console.error(
-            "GEO-SHUA SMS: native error message:",
-            nativeError.message,
-          );
-
-          console.error(
-            "GEO-SHUA SMS: native error code:",
-            nativeError.code,
-          );
-
-          console.error(
-            "GEO-SHUA SMS: native error data:",
-            nativeError.data,
+            "GEO-SHUA SMS: native error:",
+            nativeError,
           );
 
           setReaderError(
@@ -437,13 +997,12 @@ export default function SmsInboxMonitor() {
             : [];
 
         console.log(
-          "GEO-SHUA SMS: inbox message count:",
+          "GEO-SHUA SMS: raw inbox count:",
           messages.length,
         );
 
         /*
-         * Prevent duplicate Android inbox rows from being
-         * submitted more than once during this run.
+         * Deduplicate Android inbox rows for this run.
          */
         const uniqueMessages: SmsMessage[] =
           [];
@@ -464,23 +1023,104 @@ export default function SmsInboxMonitor() {
           }
 
           seenSmsKeys.add(key);
-          uniqueMessages.push(sms);
+
+          uniqueMessages.push(
+            sms,
+          );
         }
 
         console.log(
-          "GEO-SHUA SMS: unique inbox message count:",
+          "GEO-SHUA SMS: unique inbox count:",
           uniqueMessages.length,
         );
 
-        const candidates =
-          uniqueMessages.filter(
-            isFinancialCandidate,
-          );
+        /* =================================================
+           STEP 3 — LOCAL CANDIDATE FILTER
+        ================================================= */
+
+        const candidates: SmsMessage[] =
+          [];
+
+        const filtered: FilteredDiagnostic[] =
+          [];
+
+        for (
+          const sms of uniqueMessages
+        ) {
+          if (
+            isFinancialCandidate(sms)
+          ) {
+            candidates.push(sms);
+          } else if (
+            filtered.length <
+            MAX_FILTERED_DIAGNOSTICS
+          ) {
+            filtered.push({
+              sms,
+              reason:
+                "Did not match the local financial-message candidate filter.",
+            });
+          }
+        }
 
         console.log(
-          "GEO-SHUA SMS: financial candidates:",
+          "GEO-SHUA SMS: candidates:",
           candidates.length,
         );
+
+        console.log(
+          "GEO-SHUA SMS: locally filtered:",
+          uniqueMessages.length -
+            candidates.length,
+        );
+
+        setFilteredDiagnostics(
+          filtered,
+        );
+
+        /* =================================================
+           INITIAL STATS
+        ================================================= */
+
+        const initialStats: ProcessStats = {
+          inbox:
+            uniqueMessages.length,
+
+          candidates:
+            candidates.length,
+
+          filtered:
+            uniqueMessages.length -
+            candidates.length,
+
+          submitted: 0,
+
+          processed: 0,
+
+          duplicate: 0,
+
+          ignored: 0,
+
+          failed: 0,
+        };
+
+        setStats(
+          initialStats,
+        );
+
+        setProgress({
+          current: 0,
+          total: candidates.length,
+          submitted: 0,
+          processed: 0,
+          duplicate: 0,
+          ignored: 0,
+          failed: 0,
+        });
+
+        /* =================================================
+           STEP 4 — PROCESS CANDIDATES
+        ================================================= */
 
         const nextResults: ProcessResult[] =
           [];
@@ -491,18 +1131,48 @@ export default function SmsInboxMonitor() {
         let failed = 0;
         let submitted = 0;
 
-        /* =================================================
-           STEP 3 — PROCESS CANDIDATES
-        ================================================= */
-
         for (
-          const sms of candidates
+          let index = 0;
+          index < candidates.length;
+          index += 1
         ) {
-          /*
-           * Basic local validation.
-           *
-           * The server remains authoritative.
-           */
+          const sms =
+            candidates[index];
+
+          const currentNumber =
+            index + 1;
+
+          setProgress({
+            current:
+              currentNumber,
+
+            total:
+              candidates.length,
+
+            submitted,
+
+            processed,
+
+            duplicate,
+
+            ignored,
+
+            failed,
+
+            currentAddress:
+              sms.address ??
+              undefined,
+
+            currentSmsId:
+              sms.id !== undefined
+                ? String(sms.id)
+                : undefined,
+          });
+
+          /* ===============================================
+             LOCAL VALIDATION
+          =============================================== */
+
           if (
             !sms.body ||
             !sms.body.trim() ||
@@ -511,10 +1181,48 @@ export default function SmsInboxMonitor() {
           ) {
             failed += 1;
 
-            nextResults.push({
-              sms,
-              error:
-                "SMS has invalid body or date.",
+            const invalidResult: ProcessResult =
+              {
+                sms,
+
+                error:
+                  "SMS has invalid body or date.",
+              };
+
+            nextResults.push(
+              invalidResult,
+            );
+
+            console.warn(
+              "GEO-SHUA SMS: local validation failed:",
+              {
+                smsId: sms.id,
+                address:
+                  sms.address,
+                date: sms.date,
+              },
+            );
+
+            setStats({
+              inbox:
+                uniqueMessages.length,
+
+              candidates:
+                candidates.length,
+
+              filtered:
+                uniqueMessages.length -
+                candidates.length,
+
+              submitted,
+
+              processed,
+
+              duplicate,
+
+              ignored,
+
+              failed,
             });
 
             continue;
@@ -522,14 +1230,37 @@ export default function SmsInboxMonitor() {
 
           submitted += 1;
 
+          /* ===============================================
+             DEBUG LOG
+          =============================================== */
+
           console.log(
-            "GEO-SHUA SMS: processing candidate:",
+            "-------------------------------------------------",
+          );
+
+          console.log(
+            "GEO-SHUA SMS: PROCESSING CANDIDATE",
             {
+              number: currentNumber,
+              total:
+                candidates.length,
               id: sms.id,
-              address: sms.address,
-              date: sms.date,
+              address:
+                sms.address,
+              date:
+                sms.date,
+              dateFormatted:
+                formatFullDateTime(
+                  sms.date,
+                ),
+              body:
+                sms.body,
             },
           );
+
+          /* ===============================================
+             SEND TO SERVER
+          =============================================== */
 
           try {
             const response =
@@ -537,16 +1268,24 @@ export default function SmsInboxMonitor() {
                 PROCESS_URL,
                 {
                   method: "POST",
+
                   headers: {
                     "Content-Type":
                       "application/json",
                   },
+
                   body: JSON.stringify({
-                    smsId: sms.id,
+                    smsId:
+                      sms.id,
+
                     address:
                       sms.address,
-                    body: sms.body,
-                    date: sms.date,
+
+                    body:
+                      sms.body,
+
+                    date:
+                      sms.date,
                   }),
                 },
               );
@@ -562,42 +1301,136 @@ export default function SmsInboxMonitor() {
             }
 
             console.log(
-              "GEO-SHUA SMS: API response:",
+              "GEO-SHUA SMS: API RESPONSE",
               {
-                status:
+                smsId:
+                  sms.id,
+
+                httpStatus:
                   response.status,
-                ok: response.ok,
+
+                httpOk:
+                  response.ok,
+
                 data,
               },
             );
 
             const payload =
-              data &&
-              typeof data === "object"
-                ? (data as Record<
-                    string,
-                    unknown
-                  >)
-                : {};
+              toRecord(data) ??
+              {};
+
+            /* =============================================
+               API FLAGS
+            ============================================= */
 
             const wasDuplicate =
-              payload.duplicate === true;
+              payload.duplicate ===
+              true;
 
             const wasIgnored =
-              payload.ignored === true;
+              payload.ignored ===
+              true;
 
             const wasProcessed =
-              payload.processed === true;
+              payload.processed ===
+              true;
 
-            /*
-             * The API can legitimately return an ignored
-             * or duplicate result with HTTP 200.
-             *
-             * These are NOT failures.
-             */
-            if (wasDuplicate) {
+            const financialChange =
+              payload.financialChange ===
+              true;
+
+            const apiStatus =
+              getString(
+                payload.status,
+              );
+
+            const apiType =
+              getString(
+                payload.type,
+              );
+
+            const apiReason =
+              getApiReason(
+                data,
+              );
+
+            const apiReference =
+              getApiReference(
+                data,
+              );
+
+            const apiAmount =
+              getApiAmount(
+                data,
+              );
+
+            const apiAccount =
+              getApiAccountNumber(
+                data,
+              );
+
+            const apiSender =
+              getApiSenderName(
+                data,
+              );
+
+            const apiTransactionDate =
+              getApiTransactionDate(
+                data,
+              );
+
+            console.log(
+              "GEO-SHUA SMS: API DECISION",
+              {
+                status:
+                  apiStatus,
+
+                type:
+                  apiType,
+
+                processed:
+                  wasProcessed,
+
+                duplicate:
+                  wasDuplicate,
+
+                ignored:
+                  wasIgnored,
+
+                financialChange,
+
+                reason:
+                  apiReason,
+
+                reference:
+                  apiReference,
+
+                amount:
+                  apiAmount,
+
+                accountNumber:
+                  apiAccount,
+
+                senderName:
+                  apiSender,
+
+                transactionDate:
+                  apiTransactionDate,
+              },
+            );
+
+            /* =============================================
+               CLASSIFY RESULT
+            ============================================= */
+
+            if (
+              wasDuplicate
+            ) {
               duplicate += 1;
-            } else if (wasIgnored) {
+            } else if (
+              wasIgnored
+            ) {
               ignored += 1;
             } else if (
               wasProcessed &&
@@ -608,26 +1441,53 @@ export default function SmsInboxMonitor() {
               failed += 1;
             }
 
+            /* =============================================
+               ERROR DETECTION
+            ============================================= */
+
+            let errorMessage:
+              | string
+              | undefined;
+
+            const apiError =
+              getString(
+                payload.error,
+              );
+
+            if (apiError) {
+              errorMessage =
+                apiError;
+            } else if (
+              !response.ok
+            ) {
+              errorMessage =
+                `Request failed (${response.status})`;
+            } else if (
+              !wasDuplicate &&
+              !wasIgnored &&
+              !wasProcessed
+            ) {
+              errorMessage =
+                "Server returned an unknown processing result.";
+            }
+
+            /* =============================================
+               STORE FULL RESULT
+            ============================================= */
+
             nextResults.push({
               sms,
+
               httpStatus:
                 response.status,
 
               status:
-                typeof payload.status ===
-                "string"
-                  ? payload.status
-                  : undefined,
+                apiStatus,
 
               type:
-                typeof payload.type ===
-                "string"
-                  ? payload.type
-                  : undefined,
+                apiType,
 
-              financialChange:
-                payload.financialChange ===
-                true,
+              financialChange,
 
               duplicate:
                 wasDuplicate,
@@ -639,18 +1499,65 @@ export default function SmsInboxMonitor() {
                 wasProcessed,
 
               error:
-                typeof payload.error ===
-                "string"
-                  ? payload.error
-                  : !response.ok
-                    ? `Request failed (${response.status})`
-                    : !wasDuplicate &&
-                        !wasIgnored &&
-                        !wasProcessed
-                      ? "Server returned an unknown processing result."
-                      : undefined,
+                errorMessage,
 
-              response: data,
+              response:
+                data,
+            });
+
+            /* =============================================
+               LIVE UI STATS
+            ============================================= */
+
+            setStats({
+              inbox:
+                uniqueMessages.length,
+
+              candidates:
+                candidates.length,
+
+              filtered:
+                uniqueMessages.length -
+                candidates.length,
+
+              submitted,
+
+              processed,
+
+              duplicate,
+
+              ignored,
+
+              failed,
+            });
+
+            setProgress({
+              current:
+                currentNumber,
+
+              total:
+                candidates.length,
+
+              submitted,
+
+              processed,
+
+              duplicate,
+
+              ignored,
+
+              failed,
+
+              currentAddress:
+                sms.address ??
+                undefined,
+
+              currentSmsId:
+                sms.id !== undefined
+                  ? String(
+                      sms.id,
+                    )
+                  : undefined,
             });
           } catch (error) {
             failed += 1;
@@ -663,33 +1570,62 @@ export default function SmsInboxMonitor() {
             console.error(
               "GEO-SHUA SMS: API request failed:",
               {
-                smsId: sms.id,
+                smsId:
+                  sms.id,
+
+                address:
+                  sms.address,
+
                 error,
+
                 message,
               },
             );
 
             nextResults.push({
               sms,
-              error: message,
+
+              error:
+                message,
+            });
+
+            setStats({
+              inbox:
+                uniqueMessages.length,
+
+              candidates:
+                candidates.length,
+
+              filtered:
+                uniqueMessages.length -
+                candidates.length,
+
+              submitted,
+
+              processed,
+
+              duplicate,
+
+              ignored,
+
+              failed,
             });
           }
         }
 
         /* =================================================
-           STEP 4 — UPDATE STATE
+           STEP 5 — FINAL STATE
         ================================================= */
 
         const nextStats: ProcessStats = {
-          /*
-           * Display the unique inbox count because that is
-           * the number of distinct SMS rows considered by
-           * this foreground run.
-           */
           inbox:
             uniqueMessages.length,
 
           candidates:
+            candidates.length,
+
+          filtered:
+            uniqueMessages.length -
             candidates.length,
 
           submitted,
@@ -704,18 +1640,59 @@ export default function SmsInboxMonitor() {
         };
 
         console.log(
-          "GEO-SHUA SMS: foreground processing complete:",
+          "=================================================",
+        );
+
+        console.log(
+          "GEO-SHUA SMS: FOREGROUND PROCESSING COMPLETE",
+        );
+
+        console.log(
           nextStats,
         );
 
-        setStats(nextStats);
-        setResults(nextResults);
-        setLastSync(Date.now());
+        console.log(
+          "=================================================",
+        );
+
+        setStats(
+          nextStats,
+        );
+
+        setResults(
+          nextResults,
+        );
+
+        setLastSync(
+          Date.now(),
+        );
+
+        setProgress({
+          current:
+            candidates.length,
+
+          total:
+            candidates.length,
+
+          submitted,
+
+          processed,
+
+          duplicate,
+
+          ignored,
+
+          failed,
+        });
 
         if (failed > 0) {
-          setStatus("attention");
+          setStatus(
+            "attention",
+          );
         } else {
-          setStatus("synced");
+          setStatus(
+            "synced",
+          );
         }
       } catch (error) {
         const message =
@@ -730,18 +1707,24 @@ export default function SmsInboxMonitor() {
 
         setReaderError({
           message,
-          raw: error,
+
+          raw:
+            error,
         });
 
-        setStatus("error");
+        setStatus(
+          "error",
+        );
 
         setStats((current) => ({
           ...current,
+
           failed:
             current.failed + 1,
         }));
       } finally {
-        runningRef.current = false;
+        runningRef.current =
+          false;
 
         console.log(
           "GEO-SHUA SMS: foreground inbox processing finished.",
@@ -751,17 +1734,7 @@ export default function SmsInboxMonitor() {
 
   /* =======================================================
      AUTOMATIC APP-OPEN PROCESSING
-
-     Runs once when this component mounts in the
-     foreground.
-
-     There is deliberately NO interval.
-
-     If the component is later unmounted and mounted
-     again, a new instance may perform another app-open
-     read. Server-side idempotency protects previously
-     processed financial SMS messages.
-     ======================================================= */
+  ======================================================= */
 
   useEffect(() => {
     if (
@@ -776,10 +1749,11 @@ export default function SmsInboxMonitor() {
       return;
     }
 
-    startupProcessedRef.current = true;
+    startupProcessedRef.current =
+      true;
 
     console.log(
-      "GEO-SHUA SMS: app-open foreground processing.",
+      "GEO-SHUA SMS: automatic app-open processing.",
     );
 
     void processInbox();
@@ -813,18 +1787,20 @@ export default function SmsInboxMonitor() {
 
   const statusDescription =
     isScanning
-      ? "Reading the Android inbox and checking payment messages"
+      ? progress
+        ? `Processing ${progress.current} of ${progress.total} candidates`
+        : "Reading the Android inbox…"
       : hasReaderError
         ? "Android could not read the SMS inbox"
         : hasAttention
-          ? "Some payment messages could not be processed"
+          ? `${stats.failed} message${stats.failed === 1 ? "" : "s"} need attention`
           : status === "synced"
             ? stats.processed > 0
               ? `${stats.processed} payment${stats.processed === 1 ? "" : "s"} processed`
               : stats.duplicate > 0
                 ? "Payments already synchronized"
                 : stats.ignored > 0
-                  ? "Payment messages checked"
+                  ? `${stats.ignored} message${stats.ignored === 1 ? "" : "s"} ignored`
                   : "Inbox checked"
             : "SMS payments are checked when the app opens";
 
@@ -850,7 +1826,8 @@ export default function SmsInboxMonitor() {
   ======================================================= */
 
   if (
-    typeof window !== "undefined" &&
+    typeof window !==
+      "undefined" &&
     !Capacitor.isNativePlatform()
   ) {
     return null;
@@ -930,7 +1907,7 @@ export default function SmsInboxMonitor() {
         </div>
 
         {/* =================================================
-            MANUAL PROCESS BUTTON
+            MANUAL BUTTON
         ================================================= */}
 
         <button
@@ -998,12 +1975,19 @@ export default function SmsInboxMonitor() {
               ${
                 hasAttention
                   ? "bg-amber-400/10 text-amber-400"
-                  : "bg-emerald-400/10 text-emerald-400"
+                  : isScanning
+                    ? "bg-blue-400/10 text-blue-400"
+                    : "bg-emerald-400/10 text-emerald-400"
               }
             `}
           >
             {hasAttention ? (
               <TriangleAlert size={16} />
+            ) : isScanning ? (
+              <Loader2
+                size={16}
+                className="animate-spin"
+              />
             ) : (
               <ShieldCheck size={16} />
             )}
@@ -1026,6 +2010,92 @@ export default function SmsInboxMonitor() {
           </span>
         )}
       </div>
+
+      {/* =================================================
+          LIVE PROGRESS
+      ================================================= */}
+
+      {isScanning &&
+        progress && (
+          <div
+            className="
+              mt-3
+              rounded-2xl
+              border border-blue-400/10
+              bg-blue-400/[0.03]
+              px-3.5 py-3
+            "
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <Loader2
+                  size={13}
+                  className="shrink-0 animate-spin text-blue-400"
+                />
+
+                <span className="truncate text-[10px] text-slate-400">
+                  {progress.currentAddress ||
+                    "Processing SMS"}
+                </span>
+              </div>
+
+              <span className="shrink-0 font-mono text-[10px] text-blue-400">
+                {progress.current}/
+                {progress.total}
+              </span>
+            </div>
+
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-slate-900">
+              <div
+                className="
+                  h-full
+                  rounded-full
+                  bg-blue-400
+                  transition-all
+                  duration-300
+                "
+                style={{
+                  width:
+                    progress.total > 0
+                      ? `${Math.min(
+                          100,
+                          (progress.current /
+                            progress.total) *
+                            100,
+                        )}%`
+                      : "0%",
+                }}
+              />
+            </div>
+
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[9px] text-slate-600">
+              <span>
+                Submitted{" "}
+                {progress.submitted}
+              </span>
+
+              <span>
+                Processed{" "}
+                {progress.processed}
+              </span>
+
+              <span>
+                Duplicate{" "}
+                {progress.duplicate}
+              </span>
+
+              <span>
+                Ignored{" "}
+                {progress.ignored}
+              </span>
+
+              <span>
+                Failed{" "}
+                {progress.failed}
+              </span>
+            </div>
+          </div>
+        )}
 
       {/* =================================================
           NATIVE ERROR
@@ -1132,6 +2202,8 @@ export default function SmsInboxMonitor() {
       ================================================= */}
 
       <div className="mt-3 grid grid-cols-3 gap-2">
+        {/* INBOX */}
+
         <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
           <div className="flex items-center gap-1.5 text-slate-500">
             <Inbox size={12} />
@@ -1146,23 +2218,75 @@ export default function SmsInboxMonitor() {
           </p>
         </div>
 
+        {/* CANDIDATES */}
+
         <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
           <div className="flex items-center gap-1.5 text-slate-500">
-            <CheckCircle2 size={12} />
+            <FileSearch size={12} />
 
             <span className="text-[10px]">
-              Synced
+              Candidates
             </span>
           </div>
 
           <p className="mt-1 text-base font-semibold tracking-tight text-white">
-            {successfulCount}
+            {stats.candidates}
           </p>
         </div>
 
+        {/* SUBMITTED */}
+
         <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
           <div className="flex items-center gap-1.5 text-slate-500">
-            <ShieldCheck size={12} />
+            <CircleDollarSign size={12} />
+
+            <span className="text-[10px]">
+              Submitted
+            </span>
+          </div>
+
+          <p className="mt-1 text-base font-semibold tracking-tight text-white">
+            {stats.submitted}
+          </p>
+        </div>
+
+        {/* PROCESSED */}
+
+        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
+          <div className="flex items-center gap-1.5 text-emerald-500/70">
+            <CheckCircle2 size={12} />
+
+            <span className="text-[10px]">
+              Processed
+            </span>
+          </div>
+
+          <p className="mt-1 text-base font-semibold tracking-tight text-white">
+            {stats.processed}
+          </p>
+        </div>
+
+        {/* IGNORED */}
+
+        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
+          <div className="flex items-center gap-1.5 text-amber-500/70">
+            <TriangleAlert size={12} />
+
+            <span className="text-[10px]">
+              Ignored
+            </span>
+          </div>
+
+          <p className="mt-1 text-base font-semibold tracking-tight text-white">
+            {stats.ignored}
+          </p>
+        </div>
+
+        {/* FAILED */}
+
+        <div className="rounded-2xl bg-slate-950/45 px-3 py-2.5">
+          <div className="flex items-center gap-1.5 text-red-500/70">
+            <XCircle size={12} />
 
             <span className="text-[10px]">
               Failed
@@ -1174,6 +2298,100 @@ export default function SmsInboxMonitor() {
           </p>
         </div>
       </div>
+
+      {/* =================================================
+          FILTER DIAGNOSTIC
+      ================================================= */}
+
+      {filteredDiagnostics.length >
+        0 && (
+        <details className="mt-3">
+          <summary
+            className="
+              flex cursor-pointer
+              list-none items-center justify-between
+              rounded-2xl
+              border border-slate-800/70
+              bg-slate-950/40
+              px-3 py-2.5
+            "
+          >
+            <div className="flex items-center gap-2">
+              <Info
+                size={13}
+                className="text-slate-500"
+              />
+
+              <div>
+                <p className="text-[10px] font-medium text-slate-400">
+                  Local filtering
+                </p>
+
+                <p className="text-[9px] text-slate-600">
+                  {stats.filtered} message
+                  {stats.filtered === 1
+                    ? ""
+                    : "s"} did not reach the API
+                </p>
+              </div>
+            </div>
+
+            <ChevronDown
+              size={14}
+              className="text-slate-600"
+            />
+          </summary>
+
+          <div className="mt-2 space-y-2">
+            {filteredDiagnostics.map(
+              (item, index) => (
+                <div
+                  key={`${getLocalSmsKey(item.sms)}-filtered-${index}`}
+                  className="
+                    rounded-2xl
+                    border border-slate-800/60
+                    bg-black/20
+                    p-3
+                  "
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="truncate text-[10px] font-medium text-slate-400">
+                      {item.sms.address ||
+                        "Unknown sender"}
+                    </span>
+
+                    <span className="shrink-0 text-[9px] text-slate-600">
+                      {formatDate(
+                        item.sms.date,
+                      )}
+                    </span>
+                  </div>
+
+                  <p className="mt-1 text-[10px] leading-4 text-slate-600">
+                    {truncate(
+                      item.sms.body,
+                      120,
+                    )}
+                  </p>
+
+                  <p className="mt-1.5 text-[9px] text-amber-500/60">
+                    {item.reason}
+                  </p>
+                </div>
+              ),
+            )}
+
+            {stats.filtered >
+              MAX_FILTERED_DIAGNOSTICS && (
+              <p className="px-1 text-[9px] text-slate-700">
+                Showing the first{" "}
+                {MAX_FILTERED_DIAGNOSTICS}{" "}
+                locally filtered messages.
+              </p>
+            )}
+          </div>
+        </details>
+      )}
 
       {/* =================================================
           RECENT ACTIVITY
@@ -1196,12 +2414,7 @@ export default function SmsInboxMonitor() {
               </p>
 
               <p className="mt-1 text-[12px] text-slate-400">
-                {latestResults.length} recent
-                payment
-                {latestResults.length ===
-                1
-                  ? ""
-                  : "s"}
+                Detailed API processing results
               </p>
             </div>
 
@@ -1218,13 +2431,50 @@ export default function SmsInboxMonitor() {
             <div className="mt-3 space-y-2">
               {latestResults.map(
                 (item, index) => {
-                  const success =
-                    item.processed ||
-                    item.duplicate ||
-                    item.ignored;
+                  const resultKind =
+                    getResultKind(
+                      item,
+                    );
 
-                  const failed =
-                    !!item.error;
+                  const reason =
+                    getResultReason(
+                      item,
+                    );
+
+                  const apiReference =
+                    getApiReference(
+                      item.response,
+                    );
+
+                  const apiAmount =
+                    getApiAmount(
+                      item.response,
+                    );
+
+                  const apiAccount =
+                    getApiAccountNumber(
+                      item.response,
+                    );
+
+                  const apiSender =
+                    getApiSenderName(
+                      item.response,
+                    );
+
+                  const apiTransactionDate =
+                    getApiTransactionDate(
+                      item.response,
+                    );
+
+                  const apiLoan =
+                    getApiLoan(
+                      item.response,
+                    );
+
+                  const apiSavingsAccount =
+                    getApiSavingsAccount(
+                      item.response,
+                    );
 
                   return (
                     <div
@@ -1236,6 +2486,10 @@ export default function SmsInboxMonitor() {
                         px-3 py-3
                       "
                     >
+                      {/* =================================
+                          MESSAGE HEADER
+                      ================================= */}
+
                       <div className="flex items-start gap-2.5">
                         <div
                           className={`
@@ -1243,16 +2497,38 @@ export default function SmsInboxMonitor() {
                             items-center justify-center
                             rounded-lg
                             ${
-                              failed
-                                ? "bg-amber-400/10 text-amber-400"
-                                : "bg-emerald-400/10 text-emerald-400"
+                              resultKind ===
+                              "processed"
+                                ? "bg-emerald-400/10 text-emerald-400"
+                                : resultKind ===
+                                    "duplicate"
+                                  ? "bg-blue-400/10 text-blue-400"
+                                  : resultKind ===
+                                      "ignored"
+                                    ? "bg-amber-400/10 text-amber-400"
+                                    : "bg-red-400/10 text-red-400"
                             }
                           `}
                         >
-                          {failed ? (
-                            <XCircle size={14} />
+                          {resultKind ===
+                          "processed" ? (
+                            <CheckCircle2
+                              size={14}
+                            />
+                          ) : resultKind ===
+                            "duplicate" ? (
+                            <ShieldCheck
+                              size={14}
+                            />
+                          ) : resultKind ===
+                            "ignored" ? (
+                            <TriangleAlert
+                              size={14}
+                            />
                           ) : (
-                            <CheckCircle2 size={14} />
+                            <XCircle
+                              size={14}
+                            />
                           )}
                         </div>
 
@@ -1273,12 +2549,9 @@ export default function SmsInboxMonitor() {
                             </span>
                           </div>
 
-                          <p className="mt-1 text-[11px] leading-4 text-slate-500">
-                            {truncate(
-                              item.sms.body,
-                              110,
-                            )}
-                          </p>
+                          {/* =================================
+                              RESULT BADGE
+                          ================================= */}
 
                           <div className="mt-2 flex flex-wrap items-center gap-2">
                             <span
@@ -1286,34 +2559,497 @@ export default function SmsInboxMonitor() {
                                 rounded-md px-1.5 py-0.5
                                 text-[9px] font-medium
                                 ${
-                                  success
+                                  resultKind ===
+                                  "processed"
                                     ? "bg-emerald-400/10 text-emerald-400"
-                                    : "bg-amber-400/10 text-amber-400"
+                                    : resultKind ===
+                                        "duplicate"
+                                      ? "bg-blue-400/10 text-blue-400"
+                                      : resultKind ===
+                                          "ignored"
+                                        ? "bg-amber-400/10 text-amber-400"
+                                        : "bg-red-400/10 text-red-400"
                                 }
                               `}
                             >
-                              {item.duplicate
-                                ? "Already synced"
-                                : item.processed
-                                  ? item.type ||
-                                    "Processed"
-                                  : item.ignored
-                                    ? "Ignored"
-                                    : "Needs attention"}
+                              {getResultLabel(
+                                item,
+                              )}
                             </span>
 
+                            {item.httpStatus !==
+                              undefined && (
+                              <span className="rounded-md bg-slate-900 px-1.5 py-0.5 font-mono text-[9px] text-slate-500">
+                                HTTP{" "}
+                                {
+                                  item.httpStatus
+                                }
+                              </span>
+                            )}
+
                             {item.financialChange && (
-                              <span className="text-[9px] text-blue-400">
+                              <span className="rounded-md bg-blue-400/10 px-1.5 py-0.5 text-[9px] text-blue-400">
                                 Account updated
                               </span>
                             )}
                           </div>
 
-                          {item.error && (
-                            <p className="mt-2 text-[10px] leading-4 text-amber-500/80">
-                              {item.error}
-                            </p>
+                          {/* =================================
+                              SMS BODY
+                          ================================= */}
+
+                          <p className="mt-2 text-[11px] leading-4 text-slate-500">
+                            {truncate(
+                              item.sms.body,
+                              180,
+                            )}
+                          </p>
+
+                          {/* =================================
+                              WHY IT WAS IGNORED / FAILED
+                          ================================= */}
+
+                          {reason && (
+                            <div
+                              className={`
+                                mt-2
+                                rounded-xl
+                                border
+                                px-2.5 py-2
+                                ${
+                                  resultKind ===
+                                  "ignored"
+                                    ? "border-amber-400/10 bg-amber-400/[0.03]"
+                                    : "border-red-400/10 bg-red-400/[0.03]"
+                                }
+                              `}
+                            >
+                              <div className="flex items-start gap-2">
+                                <AlertCircle
+                                  size={12}
+                                  className={`
+                                    mt-0.5 shrink-0
+                                    ${
+                                      resultKind ===
+                                      "ignored"
+                                        ? "text-amber-400"
+                                        : "text-red-400"
+                                    }
+                                  `}
+                                />
+
+                                <div className="min-w-0">
+                                  <p className="text-[9px] uppercase tracking-[0.1em] text-slate-600">
+                                    Server decision
+                                  </p>
+
+                                  <p className="mt-0.5 break-words text-[10px] leading-4 text-slate-400">
+                                    {reason}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
                           )}
+
+                          {/* =================================
+                              API SUMMARY
+                          ================================= */}
+
+                          <div className="mt-3 grid grid-cols-2 gap-1.5">
+                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
+                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                                API status
+                              </p>
+
+                              <p className="mt-0.5 truncate text-[9px] text-slate-400">
+                                {item.status ||
+                                  "—"}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
+                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                                Type
+                              </p>
+
+                              <p className="mt-0.5 truncate text-[9px] text-slate-400">
+                                {item.type ||
+                                  "—"}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
+                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                                Processed
+                              </p>
+
+                              <p className="mt-0.5 text-[9px] text-slate-400">
+                                {item.processed
+                                  ? "true"
+                                  : "false"}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
+                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                                Ignored
+                              </p>
+
+                              <p className="mt-0.5 text-[9px] text-slate-400">
+                                {item.ignored
+                                  ? "true"
+                                  : "false"}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
+                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                                Duplicate
+                              </p>
+
+                              <p className="mt-0.5 text-[9px] text-slate-400">
+                                {item.duplicate
+                                  ? "true"
+                                  : "false"}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-black/20 px-2 py-1.5">
+                              <p className="text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                                Financial change
+                              </p>
+
+                              <p className="mt-0.5 text-[9px] text-slate-400">
+                                {item.financialChange
+                                  ? "true"
+                                  : "false"}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* =================================
+                              PARSED INFORMATION
+                          ================================= */}
+
+                          {(apiReference ||
+                            apiAmount ||
+                            apiAccount ||
+                            apiSender ||
+                            apiTransactionDate) && (
+                            <div className="mt-3">
+                              <p className="mb-1.5 text-[9px] font-medium uppercase tracking-[0.12em] text-slate-600">
+                                Parsed transaction
+                              </p>
+
+                              <div className="space-y-1 rounded-xl border border-slate-800/50 bg-black/20 p-2.5">
+                                {apiReference && (
+                                  <div className="flex items-start justify-between gap-3">
+                                    <span className="text-[9px] text-slate-600">
+                                      Reference
+                                    </span>
+
+                                    <span className="break-all text-right font-mono text-[9px] text-blue-400">
+                                      {
+                                        apiReference
+                                      }
+                                    </span>
+                                  </div>
+                                )}
+
+                                {apiAmount && (
+                                  <div className="flex items-start justify-between gap-3">
+                                    <span className="text-[9px] text-slate-600">
+                                      Amount
+                                    </span>
+
+                                    <span className="text-right font-mono text-[9px] text-slate-300">
+                                      KES{" "}
+                                      {
+                                        apiAmount
+                                      }
+                                    </span>
+                                  </div>
+                                )}
+
+                                {apiAccount && (
+                                  <div className="flex items-start justify-between gap-3">
+                                    <span className="text-[9px] text-slate-600">
+                                      Account
+                                    </span>
+
+                                    <span className="text-right font-mono text-[9px] text-slate-300">
+                                      {
+                                        apiAccount
+                                      }
+                                    </span>
+                                  </div>
+                                )}
+
+                                {apiSender && (
+                                  <div className="flex items-start justify-between gap-3">
+                                    <span className="text-[9px] text-slate-600">
+                                      Sender
+                                    </span>
+
+                                    <span className="max-w-[65%] text-right text-[9px] text-slate-300">
+                                      {
+                                        apiSender
+                                      }
+                                    </span>
+                                  </div>
+                                )}
+
+                                {apiTransactionDate && (
+                                  <div className="flex items-start justify-between gap-3">
+                                    <span className="text-[9px] text-slate-600">
+                                      Transaction date
+                                    </span>
+
+                                    <span className="max-w-[65%] break-all text-right font-mono text-[9px] text-slate-300">
+                                      {
+                                        apiTransactionDate
+                                      }
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* =================================
+                              LOAN INFORMATION
+                          ================================= */}
+
+                          {apiLoan && (
+                            <div className="mt-3">
+                              <p className="mb-1.5 text-[9px] font-medium uppercase tracking-[0.12em] text-slate-600">
+                                Loan returned by API
+                              </p>
+
+                              <pre
+                                className="
+                                  max-h-48 overflow-auto
+                                  whitespace-pre-wrap break-words
+                                  rounded-xl
+                                  border border-slate-800/50
+                                  bg-black/30
+                                  p-2.5
+                                  text-[9px]
+                                  leading-4
+                                  text-slate-500
+                                "
+                              >
+                                {serializeValue(
+                                  apiLoan,
+                                )}
+                              </pre>
+                            </div>
+                          )}
+
+                          {/* =================================
+                              SAVINGS INFORMATION
+                          ================================= */}
+
+                          {apiSavingsAccount && (
+                            <div className="mt-3">
+                              <p className="mb-1.5 text-[9px] font-medium uppercase tracking-[0.12em] text-slate-600">
+                                Savings account returned by API
+                              </p>
+
+                              <pre
+                                className="
+                                  max-h-48 overflow-auto
+                                  whitespace-pre-wrap break-words
+                                  rounded-xl
+                                  border border-slate-800/50
+                                  bg-black/30
+                                  p-2.5
+                                  text-[9px]
+                                  leading-4
+                                  text-slate-500
+                                "
+                              >
+                                {serializeValue(
+                                  apiSavingsAccount,
+                                )}
+                              </pre>
+                            </div>
+                          )}
+
+                          {/* =================================
+                              RAW API RESPONSE
+                          ================================= */}
+
+                          <details className="mt-3">
+                            <summary
+                              className="
+                                flex cursor-pointer
+                                items-center gap-2
+                                text-[9px]
+                                font-medium
+                                uppercase
+                                tracking-[0.1em]
+                                text-blue-400/70
+                              "
+                            >
+                              <FileSearch
+                                size={11}
+                              />
+
+                              Show full API diagnostic
+                            </summary>
+
+                            <div className="mt-2 space-y-2">
+                              <div>
+                                <p className="mb-1 text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                                  API endpoint
+                                </p>
+
+                                <p className="rounded-lg bg-black/30 p-2 font-mono text-[9px] text-slate-500">
+                                  POST{" "}
+                                  {
+                                    PROCESS_URL
+                                  }
+                                </p>
+                              </div>
+
+                              <div>
+                                <p className="mb-1 text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                                  HTTP status
+                                </p>
+
+                                <p className="rounded-lg bg-black/30 p-2 font-mono text-[9px] text-slate-500">
+                                  {item.httpStatus ??
+                                    "No response"}
+                                </p>
+                              </div>
+
+                              <div>
+                                <p className="mb-1 text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                                  Full server response
+                                </p>
+
+                                <pre
+                                  className="
+                                    max-h-72
+                                    overflow-auto
+                                    whitespace-pre-wrap
+                                    break-words
+                                    rounded-xl
+                                    bg-black/40
+                                    p-2.5
+                                    text-[9px]
+                                    leading-4
+                                    text-slate-500
+                                  "
+                                >
+                                  {serializeValue(
+                                    item.response,
+                                  )}
+                                </pre>
+                              </div>
+
+                              {/* =========================
+                                  RAW SMS
+                              ========================= */}
+
+                              <div>
+                                <p className="mb-1 text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                                  Raw Android SMS
+                                </p>
+
+                                <pre
+                                  className="
+                                    max-h-48
+                                    overflow-auto
+                                    whitespace-pre-wrap
+                                    break-words
+                                    rounded-xl
+                                    bg-black/40
+                                    p-2.5
+                                    text-[9px]
+                                    leading-4
+                                    text-slate-500
+                                  "
+                                >
+                                  {serializeValue(
+                                    {
+                                      id:
+                                        item.sms
+                                          .id,
+
+                                      address:
+                                        item.sms
+                                          .address,
+
+                                      date:
+                                        item.sms
+                                          .date,
+
+                                      dateFormatted:
+                                        formatFullDateTime(
+                                          item.sms
+                                            .date,
+                                        ),
+
+                                      body:
+                                        item.sms
+                                          .body,
+                                    },
+                                  )}
+                                </pre>
+                              </div>
+
+                              {/* =========================
+                                  REQUEST PAYLOAD
+                              ========================= */}
+
+                              <div>
+                                <p className="mb-1 text-[8px] uppercase tracking-[0.1em] text-slate-700">
+                                  API request payload
+                                </p>
+
+                                <pre
+                                  className="
+                                    max-h-48
+                                    overflow-auto
+                                    whitespace-pre-wrap
+                                    break-words
+                                    rounded-xl
+                                    bg-black/40
+                                    p-2.5
+                                    text-[9px]
+                                    leading-4
+                                    text-slate-500
+                                  "
+                                >
+                                  {serializeValue(
+                                    {
+                                      smsId:
+                                        item
+                                          .sms
+                                          .id,
+
+                                      address:
+                                        item
+                                          .sms
+                                          .address,
+
+                                      body:
+                                        item
+                                          .sms
+                                          .body,
+
+                                      date:
+                                        item
+                                          .sms
+                                          .date,
+                                    },
+                                  )}
+                                </pre>
+                              </div>
+                            </div>
+                          </details>
                         </div>
                       </div>
                     </div>
@@ -1324,6 +3060,38 @@ export default function SmsInboxMonitor() {
           )}
         </div>
       )}
+
+      {/* =================================================
+          NO RESULTS
+      ================================================= */}
+
+      {status === "synced" &&
+        results.length === 0 && (
+          <div
+            className="
+              mt-4
+              rounded-2xl
+              border border-slate-800/60
+              bg-slate-950/30
+              px-3 py-4
+              text-center
+            "
+          >
+            <Inbox
+              size={18}
+              className="mx-auto text-slate-700"
+            />
+
+            <p className="mt-2 text-[11px] text-slate-500">
+              No financial candidate messages were submitted.
+            </p>
+
+            <p className="mt-1 text-[9px] text-slate-700">
+              Inbox: {stats.inbox} · Filtered:{" "}
+              {stats.filtered}
+            </p>
+          </div>
+        )}
 
       {/* =================================================
           FOOTER
