@@ -17,6 +17,24 @@ export async function GET(request: NextRequest) {
     const search =
       searchParams.get("search")?.trim() || "";
 
+    /*
+     * Loan-specific member filtering.
+     *
+     * IMPORTANT:
+     * This is opt-in.
+     *
+     * /api/members
+     *      -> returns normal member results
+     *
+     * /api/members?forLoan=true
+     *      -> returns only members eligible for a new loan
+     *
+     * This prevents other member routes from
+     * accidentally hiding members who already have loans.
+     */
+    const forLoan =
+      searchParams.get("forLoan") === "true";
+
     const pageParam =
       searchParams.get("page");
 
@@ -70,10 +88,12 @@ export async function GET(request: NextRequest) {
       ? await searchMembers(search, {
           page,
           limit,
+          forLoan,
         })
       : await getMembers({
           page,
           limit,
+          forLoan,
         });
 
     return NextResponse.json(

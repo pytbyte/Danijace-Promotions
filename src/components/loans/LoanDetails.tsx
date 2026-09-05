@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   Banknote,
   CalendarDays,
-  CircleDollarSign,
   FileText,
   ShieldCheck,
   TriangleAlert,
@@ -67,6 +66,14 @@ function formatDateTime(
   });
 }
 
+function formatRate(rate: number): string {
+  if (!Number.isFinite(rate)) {
+    return "0.00%";
+  }
+
+  return `${(rate * 100).toFixed(2)}%`;
+}
+
 function statusClass(
   status: Loan["status"],
 ): string {
@@ -82,6 +89,24 @@ function statusClass(
 
     case "cancelled":
       return "border-red-500/20 bg-red-500/10 text-red-300";
+
+    default:
+      return "border-white/10 bg-white/5 text-white/60";
+  }
+}
+
+function repaymentStatusClass(
+  status: Loan["repaymentStatus"],
+): string {
+  switch (status) {
+    case "current":
+      return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
+
+    case "defaulted":
+      return "border-red-500/20 bg-red-500/10 text-red-300";
+
+    case "completed":
+      return "border-blue-500/20 bg-blue-500/10 text-blue-300";
 
     default:
       return "border-white/10 bg-white/5 text-white/60";
@@ -134,6 +159,24 @@ export default function LoanDetails({
   loan,
   onBack,
 }: LoanDetailsProps) {
+  const totalFines = Number.isFinite(
+    loan.totalFines,
+  )
+    ? loan.totalFines
+    : 0;
+
+  const totalWaivedFines =
+    Number.isFinite(
+      loan.totalWaivedFines,
+    )
+      ? loan.totalWaivedFines
+      : 0;
+
+  const activeFineBalance = Math.max(
+    0,
+    totalFines - totalWaivedFines,
+  );
+
   return (
     <section className="space-y-4">
       {/* HEADER */}
@@ -162,10 +205,19 @@ export default function LoanDetails({
             >
               {loan.status}
             </span>
+
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[10px] font-medium capitalize ${repaymentStatusClass(
+                loan.repaymentStatus,
+              )}`}
+            >
+              {loan.repaymentStatus}
+            </span>
           </div>
 
           <p className="mt-1 text-sm text-white/50">
-            {loan.memberName} · {loan.memberNumber}
+            {loan.memberName} ·{" "}
+            {loan.memberNumber}
           </p>
         </div>
       </div>
@@ -232,10 +284,15 @@ export default function LoanDetails({
           />
 
           <InfoRow
+            label="Principal"
+            value={formatMoney(loan.principal)}
+          />
+
+          <InfoRow
             label="Interest rate"
-            value={`${(
-              loan.interestRate * 100
-            ).toFixed(2)}%`}
+            value={formatRate(
+              loan.interestRate,
+            )}
           />
 
           <InfoRow
@@ -244,9 +301,14 @@ export default function LoanDetails({
               loan.interestAmount,
             )}
           />
+
+          <InfoRow
+            label="Total due"
+            value={formatMoney(loan.totalDue)}
+          />
         </div>
 
-        {/* DATES */}
+        {/* REPAYMENT / FINE TERMS */}
         <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
           <div className="mb-2 flex items-center gap-2">
             <CalendarDays
@@ -255,7 +317,7 @@ export default function LoanDetails({
             />
 
             <h2 className="text-sm font-semibold text-white">
-              Dates
+              Repayment & Fine Terms
             </h2>
           </div>
 
@@ -274,6 +336,30 @@ export default function LoanDetails({
           />
 
           <InfoRow
+            label="Repayment date"
+            value={formatDate(
+              loan.repaymentDate,
+            )}
+          />
+
+          <InfoRow
+            label="Loan end date"
+            value={formatDate(loan.endDate)}
+          />
+
+          <InfoRow
+            label="Repayment cycle"
+            value={`${loan.repaymentCycleDays} days`}
+          />
+
+          <InfoRow
+            label="Fine rate"
+            value={`${formatRate(
+              loan.fineRate,
+            )} per completed cycle`}
+          />
+
+          <InfoRow
             label="Fine status"
             value={
               <span className="capitalize">
@@ -283,25 +369,21 @@ export default function LoanDetails({
           />
 
           <InfoRow
-            label="Daily fine"
+            label="Total fines"
+            value={formatMoney(totalFines)}
+          />
+
+          <InfoRow
+            label="Waived fines"
             value={formatMoney(
-              loan.dailyFine,
+              totalWaivedFines,
             )}
           />
 
           <InfoRow
-            label="Fine source"
-            value={
-              <span className="capitalize">
-                {loan.fineSource}
-              </span>
-            }
-          />
-
-          <InfoRow
-            label="Total fines"
+            label="Active fine balance"
             value={formatMoney(
-              loan.totalFines,
+              activeFineBalance,
             )}
           />
         </div>
@@ -411,7 +493,7 @@ export default function LoanDetails({
           </h2>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <div className="rounded-xl bg-black/20 p-3">
             <p className="text-xs text-white/40">
               Total due
@@ -434,6 +516,16 @@ export default function LoanDetails({
 
           <div className="rounded-xl bg-black/20 p-3">
             <p className="text-xs text-white/40">
+              Fines
+            </p>
+
+            <p className="mt-1 font-semibold text-white">
+              {formatMoney(activeFineBalance)}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-black/20 p-3">
+            <p className="text-xs text-white/40">
               Outstanding
             </p>
 
@@ -445,17 +537,38 @@ export default function LoanDetails({
           </div>
         </div>
 
-        {loan.totalFines > 0 && (
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-300">
-            <TriangleAlert size={16} />
+        {activeFineBalance > 0 && (
+          <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-300">
+            <TriangleAlert
+              size={16}
+              className="mt-0.5 shrink-0"
+            />
 
-            <span>
-              This loan has{" "}
-              {formatMoney(
-                loan.totalFines,
-              )}{" "}
-              in fines.
-            </span>
+            <div>
+              <p>
+                This loan has{" "}
+                {formatMoney(
+                  activeFineBalance,
+                )}{" "}
+                in active fines.
+              </p>
+
+              <p className="mt-1 text-xs text-amber-300/70">
+                Fines are assessed once per
+                completed{" "}
+                {loan.repaymentCycleDays}-day
+                repayment cycle and are calculated
+                from core outstanding balance.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {loan.repaymentStatus ===
+          "defaulted" && (
+          <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200">
+            This loan is currently marked as
+            defaulted.
           </div>
         )}
       </div>

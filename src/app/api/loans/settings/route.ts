@@ -118,7 +118,8 @@ const ALLOWED_FIELDS = [
   "regularMinimumSavings",
   "regularSavingsMultiplier",
   "repaymentGraceDays",
-  "defaultDailyFine",
+  "repaymentCycleDays",
+  "fineRate",
   "emergencyLoansEnabled",
   "regularLoansEnabled",
 ] as const;
@@ -213,6 +214,9 @@ function isClientError(
     "whole number",
     "true or false",
     "zero or greater",
+    "cycle",
+    "interest",
+    "multiplier",
   ];
 
   return knownTerms.some(

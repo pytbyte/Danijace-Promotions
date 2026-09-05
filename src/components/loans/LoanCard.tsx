@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -133,6 +134,26 @@ function getInitials(name: string): string {
 }
 
 /* =========================================================
+   FINE HELPERS
+========================================================= */
+
+function formatFineRate(rate: number): string {
+  if (!Number.isFinite(rate) || rate < 0) {
+    return "0%";
+  }
+
+  return `${(rate * 100).toFixed(2).replace(/\.00$/, "")}%`;
+}
+
+function formatCycleDays(days: number): string {
+  if (!Number.isInteger(days) || days <= 0) {
+    return "7 days";
+  }
+
+  return `${days} ${days === 1 ? "day" : "days"}`;
+}
+
+/* =========================================================
    COMPONENT
 ========================================================= */
 
@@ -156,6 +177,12 @@ export default function LoanCard({
   const totalFines = Number.isFinite(loan.totalFines)
     ? Math.max(0, loan.totalFines)
     : 0;
+
+  const fineRate = formatFineRate(loan.fineRate);
+
+  const repaymentCycle = formatCycleDays(
+    loan.repaymentCycleDays,
+  );
 
   const isRepayable =
     loan.status === "active" &&
@@ -522,9 +549,6 @@ export default function LoanCard({
         <div className="px-5 pb-4">
           <div
             className="
-              flex
-              items-center
-              justify-between
               rounded-2xl
               border
               border-amber-300/40
@@ -534,25 +558,67 @@ export default function LoanCard({
               dark:border-amber-500/20
             "
           >
-            <div className="flex min-w-0 items-center gap-2.5">
-              <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
 
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-foreground">
-                  Fines
-                </p>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-foreground">
+                    Fines
+                  </p>
 
-                <p className="text-[11px] text-muted-foreground">
-                  {loan.fineStatus === "stopped"
-                    ? "Future fines stopped"
-                    : `KES ${loan.dailyFine}/day`}
-                </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {loan.fineStatus === "stopped"
+                      ? `Future fines stopped · ${fineRate} per ${repaymentCycle} cycle`
+                      : `${fineRate} per completed ${repaymentCycle} cycle`}
+                  </p>
+                </div>
               </div>
-            </div>
 
-            <span className="shrink-0 text-sm font-semibold text-amber-700 dark:text-amber-400">
-              {formatKES(totalFines)}
-            </span>
+              <span className="shrink-0 text-sm font-semibold text-amber-700 dark:text-amber-400">
+                {formatKES(totalFines)}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================
+          FINE POLICY
+      ====================================================== */}
+
+      {totalFines <= 0 && (
+        <div className="px-5 pb-4">
+          <div
+            className="
+              flex
+              items-center
+              gap-2.5
+              rounded-2xl
+              border
+              border-sky-200/50
+              bg-sky-500/5
+              px-3.5
+              py-3
+              dark:border-sky-900/25
+              dark:bg-sky-950/20
+            "
+          >
+            <ShieldAlert className="h-4 w-4 shrink-0 text-sky-600 dark:text-sky-400" />
+
+            <p className="text-[11px] text-muted-foreground">
+              Fine policy:{" "}
+              <span className="font-semibold text-foreground">
+                {fineRate}
+              </span>{" "}
+              per completed{" "}
+              <span className="font-semibold text-foreground">
+                {repaymentCycle}
+              </span>{" "}
+              repayment cycle.
+              {loan.fineStatus === "stopped" &&
+                " Future fines are stopped."}
+            </p>
           </div>
         </div>
       )}

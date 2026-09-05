@@ -59,6 +59,16 @@ const menuItems: MenuItem[] = [
     href: "/dashboard",
   },
   {
+    label: "Summary",
+    icon: (
+      <LayoutDashboard
+        size={18}
+        strokeWidth={1.8}
+      />
+    ),
+    href: "/dashboard/summery",
+  },
+  {
     label: "Members",
     icon: (
       <Users

@@ -90,6 +90,11 @@ const FUTURE_SMS_TOLERANCE_MS =
  * We do NOT automatically reject old SMS here because
  * legitimate old bank messages may be encountered when
  * the foreground inbox is first read.
+ *
+ * The actual financial applicability of a loan SMS is
+ * determined by the loan repayment service using the
+ * bank transaction timestamp versus the loan
+ * disbursement timestamp.
  */
 const OLD_SMS_WARNING_MS =
   30 * 24 * 60 * 60 * 1000;
@@ -642,6 +647,66 @@ export async function POST(
       getErrorMessage(
         error,
       );
+
+    /* =====================================================
+       SMS BEFORE LOAN DISBURSEMENT
+    ===================================================== */
+
+    /**
+     * This is a valid business decision, NOT a server
+     * failure.
+     *
+     * The SMS may be perfectly valid and may contain a
+     * genuine bank transaction, but that transaction
+     * happened at or before the disbursement of the loan
+     * currently being considered.
+     *
+     * Rule:
+     *
+     * transactionDate > disbursementDate → allowed
+     *
+     * transactionDate <= disbursementDate → ignored
+     *
+     * This specifically protects against old bank SMS
+     * messages being attached to newly created loans.
+     *
+     * IMPORTANT:
+     * Do not classify this as a duplicate.
+     * Do not return HTTP 500.
+     * Do not retry it.
+     */
+    if (
+      error instanceof Error &&
+      error.message ===
+        "SMS_REPAYMENT_BEFORE_DISBURSEMENT"
+    ) {
+      return response(
+        {
+          status:
+            "ignored" satisfies ApiStatus,
+
+          processed:
+            false,
+
+          financialChange:
+            false,
+
+          reason:
+            "sms_before_loan_disbursement",
+
+          message:
+            "SMS repayment predates or matches the loan disbursement timestamp and was not recorded.",
+
+          smsId,
+
+          parsed:
+            parsedDiagnostic,
+
+          oldSms,
+        },
+        200,
+      );
+    }
 
     /* =====================================================
        DUPLICATE DETECTION

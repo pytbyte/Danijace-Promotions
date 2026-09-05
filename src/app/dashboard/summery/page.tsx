@@ -3,15 +3,15 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 
 import {
+  AlertCircle,
   ArrowRight,
   Bell,
-  Eye,
-  EyeOff,
   FileText,
   HandCoins,
   RefreshCw,
@@ -19,8 +19,38 @@ import {
   Wallet,
 } from "lucide-react";
 
+import { useRouter } from "next/navigation";
+
 import SmsInboxMonitor from "@/components/sms/SmsInboxMonitor";
 import TopBar from "@/components/dashboard/TopBar";
+
+/* =========================================================
+   CONSTANTS
+========================================================= */
+
+const REQUEST_TIMEOUT_MS = 15_000;
+
+const ACTIVE_LOAN_STATUSES = new Set([
+  "active",
+  "approved",
+  "disbursed",
+  "running",
+  "open",
+]);
+
+const DEFAULT_STATS: DashboardStats = {
+  members: 0,
+  activeMembers: 0,
+
+  savings: 0,
+  deposits: 0,
+  withdrawals: 0,
+  reversals: 0,
+
+  loans: 0,
+  outstandingLoans: 0,
+  defaulters: 0,
+};
 
 /* =========================================================
    TYPES
@@ -38,8 +68,6 @@ type DashboardStats = {
   loans: number;
   outstandingLoans: number;
   defaulters: number;
-
-  notifications: number;
 };
 
 type DashboardActivity = {
@@ -47,20 +75,18 @@ type DashboardActivity = {
   title: string;
   description: string;
   time: string;
-  type:
-    | "member"
-    | "saving"
-    | "loan"
-    | "notification";
+  type: "member" | "saving" | "loan";
+  timestamp: number;
 };
 
 type SavingsSummary = {
   totalBalance?: unknown;
   totalDeposits?: unknown;
 
-  /*
-   * Backend/domain name remains "totalAdjustments".
-   * UI presents this as "Withdrawals".
+  /**
+   * IMPORTANT:
+   * The backend/domain field remains totalAdjustments.
+   * The dashboard displays this as withdrawals.
    */
   totalAdjustments?: unknown;
 
@@ -72,6 +98,7 @@ type ApiResponse<T = unknown> = {
   success?: boolean;
   data?: T;
   error?: string;
+  message?: string;
 };
 
 type MemberRecord = {
@@ -112,58 +139,57 @@ type LoanRecord = {
   loanNumber?: string;
 };
 
-type NotificationRecord = {
-  id?: string;
-  _id?: string;
+type FetchResult<T> = {
+  ok: boolean;
+  data: T | null;
+  error: string | null;
+  status: number | null;
+};
 
-  title?: string;
-  message?: string;
-  description?: string;
-
-  createdAt?: string;
-  updatedAt?: string;
-
-  read?: boolean;
-  status?: string;
+type DashboardModuleFailure = {
+  module: "Savings" | "Members" | "Loans";
+  endpoint: string;
+  error: string;
+  status: number | null;
 };
 
 /* =========================================================
-   DEFAULTS
+   SAFE NUMBER
 ========================================================= */
 
-const DEFAULT_STATS: DashboardStats = {
-  members: 0,
-  activeMembers: 0,
-
-  savings: 0,
-  deposits: 0,
-  withdrawals: 0,
-  reversals: 0,
-
-  loans: 0,
-  outstandingLoans: 0,
-  defaulters: 0,
-
-  notifications: 0,
-};
-
-/* =========================================================
-   SAFE HELPERS
-========================================================= */
-
-function safeNumber(value: unknown): number {
+function safeNumber(
+  value: unknown,
+): number {
   if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
+    return Number.isFinite(value)
+      ? value
+      : 0;
   }
 
   if (typeof value === "string") {
-    const parsed = Number(value);
+    const normalized =
+      value
+        .replace(/,/g, "")
+        .trim();
 
-    return Number.isFinite(parsed) ? parsed : 0;
+    if (!normalized) {
+      return 0;
+    }
+
+    const parsed =
+      Number(normalized);
+
+    return Number.isFinite(parsed)
+      ? parsed
+      : 0;
   }
 
   return 0;
 }
+
+/* =========================================================
+   SAFE ID
+========================================================= */
 
 function getId(
   item: {
@@ -172,8 +198,16 @@ function getId(
   },
   fallback: string,
 ): string {
-  return item.id || item._id || fallback;
+  return (
+    item.id ||
+    item._id ||
+    fallback
+  );
 }
+
+/* =========================================================
+   SAFE DATE
+========================================================= */
 
 function getDate(
   item: {
@@ -181,58 +215,132 @@ function getDate(
     updatedAt?: string;
   },
 ): string {
-  return item.createdAt || item.updatedAt || "";
+  return (
+    item.createdAt ||
+    item.updatedAt ||
+    ""
+  );
 }
 
-function formatRelativeTime(value: string): string {
+/* =========================================================
+   TIMESTAMP
+========================================================= */
+
+function getTimestamp(
+  value: string,
+): number {
   if (!value) {
-    return "";
+    return 0;
   }
 
-  const timestamp = new Date(value).getTime();
+  const timestamp =
+    new Date(value).getTime();
 
-  if (!Number.isFinite(timestamp)) {
-    return "";
+  return Number.isFinite(timestamp)
+    ? timestamp
+    : 0;
+}
+
+/* =========================================================
+   RELATIVE TIME
+========================================================= */
+
+function formatRelativeTime(
+  value: string,
+): string {
+  const timestamp =
+    getTimestamp(value);
+
+  if (!timestamp) {
+    return "Unknown time";
   }
 
-  const difference = Math.max(
-    0,
-    Date.now() - timestamp,
-  );
+  const difference =
+    Date.now() - timestamp;
 
-  const seconds = Math.floor(
-    difference / 1000,
-  );
+  /*
+   * Protect against future timestamps.
+   */
+  if (difference < 0) {
+    const futureSeconds =
+      Math.floor(
+        Math.abs(difference) /
+          1000,
+      );
+
+    if (futureSeconds < 60) {
+      return "Just now";
+    }
+
+    const futureMinutes =
+      Math.floor(
+        futureSeconds / 60,
+      );
+
+    if (futureMinutes < 60) {
+      return `In ${futureMinutes}m`;
+    }
+
+    const futureHours =
+      Math.floor(
+        futureMinutes / 60,
+      );
+
+    if (futureHours < 24) {
+      return `In ${futureHours}h`;
+    }
+
+    return new Date(
+      timestamp,
+    ).toLocaleDateString(
+      "en-KE",
+      {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      },
+    );
+  }
+
+  const seconds =
+    Math.floor(
+      difference / 1000,
+    );
 
   if (seconds < 60) {
     return "Just now";
   }
 
-  const minutes = Math.floor(
-    seconds / 60,
-  );
+  const minutes =
+    Math.floor(
+      seconds / 60,
+    );
 
   if (minutes < 60) {
     return `${minutes}m ago`;
   }
 
-  const hours = Math.floor(
-    minutes / 60,
-  );
+  const hours =
+    Math.floor(
+      minutes / 60,
+    );
 
   if (hours < 24) {
     return `${hours}h ago`;
   }
 
-  const days = Math.floor(
-    hours / 24,
-  );
+  const days =
+    Math.floor(
+      hours / 24,
+    );
 
   if (days < 7) {
     return `${days}d ago`;
   }
 
-  return new Date(timestamp).toLocaleDateString(
+  return new Date(
+    timestamp,
+  ).toLocaleDateString(
     "en-KE",
     {
       day: "numeric",
@@ -242,45 +350,151 @@ function formatRelativeTime(value: string): string {
   );
 }
 
-function formatCurrency(value: number): string {
-  return `KES ${safeNumber(value).toLocaleString(
-    "en-KE",
-    {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    },
-  )}`;
+/* =========================================================
+   CURRENCY
+========================================================= */
+
+function formatCurrency(
+  value: number,
+): string {
+  return `KES ${safeNumber(
+    value,
+  ).toLocaleString("en-KE", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })}`;
 }
 
-function extractRecords<T>(
-  result: ApiResponse,
-): T[] {
-  const data = result.data;
+/* =========================================================
+   MEMBER NAME
+========================================================= */
 
-  if (Array.isArray(data)) {
-    return data as T[];
+function getMemberName(
+  member: MemberRecord,
+): string {
+  return (
+    member.name ||
+    member.fullName ||
+    [
+      member.firstName,
+      member.middleName,
+      member.lastName,
+    ]
+      .filter(Boolean)
+      .join(" ") ||
+    "Member"
+  );
+}
+
+/* =========================================================
+   STATUS
+========================================================= */
+
+function normalizeStatus(
+  value: unknown,
+): string {
+  return typeof value === "string"
+    ? value
+        .trim()
+        .toLowerCase()
+    : "";
+}
+
+/* =========================================================
+   ACTIVE LOAN
+========================================================= */
+
+function isActiveLoan(
+  loan: LoanRecord,
+): boolean {
+  const status =
+    normalizeStatus(
+      loan.status ||
+        loan.loanStatus,
+    );
+
+  return ACTIVE_LOAN_STATUSES.has(
+    status,
+  );
+}
+
+/* =========================================================
+   DEFAULTER
+========================================================= */
+
+function isDefaulter(
+  loan: LoanRecord,
+): boolean {
+  const status =
+    normalizeStatus(
+      loan.status ||
+        loan.loanStatus,
+    );
+
+  return [
+    "default",
+    "defaulted",
+    "overdue",
+    "defaulter",
+  ].includes(status);
+}
+
+/* =========================================================
+   RECORD EXTRACTION
+========================================================= */
+
+function extractRecords<T>(
+  result: unknown,
+): T[] {
+  if (Array.isArray(result)) {
+    return result as T[];
   }
 
   if (
-    data &&
-    typeof data === "object"
+    result &&
+    typeof result === "object"
   ) {
-    const recordData =
-      data as Record<string, unknown>;
+    const data =
+      result as Record<
+        string,
+        unknown
+      >;
 
     const candidates = [
-      recordData.members,
-      recordData.loans,
-      recordData.notifications,
-      recordData.transactions,
-      recordData.items,
-      recordData.results,
-      recordData.data,
+      data.members,
+      data.loans,
+      data.transactions,
+      data.items,
+      data.results,
+      data.data,
     ];
 
     for (const candidate of candidates) {
-      if (Array.isArray(candidate)) {
+      if (
+        Array.isArray(candidate)
+      ) {
         return candidate as T[];
+      }
+
+      /*
+       * Handle one additional
+       * nested response level.
+       */
+      if (
+        candidate &&
+        typeof candidate ===
+          "object"
+      ) {
+        const nested =
+          extractRecords<T>(
+            candidate,
+          );
+
+        if (
+          nested.length > 0
+        ) {
+          return nested;
+        }
       }
     }
   }
@@ -289,17 +503,222 @@ function extractRecords<T>(
 }
 
 /* =========================================================
-   DASHBOARD
+   FETCH JSON
+========================================================= */
+
+async function fetchJson<T>(
+  url: string,
+  signal: AbortSignal,
+): Promise<FetchResult<T>> {
+  try {
+    const response =
+      await fetch(url, {
+        method: "GET",
+        cache: "no-store",
+        credentials:
+          "same-origin",
+        signal,
+        headers: {
+          Accept:
+            "application/json",
+        },
+      });
+
+    const contentType =
+      response.headers.get(
+        "content-type",
+      ) || "";
+
+    /*
+     * A Next.js 404/500 page may be
+     * returned as HTML.
+     *
+     * Expose the actual HTTP status
+     * instead of hiding it behind a
+     * JSON parsing error.
+     */
+    if (
+      !contentType.includes(
+        "application/json",
+      )
+    ) {
+      return {
+        ok: false,
+        data: null,
+        error:
+          response.status === 404
+            ? `Endpoint not found: ${url}`
+            : `Unexpected response from ${url} (HTTP ${response.status}).`,
+        status:
+          response.status,
+      };
+    }
+
+    let json:
+      | ApiResponse<T>
+      | T
+      | null = null;
+
+    try {
+      json =
+        (await response.json()) as
+          | ApiResponse<T>
+          | T;
+    } catch {
+      return {
+        ok: false,
+        data: null,
+        error:
+          `Invalid JSON response from ${url}.`,
+        status:
+          response.status,
+      };
+    }
+
+    if (!response.ok) {
+      const errorBody =
+        json &&
+        typeof json === "object" &&
+        !Array.isArray(json)
+          ? (json as ApiResponse<T>)
+          : null;
+
+      return {
+        ok: false,
+        data: null,
+        error:
+          errorBody?.error ||
+          errorBody?.message ||
+          `Request failed with HTTP ${response.status}.`,
+        status:
+          response.status,
+      };
+    }
+
+    /*
+     * Support standard API responses:
+     *
+     * {
+     *   success: true,
+     *   data: ...
+     * }
+     */
+    if (
+      json &&
+      typeof json === "object" &&
+      !Array.isArray(json)
+    ) {
+      const responseBody =
+        json as ApiResponse<T>;
+
+      if (
+        responseBody.success ===
+        false
+      ) {
+        return {
+          ok: false,
+          data: null,
+          error:
+            responseBody.error ||
+            responseBody.message ||
+            "The server rejected the request.",
+          status:
+            response.status,
+        };
+      }
+
+      if (
+        responseBody.data !==
+        undefined
+      ) {
+        return {
+          ok: true,
+          data:
+            responseBody.data,
+          error: null,
+          status:
+            response.status,
+        };
+      }
+    }
+
+    /*
+     * Also support APIs that return
+     * the payload directly.
+     *
+     * Example:
+     *
+     * [...]
+     *
+     * or
+     *
+     * {
+     *   totalBalance: 5000
+     * }
+     */
+    return {
+      ok: true,
+      data: json as T,
+      error: null,
+      status:
+        response.status,
+    };
+  } catch (error) {
+    if (
+      error instanceof
+        DOMException &&
+      error.name ===
+        "AbortError"
+    ) {
+      return {
+        ok: false,
+        data: null,
+        error:
+          "Request cancelled.",
+        status: null,
+      };
+    }
+
+    return {
+      ok: false,
+      data: null,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Network request failed.",
+      status: null,
+    };
+  }
+}
+
+/* =========================================================
+   DASHBOARD PAGE
 ========================================================= */
 
 export default function DashboardPage() {
+  const router =
+    useRouter();
+
+  const requestController =
+    useRef<AbortController | null>(
+      null,
+    );
+
+  const mountedRef =
+    useRef(false);
+
+  const requestSequence =
+    useRef(0);
+
   const [stats, setStats] =
     useState<DashboardStats>(
       DEFAULT_STATS,
     );
 
   const [activities, setActivities] =
-    useState<DashboardActivity[]>([]);
+    useState<
+      DashboardActivity[]
+    >([]);
 
   const [loading, setLoading] =
     useState(true);
@@ -307,8 +726,17 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] =
     useState(false);
 
-  const [mounted, setMounted] =
-    useState(false);
+  const [error, setError] =
+    useState<string | null>(
+      null,
+    );
+
+  const [
+    moduleFailures,
+    setModuleFailures,
+  ] = useState<
+    DashboardModuleFailure[]
+  >([]);
 
   /* =======================================================
      LOAD DASHBOARD
@@ -316,532 +744,585 @@ export default function DashboardPage() {
 
   const loadDashboard =
     useCallback(
-      async (isRefresh = false) => {
+      async (
+        isRefresh = false,
+      ) => {
+        /*
+         * Cancel any previous
+         * dashboard request.
+         */
+        requestController.current?.abort();
+
+        const controller =
+          new AbortController();
+
+        requestController.current =
+          controller;
+
+        const sequence =
+          ++requestSequence.current;
+
+        const timeout =
+          window.setTimeout(
+            () => {
+              controller.abort();
+            },
+            REQUEST_TIMEOUT_MS,
+          );
+
         if (isRefresh) {
           setRefreshing(true);
         } else {
           setLoading(true);
         }
 
+        setError(null);
+        setModuleFailures(
+          [],
+        );
+
         try {
+          /*
+           * GEO-SHUA dashboard modules.
+           *
+           * Notifications intentionally
+           * removed.
+           */
           const [
-            savingsResponse,
-            membersResponse,
-            loansResponse,
-            notificationsResponse,
-          ] = await Promise.allSettled([
-            fetch(
-              "/api/savings/summary",
-              {
-                method: "GET",
-                cache: "no-store",
-                credentials: "same-origin",
-                headers: {
-                  Accept:
-                    "application/json",
-                },
-              },
-            ),
+            savingsResult,
+            membersResult,
+            loansResult,
+          ] =
+            await Promise.all([
+              fetchJson<SavingsSummary>(
+                "/api/savings/summary",
+                controller.signal,
+              ),
 
-            fetch("/api/members", {
-              method: "GET",
-              cache: "no-store",
-              credentials: "same-origin",
-              headers: {
-                Accept:
-                  "application/json",
-              },
-            }),
+              fetchJson<
+                MemberRecord[]
+              >(
+                "/api/members",
+                controller.signal,
+              ),
 
-            fetch("/api/loans", {
-              method: "GET",
-              cache: "no-store",
-              credentials: "same-origin",
-              headers: {
-                Accept:
-                  "application/json",
-              },
-            }),
+              fetchJson<
+                LoanRecord[]
+              >(
+                "/api/loans",
+                controller.signal,
+              ),
+            ]);
 
-            fetch(
-              "/api/notifications",
-              {
-                method: "GET",
-                cache: "no-store",
-                credentials:
-                  "same-origin",
-                headers: {
-                  Accept:
-                    "application/json",
-                },
-              },
-            ),
-          ]);
-
-          /* =================================================
-             SAVINGS
-          ================================================= */
-
-          let savings: SavingsSummary = {};
-
+          /*
+           * Ignore stale requests.
+           */
           if (
-            savingsResponse.status ===
-            "fulfilled"
+            controller.signal
+              .aborted ||
+            !mountedRef.current ||
+            sequence !==
+              requestSequence.current
           ) {
-            try {
-              const response =
-                savingsResponse.value;
-
-              const json =
-                (await response.json()) as ApiResponse<SavingsSummary>;
-
-              if (
-                response.ok &&
-                json.success !== false
-              ) {
-                savings =
-                  json.data || {};
-              }
-            } catch {
-              savings = {};
-            }
+            return;
           }
 
           /* =================================================
-             MEMBERS
+             MODULE RESULTS
           ================================================= */
 
-          let members: MemberRecord[] = [];
+          const moduleResults = [
+            {
+              module:
+                "Savings" as const,
+              endpoint:
+                "/api/savings/summary",
+              result:
+                savingsResult,
+            },
+
+            {
+              module:
+                "Members" as const,
+              endpoint:
+                "/api/members",
+              result:
+                membersResult,
+            },
+
+            {
+              module:
+                "Loans" as const,
+              endpoint:
+                "/api/loans",
+              result:
+                loansResult,
+            },
+          ];
+
+          const failures: DashboardModuleFailure[] =
+            moduleResults
+              .filter(
+                ({
+                  result,
+                }) =>
+                  !result.ok,
+              )
+              .map(
+                ({
+                  module,
+                  endpoint,
+                  result,
+                }) => ({
+                  module,
+                  endpoint,
+                  error:
+                    result.error ||
+                    "Unknown API error.",
+                  status:
+                    result.status,
+                }),
+              );
+
+          setModuleFailures(
+            failures,
+          );
 
           if (
-            membersResponse.status ===
-            "fulfilled"
+            failures.length > 0
           ) {
-            try {
-              const response =
-                membersResponse.value;
-
-              const json =
-                (await response.json()) as ApiResponse;
-
-              if (
-                response.ok &&
-                json.success !== false
-              ) {
-                members =
-                  extractRecords<MemberRecord>(
-                    json,
-                  );
-              }
-            } catch {
-              members = [];
-            }
-          }
-
-          /* =================================================
-             LOANS
-          ================================================= */
-
-          let loans: LoanRecord[] = [];
-
-          if (
-            loansResponse.status ===
-            "fulfilled"
-          ) {
-            try {
-              const response =
-                loansResponse.value;
-
-              const json =
-                (await response.json()) as ApiResponse;
-
-              if (
-                response.ok &&
-                json.success !== false
-              ) {
-                loans =
-                  extractRecords<LoanRecord>(
-                    json,
-                  );
-              }
-            } catch {
-              loans = [];
-            }
-          }
-
-          /* =================================================
-             NOTIFICATIONS
-          ================================================= */
-
-          let notifications:
-            NotificationRecord[] = [];
-
-          if (
-            notificationsResponse.status ===
-            "fulfilled"
-          ) {
-            try {
-              const response =
-                notificationsResponse.value;
-
-              const json =
-                (await response.json()) as ApiResponse;
-
-              if (
-                response.ok &&
-                json.success !== false
-              ) {
-                notifications =
-                  extractRecords<NotificationRecord>(
-                    json,
-                  );
-              }
-            } catch {
-              notifications = [];
-            }
-          }
-
-          /* =================================================
-             MEMBER STATS
-          ================================================= */
-
-          const memberCountFromSavings =
-            safeNumber(
-              savings.memberCount,
+            console.error(
+              "[GEO-SHUA Dashboard] Module failures:",
+              failures,
             );
-
-          const totalMembers =
-            members.length > 0
-              ? members.length
-              : memberCountFromSavings;
-
-          const activeMembers =
-            members.length > 0
-              ? members.filter(
-                  (member) => {
-                    if (
-                      member.isActive ===
-                      true
-                    ) {
-                      return true;
-                    }
-
-                    return (
-                      typeof member.status ===
-                        "string" &&
-                      member.status
-                        .trim()
-                        .toLowerCase() ===
-                        "active"
-                    );
-                  },
-                ).length
-              : memberCountFromSavings;
-
-          /* =================================================
-             LOAN STATS
-          ================================================= */
-
-          const loanCount =
-            loans.length;
-
-          let outstandingLoans = 0;
-          let defaulters = 0;
-
-          for (const loan of loans) {
-            const outstanding =
-              safeNumber(
-                loan.outstandingBalance ??
-                  loan.remainingBalance ??
-                  loan.balance,
-              );
-
-            outstandingLoans +=
-              Math.max(
-                0,
-                outstanding,
-              );
-
-            const status = (
-              loan.status ||
-              loan.loanStatus ||
-              ""
-            )
-              .trim()
-              .toLowerCase();
-
-            if (
-              [
-                "default",
-                "defaulted",
-                "overdue",
-                "defaulter",
-              ].includes(status)
-            ) {
-              defaulters += 1;
-            }
           }
 
           /* =================================================
-             NOTIFICATIONS
+             CURRENT DATA
           ================================================= */
 
-          const notificationCount =
-            notifications.filter(
-              (notification) => {
-                if (
-                  notification.read ===
-                  true
-                ) {
-                  return false;
+          const savings =
+            savingsResult.ok &&
+            savingsResult.data
+              ? savingsResult.data
+              : null;
+
+          const members =
+            membersResult.ok
+              ? extractRecords<MemberRecord>(
+                  membersResult.data,
+                )
+              : [];
+
+          const loans =
+            loansResult.ok
+              ? extractRecords<LoanRecord>(
+                  loansResult.data,
+                )
+              : [];
+
+          /* =================================================
+             MEMBER DATA
+          ================================================= */
+
+          let nextStats: DashboardStats;
+
+          /*
+           * Preserve previously loaded
+           * values when a module fails.
+           *
+           * This is important:
+           *
+           * failed API != zero data.
+           */
+          setStats(
+            (previousStats) => {
+              nextStats = {
+                ...previousStats,
+              };
+
+              /* ---------------------------------------------
+                 SAVINGS
+              --------------------------------------------- */
+
+              if (
+                savingsResult.ok &&
+                savings
+              ) {
+                nextStats.savings =
+                  Math.max(
+                    0,
+                    safeNumber(
+                      savings.totalBalance,
+                    ),
+                  );
+
+                nextStats.deposits =
+                  Math.max(
+                    0,
+                    safeNumber(
+                      savings.totalDeposits,
+                    ),
+                  );
+
+                /*
+                 * totalAdjustments is
+                 * the backend/domain field.
+                 */
+                nextStats.withdrawals =
+                  Math.abs(
+                    safeNumber(
+                      savings.totalAdjustments,
+                    ),
+                  );
+
+                nextStats.reversals =
+                  Math.abs(
+                    safeNumber(
+                      savings.totalReversals,
+                    ),
+                  );
+              }
+
+              /* ---------------------------------------------
+                 MEMBERS
+              --------------------------------------------- */
+
+              if (
+                membersResult.ok
+              ) {
+                const memberCountFromSavings =
+                  savings
+                    ? safeNumber(
+                        savings.memberCount,
+                      )
+                    : 0;
+
+                const totalMembers =
+                  members.length >
+                  0
+                    ? members.length
+                    : memberCountFromSavings;
+
+                const activeMembers =
+                  members.length >
+                  0
+                    ? members.filter(
+                        (
+                          member,
+                        ) => {
+                          if (
+                            member.isActive ===
+                            true
+                          ) {
+                            return true;
+                          }
+
+                          return (
+                            normalizeStatus(
+                              member.status,
+                            ) ===
+                            "active"
+                          );
+                        },
+                      ).length
+                    : memberCountFromSavings;
+
+                nextStats.members =
+                  totalMembers;
+
+                nextStats.activeMembers =
+                  Math.min(
+                    activeMembers,
+                    totalMembers,
+                  );
+              }
+
+              /* ---------------------------------------------
+                 LOANS
+              --------------------------------------------- */
+
+              if (
+                loansResult.ok
+              ) {
+                const activeLoans =
+                  loans.filter(
+                    isActiveLoan,
+                  );
+
+                nextStats.loans =
+                  activeLoans.length;
+
+                let outstandingLoans =
+                  0;
+
+                let defaulters = 0;
+
+                /*
+                 * Only active loans should
+                 * contribute to the current
+                 * outstanding portfolio.
+                 */
+                for (const loan of activeLoans) {
+                  const outstanding =
+                    Math.max(
+                      0,
+                      safeNumber(
+                        loan.outstandingBalance ??
+                          loan.remainingBalance ??
+                          loan.balance,
+                      ),
+                    );
+
+                  if (
+                    outstanding > 0
+                  ) {
+                    outstandingLoans +=
+                      outstanding;
+                  }
+
+                  if (
+                    isDefaulter(
+                      loan,
+                    )
+                  ) {
+                    defaulters += 1;
+                  }
                 }
 
-                return (
-                  notification.status
-                    ?.trim()
-                    .toLowerCase() !==
-                  "read"
-                );
-              },
-            ).length;
+                nextStats.outstandingLoans =
+                  outstandingLoans;
+
+                nextStats.defaulters =
+                  defaulters;
+              }
+
+              return nextStats;
+            },
+          );
 
           /* =================================================
-             SAVINGS FINANCIAL VALUES
+             ACTIVITY
           ================================================= */
 
-          const savingsBalance =
-            safeNumber(
-              savings.totalBalance,
-            );
+          /*
+           * Build activity only from
+           * modules that successfully
+           * returned data.
+           *
+           * Failed modules do not wipe
+           * activity generated by other
+           * modules.
+           */
+          const nextActivities: DashboardActivity[] =
+            [];
 
-          const savingsDeposits =
-            safeNumber(
-              savings.totalDeposits,
-            );
+          /* -------------------------------------------------
+             MEMBER ACTIVITY
+          ------------------------------------------------- */
 
-          const savingsWithdrawals =
-            Math.abs(
-              safeNumber(
-                savings.totalAdjustments,
-              ),
-            );
+          if (
+            membersResult.ok
+          ) {
+            members
+              .slice()
+              .sort(
+                (a, b) =>
+                  getTimestamp(
+                    getDate(b),
+                  ) -
+                  getTimestamp(
+                    getDate(a),
+                  ),
+              )
+              .slice(0, 5)
+              .forEach(
+                (
+                  member,
+                  index,
+                ) => {
+                  const date =
+                    getDate(
+                      member,
+                    );
 
-          const savingsReversals =
-            Math.abs(
-              safeNumber(
-                savings.totalReversals,
-              ),
-            );
+                  nextActivities.push(
+                    {
+                      id: `member-${getId(
+                        member,
+                        String(index),
+                      )}`,
 
-          /* =================================================
-             STATS
-          ================================================= */
+                      title:
+                        "Member activity",
 
-          setStats({
-            members: totalMembers,
-            activeMembers,
-            savings: savingsBalance,
-            deposits: savingsDeposits,
-            withdrawals:
-              savingsWithdrawals,
-            reversals:
-              savingsReversals,
-            loans: loanCount,
-            outstandingLoans,
-            defaulters,
-            notifications:
-              notificationCount,
-          });
+                      description:
+                        `${getMemberName(
+                          member,
+                        )} was recently recorded.`,
 
-          /* =================================================
-             RECENT ACTIVITY
-          ================================================= */
+                      time:
+                        formatRelativeTime(
+                          date,
+                        ),
 
-          const nextActivities: Array<
-            DashboardActivity & {
-              sortTimestamp: number;
-            }
-          > = [];
+                      type: "member",
 
-          members
-            .slice()
-            .sort(
-              (a, b) =>
-                new Date(
-                  getDate(b),
-                ).getTime() -
-                new Date(
-                  getDate(a),
-                ).getTime(),
-            )
-            .slice(0, 5)
-            .forEach(
-              (member, index) => {
-                const name =
-                  member.name ||
-                  member.fullName ||
-                  [
-                    member.firstName,
-                    member.middleName,
-                    member.lastName,
-                  ]
-                    .filter(Boolean)
-                    .join(" ") ||
-                  "Member";
-
-                const date =
-                  getDate(member);
-
-                nextActivities.push({
-                  id: `member-${getId(
-                    member,
-                    String(index),
-                  )}`,
-
-                  title:
-                    "Member activity",
-
-                  description:
-                    `${name} was recently recorded.`,
-
-                  time:
-                    formatRelativeTime(
-                      date,
-                    ),
-
-                  type: "member",
-
-                  sortTimestamp:
-                    new Date(
-                      date,
-                    ).getTime() || 0,
-                });
-              },
-            );
-
-          loans
-            .slice()
-            .sort(
-              (a, b) =>
-                new Date(
-                  getDate(b),
-                ).getTime() -
-                new Date(
-                  getDate(a),
-                ).getTime(),
-            )
-            .slice(0, 5)
-            .forEach(
-              (loan, index) => {
-                const date =
-                  getDate(loan);
-
-                nextActivities.push({
-                  id: `loan-${getId(
-                    loan,
-                    String(index),
-                  )}`,
-
-                  title:
-                    "Loan activity",
-
-                  description:
-                    loan.memberName
-                      ? `${loan.memberName} has loan activity.`
-                      : "A loan record was recently updated.",
-
-                  time:
-                    formatRelativeTime(
-                      date,
-                    ),
-
-                  type: "loan",
-
-                  sortTimestamp:
-                    new Date(
-                      date,
-                    ).getTime() || 0,
-                });
-              },
-            );
-
-          notifications
-            .slice()
-            .sort(
-              (a, b) =>
-                new Date(
-                  getDate(b),
-                ).getTime() -
-                new Date(
-                  getDate(a),
-                ).getTime(),
-            )
-            .slice(0, 5)
-            .forEach(
-              (
-                notification,
-                index,
-              ) => {
-                const date =
-                  getDate(
-                    notification,
+                      timestamp:
+                        getTimestamp(
+                          date,
+                        ),
+                    },
                   );
+                },
+              );
+          }
 
-                nextActivities.push({
-                  id: `notification-${getId(
-                    notification,
-                    String(index),
-                  )}`,
+          /* -------------------------------------------------
+             LOAN ACTIVITY
+          ------------------------------------------------- */
 
-                  title:
-                    notification.title ||
-                    "Notification",
+          if (
+            loansResult.ok
+          ) {
+            loans
+              .slice()
+              .sort(
+                (a, b) =>
+                  getTimestamp(
+                    getDate(b),
+                  ) -
+                  getTimestamp(
+                    getDate(a),
+                  ),
+              )
+              .slice(0, 5)
+              .forEach(
+                (
+                  loan,
+                  index,
+                ) => {
+                  const date =
+                    getDate(
+                      loan,
+                    );
 
-                  description:
-                    notification.message ||
-                    notification.description ||
-                    "New notification.",
+                  const status =
+                    normalizeStatus(
+                      loan.status ||
+                        loan.loanStatus,
+                    );
 
-                  time:
-                    formatRelativeTime(
-                      date,
-                    ),
+                  const title =
+                    isDefaulter(
+                      loan,
+                    )
+                      ? "Loan default"
+                      : "Loan activity";
 
-                  type:
-                    "notification",
+                  const description =
+                    loan.memberName
+                      ? `${loan.memberName} has ${
+                          status ||
+                          "loan"
+                        } activity.`
+                      : `A loan record was recently ${
+                          status ||
+                          "updated"
+                        }.`;
 
-                  sortTimestamp:
-                    new Date(
-                      date,
-                    ).getTime() || 0,
-                });
-              },
-            );
+                  nextActivities.push(
+                    {
+                      id: `loan-${getId(
+                        loan,
+                        String(index),
+                      )}`,
+
+                      title,
+
+                      description,
+
+                      time:
+                        formatRelativeTime(
+                          date,
+                        ),
+
+                      type: "loan",
+
+                      timestamp:
+                        getTimestamp(
+                          date,
+                        ),
+                    },
+                  );
+                },
+              );
+          }
+
+          /* =================================================
+             FINAL ACTIVITY
+          ================================================= */
 
           setActivities(
             nextActivities
+              .filter(
+                (activity) =>
+                  activity.timestamp >
+                  0,
+              )
               .sort(
                 (a, b) =>
-                  b.sortTimestamp -
-                  a.sortTimestamp,
+                  b.timestamp -
+                  a.timestamp,
               )
-              .slice(0, 12)
-              .map(
-                ({
-                  sortTimestamp:
-                    _sortTimestamp,
-                  ...activity
-                }) => activity,
-              ),
+              .slice(0, 12),
           );
-        } catch (error) {
+
+          /* =================================================
+             ALL MODULES FAILED
+          ================================================= */
+
+          if (
+            failures.length === 3
+          ) {
+            setError(
+              "Unable to load dashboard data. All dashboard modules failed.",
+            );
+          }
+        } catch (requestError) {
+          if (
+            requestError instanceof
+              DOMException &&
+            requestError.name ===
+              "AbortError"
+          ) {
+            return;
+          }
+
           console.error(
-            "Failed to load dashboard:",
-            error,
+            "[GEO-SHUA Dashboard] Unexpected dashboard error:",
+            requestError,
           );
+
+          if (
+            mountedRef.current
+          ) {
+            setError(
+              "Unable to load dashboard data. Please try again.",
+            );
+          }
         } finally {
-          setLoading(false);
-          setRefreshing(false);
+          window.clearTimeout(
+            timeout,
+          );
+
+          if (
+            sequence ===
+            requestSequence.current
+          ) {
+            setLoading(false);
+            setRefreshing(false);
+          }
         }
       },
       [],
@@ -852,8 +1333,17 @@ export default function DashboardPage() {
   ======================================================= */
 
   useEffect(() => {
-    setMounted(true);
+    mountedRef.current =
+      true;
+
     void loadDashboard();
+
+    return () => {
+      mountedRef.current =
+        false;
+
+      requestController.current?.abort();
+    };
   }, [loadDashboard]);
 
   /* =======================================================
@@ -863,8 +1353,8 @@ export default function DashboardPage() {
   const handleRefresh =
     useCallback(() => {
       if (
-        loading === true ||
-        refreshing === true
+        loading ||
+        refreshing
       ) {
         return;
       }
@@ -877,16 +1367,16 @@ export default function DashboardPage() {
     ]);
 
   /* =======================================================
-     HYDRATION GUARD
+     LOADING
   ======================================================= */
 
-  if (mounted === false) {
+  if (loading) {
     return (
       <main className="min-h-[100dvh] w-full overflow-x-clip bg-[#050505] text-white">
         <TopBar />
 
         <div className="w-full pt-16">
-          <div className="mx-auto w-full max-w-[1800px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+          <div className="mx-auto w-full max-w-[1800px] px-4 py-5 sm:px-6 sm:py-8 lg:px-8 lg:py-10 xl:px-10 2xl:px-12">
             <DashboardLoading />
           </div>
         </div>
@@ -906,35 +1396,75 @@ export default function DashboardPage() {
         <div className="mx-auto w-full max-w-[1800px] px-4 py-5 sm:px-6 sm:py-8 lg:px-8 lg:py-10 xl:px-10 2xl:px-12">
 
           {/* =================================================
-              MOBILE DASHBOARD
+              ERROR
           ================================================= */}
 
-          <div className="lg:hidden">
-            {loading === true ? (
-              <MobileDashboardLoading />
-            ) : (
-              <MobileDashboard
-                stats={stats}
-                activities={activities}
-                onRefresh={
+          {error && (
+            <DashboardError
+              message={error}
+              onRetry={
+                handleRefresh
+              }
+              refreshing={
+                refreshing
+              }
+            />
+          )}
+
+          {/* =================================================
+              PARTIAL FAILURE
+          ================================================= */}
+
+          {!error &&
+            moduleFailures.length >
+              0 && (
+              <DashboardPartialWarning
+                failures={
+                  moduleFailures
+                }
+                onRetry={
                   handleRefresh
                 }
                 refreshing={
-                  refreshing === true
+                  refreshing
                 }
               />
             )}
+
+          {/* =================================================
+              MOBILE
+          ================================================= */}
+
+          <div className="lg:hidden">
+            <MobileDashboard
+              stats={stats}
+              activities={
+                activities
+              }
+              onRefresh={
+                handleRefresh
+              }
+              refreshing={
+                refreshing
+              }
+            />
           </div>
 
           {/* =================================================
-              DESKTOP DASHBOARD
+              DESKTOP
           ================================================= */}
 
           <div className="hidden lg:block">
+
+            {/* HEADER */}
+
             <section className="mb-6">
               <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+
                 <div className="min-w-0">
+
                   <div className="flex items-center gap-2">
+
                     <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-yellow-500/10 text-yellow-400">
                       <FileText
                         size={17}
@@ -965,9 +1495,9 @@ export default function DashboardPage() {
                     handleRefresh
                   }
                   disabled={
-                    loading === true ||
-                    refreshing === true
+                    refreshing
                   }
+                  aria-label="Refresh dashboard"
                   className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-4 text-sm font-medium text-white/55 transition hover:border-white/[0.14] hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 lg:w-auto"
                 >
                   <RefreshCw
@@ -985,373 +1515,531 @@ export default function DashboardPage() {
               </div>
             </section>
 
-            {loading === true ? (
-              <DashboardLoading />
-            ) : (
-              <>
-                {/* =================================================
-                    STATS
-                ================================================= */}
+            {/* STATS */}
 
-                <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-                  <StatCard
-                    title="Members"
-                    value={
-                      stats.members
-                    }
-                    subtitle={`${stats.activeMembers.toLocaleString()} active`}
+            <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+
+              <StatCard
+                title="Members"
+                value={
+                  stats.members
+                }
+                subtitle={`${stats.activeMembers.toLocaleString()} active`}
+                icon={
+                  <Users
+                    size={19}
+                    strokeWidth={1.8}
+                  />
+                }
+                href="/dashboard/members"
+                onNavigate={
+                  router.push
+                }
+              />
+
+              <StatCard
+                title="Savings"
+                value={formatCurrency(
+                  stats.savings,
+                )}
+                subtitle="Current ledger balance"
+                icon={
+                  <Wallet
+                    size={19}
+                    strokeWidth={1.8}
+                  />
+                }
+                href="/dashboard/savings"
+                onNavigate={
+                  router.push
+                }
+              />
+
+              <StatCard
+                title="Loans"
+                value={
+                  stats.loans
+                }
+                subtitle={formatCurrency(
+                  stats.outstandingLoans,
+                )}
+                icon={
+                  <HandCoins
+                    size={19}
+                    strokeWidth={1.8}
+                  />
+                }
+                href="/dashboard/loans"
+                onNavigate={
+                  router.push
+                }
+              />
+
+              <StatCard
+                title="Defaulters"
+                value={
+                  stats.defaulters
+                }
+                subtitle="Members requiring attention"
+                icon={
+                  <Bell
+                    size={19}
+                    strokeWidth={1.8}
+                  />
+                }
+                href="/dashboard/loans"
+                onNavigate={
+                  router.push
+                }
+              />
+            </section>
+
+            {/* FINANCIAL BREAKDOWN */}
+
+            <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+
+              <MetricCard
+                label="Deposits"
+                value={formatCurrency(
+                  stats.deposits,
+                )}
+              />
+
+              <MetricCard
+                label="Withdrawals"
+                value={formatCurrency(
+                  stats.withdrawals,
+                )}
+              />
+
+              <MetricCard
+                label="Reversals"
+                value={formatCurrency(
+                  stats.reversals,
+                )}
+              />
+
+              <MetricCard
+                label="Net Savings"
+                value={formatCurrency(
+                  stats.savings,
+                )}
+              />
+            </section>
+
+            {/* MAIN GRID */}
+
+            <section className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
+
+              {/* RECENT ACTIVITY */}
+
+              <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
+
+                <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-4 sm:px-5">
+
+                  <div>
+                    <h2 className="text-sm font-semibold text-white">
+                      Recent Activity
+                    </h2>
+
+                    <p className="mt-1 text-xs text-white/30">
+                      Latest recorded
+                      activity
+                    </p>
+                  </div>
+
+                  <span className="flex items-center gap-1.5 rounded-lg bg-white/[0.04] px-2.5 py-1 text-[10px] text-white/25">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#1683ff]" />
+                    Live data
+                  </span>
+                </div>
+
+                {activities.length ===
+                0 ? (
+                  <EmptyActivity />
+                ) : (
+                  <div className="max-h-[300px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
+                    <div className="divide-y divide-white/[0.05]">
+                      {activities.map(
+                        (
+                          activity,
+                        ) => (
+                          <ActivityRow
+                            key={
+                              activity.id
+                            }
+                            activity={
+                              activity
+                            }
+                          />
+                        ),
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* QUICK ACCESS */}
+
+              <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
+
+                <div className="border-b border-white/[0.07] px-4 py-4 sm:px-5">
+
+                  <h2 className="text-sm font-semibold text-white">
+                    Quick Access
+                  </h2>
+
+                  <p className="mt-1 text-xs text-white/30">
+                    Core GEO-SHUA
+                    modules
+                  </p>
+                </div>
+
+                <div className="grid gap-1 p-3 sm:p-4">
+
+                  <QuickAccess
+                    label="Members"
+                    description="Manage member records"
                     icon={
                       <Users
-                        size={19}
+                        size={18}
                         strokeWidth={1.8}
                       />
                     }
                     href="/dashboard/members"
+                    onNavigate={
+                      router.push
+                    }
                   />
 
-                  <StatCard
-                    title="Savings"
-                    value={formatCurrency(
-                      stats.savings,
-                    )}
-                    subtitle="Current ledger balance"
+                  <QuickAccess
+                    label="Savings"
+                    description="View savings records"
                     icon={
                       <Wallet
-                        size={19}
+                        size={18}
                         strokeWidth={1.8}
                       />
                     }
                     href="/dashboard/savings"
+                    onNavigate={
+                      router.push
+                    }
                   />
 
-                  <StatCard
-                    title="Loans"
-                    value={
-                      stats.loans
-                    }
-                    subtitle={formatCurrency(
-                      stats.outstandingLoans,
-                    )}
+                  <QuickAccess
+                    label="Loans"
+                    description="Manage loans and repayments"
                     icon={
                       <HandCoins
-                        size={19}
+                        size={18}
                         strokeWidth={1.8}
                       />
                     }
                     href="/dashboard/loans"
-                  />
-
-                  <StatCard
-                    title="Defaulters"
-                    value={
-                      stats.defaulters
-                    }
-                    subtitle="Members requiring attention"
-                    icon={
-                      <Bell
-                        size={19}
-                        strokeWidth={1.8}
-                      />
-                    }
-                    href="/dashboard/loans"
-                  />
-                </section>
-
-                {/* =================================================
-                    FINANCIAL BREAKDOWN
-                ================================================= */}
-
-                <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <MetricCard
-                    label="Deposits"
-                    value={formatCurrency(
-                      stats.deposits,
-                    )}
-                  />
-
-                  <MetricCard
-                    label="Withdrawals"
-                    value={formatCurrency(
-                      stats.withdrawals,
-                    )}
-                  />
-
-                  <MetricCard
-                    label="Reversals"
-                    value={formatCurrency(
-                      stats.reversals,
-                    )}
-                  />
-
-                  <MetricCard
-                    label="Net Savings"
-                    value={formatCurrency(
-                      stats.savings,
-                    )}
-                  />
-                </section>
-
-                {/* =================================================
-                    MAIN GRID
-                ================================================= */}
-
-                <section className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
-                  {/* RECENT ACTIVITY */}
-
-                  <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
-                    <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-4 sm:px-5">
-                      <div>
-                        <h2 className="text-sm font-semibold text-white">
-                          Recent Activity
-                        </h2>
-
-                        <p className="mt-1 text-xs text-white/30">
-                          Latest recorded
-                          activity
-                        </p>
-                      </div>
-
-                      <span className="rounded-lg bg-white/[0.04] px-2.5 py-1 text-[10px] text-white/25">
-                        Live data
-                      </span>
-                    </div>
-
-                    {activities.length ===
-                    0 ? (
-                      <div className="flex min-h-[180px] items-center justify-center p-6">
-                        <div className="text-center">
-                          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-white/25">
-                            <Bell
-                              size={19}
-                              strokeWidth={1.5}
-                            />
-                          </div>
-
-                          <p className="mt-4 text-sm font-medium text-white/45">
-                            No recent
-                            activity
-                          </p>
-
-                          <p className="mt-2 text-xs text-white/25">
-                            New records
-                            will appear
-                            here
-                            automatically.
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="max-h-[300px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
-                        <div className="divide-y divide-white/[0.05]">
-                          {activities.map(
-                            (
-                              activity,
-                            ) => (
-                              <ActivityRow
-                                key={
-                                  activity.id
-                                }
-                                activity={
-                                  activity
-                                }
-                              />
-                            ),
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* QUICK ACCESS */}
-
-                  <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
-                    <div className="border-b border-white/[0.07] px-4 py-4 sm:px-5">
-                      <h2 className="text-sm font-semibold text-white">
-                        Quick Access
-                      </h2>
-
-                      <p className="mt-1 text-xs text-white/30">
-                        Core GEO-SHUA
-                        modules
-                      </p>
-                    </div>
-
-                    <div className="grid gap-1 p-3 sm:p-4">
-                      <QuickAccess
-                        label="Members"
-                        description="Manage member records"
-                        icon={
-                          <Users
-                            size={18}
-                            strokeWidth={1.8}
-                          />
-                        }
-                        href="/dashboard/members"
-                      />
-
-                      <QuickAccess
-                        label="Savings"
-                        description="View savings records"
-                        icon={
-                          <Wallet
-                            size={18}
-                            strokeWidth={1.8}
-                          />
-                        }
-                        href="/dashboard/savings"
-                      />
-
-                      <QuickAccess
-                        label="Loans"
-                        description="Manage loans and repayments"
-                        icon={
-                          <HandCoins
-                            size={18}
-                            strokeWidth={1.8}
-                          />
-                        }
-                        href="/dashboard/loans"
-                      />
-
-                      <QuickAccess
-                        label="Notifications"
-                        description={`${stats.notifications.toLocaleString()} unread notifications`}
-                        icon={
-                          <Bell
-                            size={18}
-                            strokeWidth={1.8}
-                          />
-                        }
-                        href="/dashboard/notifications"
-                      />
-                    </div>
-                  </div>
-                </section>
-
-                {/* =================================================
-                    MEMBER + SAVINGS
-                ================================================= */}
-
-                <section className="mt-5 grid gap-5 md:grid-cols-2">
-                  <OverviewCard
-                    eyebrow="Member Overview"
-                    value={stats.members.toLocaleString()}
-                    description="Registered members"
-                    icon={
-                      <Users
-                        size={19}
-                        strokeWidth={1.8}
-                      />
-                    }
-                    footerLabel="Manage members"
-                    footerHref="/dashboard/members"
-                    progress={
-                      stats.members > 0
-                        ? Math.min(
-                            100,
-                            (
-                              stats.activeMembers /
-                              stats.members
-                            ) * 100,
-                          )
-                        : 0
-                    }
-                    progressLabel="Active members"
-                    progressValue={
-                      stats.members > 0
-                        ? `${Math.round(
-                            (
-                              stats.activeMembers /
-                              stats.members
-                            ) * 100,
-                          )}%`
-                        : "0%"
+                    onNavigate={
+                      router.push
                     }
                   />
-
-                  <OverviewCard
-                    eyebrow="Savings Overview"
-                    value={formatCurrency(
-                      stats.savings,
-                    )}
-                    description="Authoritative ledger balance"
-                    icon={
-                      <Wallet
-                        size={19}
-                        strokeWidth={1.8}
-                      />
-                    }
-                    footerLabel="Open savings"
-                    footerHref="/dashboard/savings"
-                    metrics={[
-                      {
-                        label:
-                          "Deposits",
-                        value:
-                          formatCurrency(
-                            stats.deposits,
-                          ),
-                      },
-                      {
-                        label:
-                          "Withdrawals",
-                        value:
-                          formatCurrency(
-                            stats.withdrawals,
-                          ),
-                      },
-                      {
-                        label:
-                          "Reversals",
-                        value:
-                          formatCurrency(
-                            stats.reversals,
-                          ),
-                      },
-                    ]}
-                  />
-                </section>
-
-                {/* =================================================
-                    LOANS
-                ================================================= */}
-
-                <section className="mt-5">
-                  <LoanOverviewCard
-                    loans={
-                      stats.loans
-                    }
-                    outstanding={
-                      stats.outstandingLoans
-                    }
-                    defaulters={
-                      stats.defaulters
-                    }
-                  />
-                </section>
-
-                {/* =================================================
-                    FOOTER
-                ================================================= */}
-
-                <div className="mt-5 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-[10px] text-white/20">
-                    GEO-SHUA SACCO
-                    Management
-                  </p>
-
-                  <p className="text-[10px] text-white/20">
-                    Financial data
-                    sourced from
-                    domain APIs
-                  </p>
                 </div>
-              </>
-            )}
+              </div>
+            </section>
+
+            {/* MEMBER + SAVINGS */}
+
+            <section className="mt-5 grid gap-5 md:grid-cols-2">
+
+              <OverviewCard
+                eyebrow="Member Overview"
+                value={stats.members.toLocaleString()}
+                description="Registered members"
+                icon={
+                  <Users
+                    size={19}
+                    strokeWidth={1.8}
+                  />
+                }
+                footerLabel="Manage members"
+                footerHref="/dashboard/members"
+                onNavigate={
+                  router.push
+                }
+                progress={
+                  stats.members >
+                  0
+                    ? Math.min(
+                        100,
+                        (
+                          stats.activeMembers /
+                          stats.members
+                        ) *
+                          100,
+                      )
+                    : 0
+                }
+                progressLabel="Active members"
+                progressValue={
+                  stats.members >
+                  0
+                    ? `${Math.round(
+                        (
+                          stats.activeMembers /
+                          stats.members
+                        ) *
+                          100,
+                      )}%`
+                    : "0%"
+                }
+              />
+
+              <OverviewCard
+                eyebrow="Savings Overview"
+                value={formatCurrency(
+                  stats.savings,
+                )}
+                description="Authoritative ledger balance"
+                icon={
+                  <Wallet
+                    size={19}
+                    strokeWidth={1.8}
+                  />
+                }
+                footerLabel="Open savings"
+                footerHref="/dashboard/savings"
+                onNavigate={
+                  router.push
+                }
+                metrics={[
+                  {
+                    label:
+                      "Deposits",
+                    value:
+                      formatCurrency(
+                        stats.deposits,
+                      ),
+                  },
+                  {
+                    label:
+                      "Withdrawals",
+                    value:
+                      formatCurrency(
+                        stats.withdrawals,
+                      ),
+                  },
+                  {
+                    label:
+                      "Reversals",
+                    value:
+                      formatCurrency(
+                        stats.reversals,
+                      ),
+                  },
+                ]}
+              />
+            </section>
+
+            {/* LOANS */}
+
+            <section className="mt-5">
+              <LoanOverviewCard
+                loans={
+                  stats.loans
+                }
+                outstanding={
+                  stats.outstandingLoans
+                }
+                defaulters={
+                  stats.defaulters
+                }
+                onNavigate={
+                  router.push
+                }
+              />
+            </section>
+
+            {/* FOOTER */}
+
+            <div className="mt-5 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between">
+
+              <p className="text-[10px] text-white/20">
+                GEO-SHUA SACCO
+                Management
+              </p>
+
+              <p className="text-[10px] text-white/20">
+                Financial data
+                sourced from
+                domain APIs
+              </p>
+            </div>
           </div>
         </div>
       </div>
     </main>
+  );
+}
+
+/* =========================================================
+   DASHBOARD ERROR
+========================================================= */
+
+function DashboardError({
+  message,
+  onRetry,
+  refreshing,
+}: {
+  message: string;
+  onRetry: () => void;
+  refreshing: boolean;
+}) {
+  return (
+    <section
+      role="alert"
+      aria-live="assertive"
+      className="mb-4 flex flex-col gap-3 rounded-2xl border border-red-500/15 bg-red-500/[0.05] p-4 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="flex min-w-0 items-start gap-3">
+
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-400">
+          <AlertCircle
+            size={17}
+          />
+        </div>
+
+        <div className="min-w-0">
+
+          <p className="text-xs font-semibold text-red-300">
+            Dashboard unavailable
+          </p>
+
+          <p className="mt-1 text-[10px] leading-5 text-red-300/60">
+            {message}
+          </p>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={refreshing}
+        className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-red-500/15 bg-red-500/10 px-4 text-xs font-medium text-red-300 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <RefreshCw
+          size={14}
+          className={
+            refreshing
+              ? "animate-spin"
+              : ""
+          }
+        />
+
+        Retry
+      </button>
+    </section>
+  );
+}
+
+/* =========================================================
+   PARTIAL WARNING
+========================================================= */
+
+function DashboardPartialWarning({
+  failures,
+  onRetry,
+  refreshing,
+}: {
+  failures: DashboardModuleFailure[];
+  onRetry: () => void;
+  refreshing: boolean;
+}) {
+  if (
+    failures.length === 0
+  ) {
+    return null;
+  }
+
+  return (
+    <section
+      role="status"
+      aria-live="polite"
+      className="mb-4 overflow-hidden rounded-2xl border border-yellow-500/10 bg-yellow-500/[0.04]"
+    >
+      <div className="flex items-start gap-3 px-4 py-3">
+
+        <AlertCircle
+          size={15}
+          className="mt-0.5 shrink-0 text-yellow-400/80"
+        />
+
+        <div className="min-w-0 flex-1">
+
+          <p className="text-[10px] font-semibold text-yellow-300/80">
+            Some dashboard modules could not be loaded.
+          </p>
+
+          <p className="mt-1 text-[10px] leading-5 text-yellow-300/50">
+            Successfully loaded data remains
+            available. Failed modules are not
+            treated as zero values.
+          </p>
+
+          <div className="mt-3 space-y-1.5">
+
+            {failures.map(
+              (failure) => (
+                <div
+                  key={
+                    failure.module
+                  }
+                  className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[9px]"
+                >
+                  <span className="font-semibold text-yellow-300/70">
+                    {failure.module}
+                  </span>
+
+                  <span className="text-white/20">
+                    —
+                  </span>
+
+                  <span className="text-red-300/60">
+                    {failure.error}
+                  </span>
+
+                  {failure.status !==
+                    null && (
+                    <span className="rounded-md bg-white/[0.04] px-1.5 py-0.5 font-mono text-white/25">
+                      HTTP{" "}
+                      {
+                        failure.status
+                      }
+                    </span>
+                  )}
+                </div>
+              ),
+            )}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={refreshing}
+          aria-label="Retry failed dashboard modules"
+          className="flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-yellow-500/10 bg-yellow-500/[0.06] px-2.5 text-[9px] font-medium text-yellow-300/70 transition hover:bg-yellow-500/10 hover:text-yellow-300 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <RefreshCw
+            size={12}
+            className={
+              refreshing
+                ? "animate-spin"
+                : ""
+            }
+          />
+
+          Retry
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -1370,31 +2058,39 @@ function MobileDashboard({
   onRefresh: () => void;
   refreshing: boolean;
 }) {
-  const [amountsHidden, setAmountsHidden] =
-    useState(false);
+  const router =
+    useRouter();
 
-  const calculatedSavings =
-    stats.deposits -
-    stats.withdrawals -
-    stats.reversals;
+  const [
+    amountsHidden,
+    setAmountsHidden,
+  ] = useState(false);
 
   const displayAmount = (
     value: number,
   ): string => {
-    if (amountsHidden) {
+    if (
+      amountsHidden
+    ) {
       return "KES ••••••";
     }
 
-    return formatCurrency(value);
+    return formatCurrency(
+      value,
+    );
   };
 
   return (
     <div className="space-y-3">
+
       {/* HEADER */}
 
       <section className="flex items-center justify-between px-1 pb-1">
+
         <div className="min-w-0">
+
           <div className="flex items-center gap-2">
+
             <span className="h-1.5 w-1.5 rounded-full bg-[#1683ff] shadow-[0_0_10px_rgba(22,131,255,0.8)]" />
 
             <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#1683ff]">
@@ -1408,11 +2104,15 @@ function MobileDashboard({
         </div>
 
         <div className="flex items-center gap-2">
+
           <button
             type="button"
             onClick={() =>
               setAmountsHidden(
-                (current) => !current,
+                (
+                  current,
+                ) =>
+                  !current,
               )
             }
             aria-label={
@@ -1420,7 +2120,9 @@ function MobileDashboard({
                 ? "Show amounts"
                 : "Hide amounts"
             }
-            aria-pressed={amountsHidden}
+            aria-pressed={
+              amountsHidden
+            }
             title={
               amountsHidden
                 ? "Show amounts"
@@ -1429,23 +2131,23 @@ function MobileDashboard({
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-white/55 transition active:scale-95 hover:bg-white/[0.055] hover:text-white/75"
           >
             {amountsHidden ? (
-              <Eye
-                size={16}
-                strokeWidth={1.8}
-              />
+              <span className="text-xs font-semibold">
+                $
+              </span>
             ) : (
-              <EyeOff
-                size={16}
-                strokeWidth={1.8}
-              />
+              <span className="text-xs font-semibold">
+                KES
+              </span>
             )}
           </button>
 
           <button
             type="button"
-            onClick={onRefresh}
+            onClick={
+              onRefresh
+            }
             disabled={
-              refreshing === true
+              refreshing
             }
             aria-label="Refresh dashboard"
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-white/55 transition active:scale-95 disabled:opacity-40"
@@ -1465,327 +2167,239 @@ function MobileDashboard({
 
       {/* MEMBERS */}
 
-      <button
-        type="button"
+      <MobileNavigationCard
         onClick={() =>
-          window.location.assign(
+          router.push(
             "/dashboard/members",
           )
         }
-        className="group relative w-full overflow-hidden rounded-[22px] border border-[#1683ff]/15 bg-gradient-to-br from-[#0b1c30] via-[#081521] to-[#060b11] p-4 text-left shadow-[0_12px_35px_rgba(0,0,0,0.25)] transition active:scale-[0.99]"
+        icon={
+          <Users
+            size={17}
+            strokeWidth={1.8}
+          />
+        }
+        label="Members"
+        description="Membership base"
       >
-        <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-[#1683ff]/10 blur-2xl" />
+        <div className="mt-3 flex items-end justify-between">
 
-        <div className="relative">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1683ff]/10 text-[#4da3ff]">
-                <Users
-                  size={17}
-                  strokeWidth={1.8}
-                />
-              </div>
+          <div>
+            <p className="text-[28px] font-semibold leading-none tracking-tight text-white">
+              {stats.members.toLocaleString()}
+            </p>
 
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
-                  Members
-                </p>
-
-                <p className="text-[9px] text-white/20">
-                  Membership base
-                </p>
-              </div>
-            </div>
-
-            <ArrowRight
-              size={15}
-              className="text-white/20"
-            />
+            <p className="mt-1 text-[10px] text-white/30">
+              registered members
+            </p>
           </div>
 
-          <div className="mt-3 flex items-end justify-between">
-            <div>
-              <p className="text-[28px] font-semibold leading-none tracking-tight text-white">
-                {stats.members.toLocaleString()}
-              </p>
+          <div className="text-right">
 
-              <p className="mt-1 text-[10px] text-white/30">
-                registered members
-              </p>
-            </div>
+            <p className="text-sm font-semibold text-[#4da3ff]">
+              {stats.activeMembers.toLocaleString()}
+            </p>
 
-            <div className="text-right">
-              <p className="text-sm font-semibold text-[#4da3ff]">
-                {stats.activeMembers.toLocaleString()}
-              </p>
-
-              <p className="text-[9px] uppercase tracking-[0.12em] text-white/25">
-                active
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/[0.06]">
-            <div
-              className="h-full rounded-full bg-[#1683ff] transition-all"
-              style={{
-                width: `${
-                  stats.members > 0
-                    ? Math.min(
-                        100,
-                        (
-                          stats.activeMembers /
-                          stats.members
-                        ) * 100,
-                      )
-                    : 0
-                }%`,
-              }}
-            />
-          </div>
-
-          <div className="mt-2 flex items-center justify-between">
-            <span className="text-[9px] text-white/25">
-              Active membership
-            </span>
-
-            <span className="text-[9px] font-medium text-white/40">
-              {stats.members > 0
-                ? `${Math.round(
-                    (
-                      stats.activeMembers /
-                      stats.members
-                    ) * 100,
-                  )}%`
-                : "0%"}
-            </span>
+            <p className="text-[9px] uppercase tracking-[0.12em] text-white/25">
+              active
+            </p>
           </div>
         </div>
-      </button>
+
+        <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/[0.06]">
+
+          <div
+            className="h-full rounded-full bg-[#1683ff] transition-all"
+            style={{
+              width: `${
+                stats.members >
+                0
+                  ? Math.min(
+                      100,
+                      (
+                        stats.activeMembers /
+                        stats.members
+                      ) *
+                        100,
+                    )
+                  : 0
+              }%`,
+            }}
+          />
+        </div>
+
+        <div className="mt-2 flex items-center justify-between">
+
+          <span className="text-[9px] text-white/25">
+            Active membership
+          </span>
+
+          <span className="text-[9px] font-medium text-white/40">
+            {stats.members >
+            0
+              ? `${Math.round(
+                  (
+                    stats.activeMembers /
+                    stats.members
+                  ) *
+                    100,
+                )}%`
+              : "0%"}
+          </span>
+        </div>
+      </MobileNavigationCard>
 
       {/* SAVINGS */}
 
-      <button
-        type="button"
+      <MobileNavigationCard
         onClick={() =>
-          window.location.assign(
+          router.push(
             "/dashboard/savings",
           )
         }
-        className="group relative w-full overflow-hidden rounded-[22px] border border-[#1683ff]/15 bg-gradient-to-br from-[#0a1928] via-[#07131e] to-[#060b11] p-4 text-left shadow-[0_12px_35px_rgba(0,0,0,0.25)] transition active:scale-[0.99]"
+        icon={
+          <Wallet
+            size={17}
+            strokeWidth={1.8}
+          />
+        }
+        label="Savings"
+        description="Authoritative ledger"
       >
-        <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-[#1683ff]/10 blur-3xl" />
+        <div className="mt-3">
 
-        <div className="relative">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1683ff]/10 text-[#4da3ff]">
-                <Wallet
-                  size={17}
-                  strokeWidth={1.8}
-                />
-              </div>
+          <p className="truncate text-[25px] font-semibold leading-none tracking-tight text-white">
+            {displayAmount(
+              stats.savings,
+            )}
+          </p>
 
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
-                  Savings
-                </p>
+          <p className="mt-1 text-[10px] text-white/30">
+            current savings
+            balance
+          </p>
+        </div>
 
-                <p className="text-[9px] text-white/20">
-                  Authoritative ledger
-                </p>
-              </div>
-            </div>
+        <div className="mt-4 border-t border-white/[0.06] pt-3">
 
-            <ArrowRight
-              size={15}
-              className="text-white/20"
-            />
-          </div>
+          <p className="text-[8px] font-semibold uppercase tracking-[0.12em] text-white/20">
+            Savings breakdown
+          </p>
 
-          <div className="mt-3">
-            <p className="truncate text-[25px] font-semibold leading-none tracking-tight text-white">
-              {displayAmount(
-                stats.savings,
+          <div className="mt-2 space-y-1.5">
+
+            <MobileAmountRow
+              label="Deposits"
+              value={displayAmount(
+                stats.deposits,
               )}
-            </p>
+            />
 
-            <p className="mt-1 text-[10px] text-white/30">
-              current savings
-              balance
-            </p>
-          </div>
+            <MobileAmountRow
+              label="− Withdrawals"
+              value={displayAmount(
+                stats.withdrawals,
+              )}
+            />
 
-          <div className="mt-4 border-t border-white/[0.06] pt-3">
-            <div className="flex items-center justify-between">
-              <p className="text-[8px] font-semibold uppercase tracking-[0.12em] text-white/20">
-                Balance calculation
-              </p>
+            <MobileAmountRow
+              label="− Reversals"
+              value={displayAmount(
+                stats.reversals,
+              )}
+            />
 
-              <span
-                className={
-                  Math.abs(
-                    calculatedSavings -
-                      stats.savings,
-                  ) < 0.01
-                    ? "text-[8px] font-medium text-[#4da3ff]/70"
-                    : "text-[8px] font-medium text-red-400"
-                }
-              >
-                {Math.abs(
-                  calculatedSavings -
-                    stats.savings,
-                ) < 0.01
-                  ? "Balanced"
-                  : "Check ledger"}
+            <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/[0.06] pt-2">
+
+              <span className="text-[9px] font-medium text-white/40">
+                Authoritative balance
               </span>
-            </div>
 
-            <div className="mt-2 space-y-1.5">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[9px] text-white/30">
-                  Deposits
-                </span>
-
-                <span className="text-[10px] font-medium text-white/55">
-                  {displayAmount(
-                    stats.deposits,
-                  )}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[9px] text-white/30">
-                  − Withdrawals
-                </span>
-
-                <span className="text-[10px] font-medium text-white/50">
-                  {displayAmount(
-                    stats.withdrawals,
-                  )}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[9px] text-white/30">
-                  − Reversals
-                </span>
-
-                <span className="text-[10px] font-medium text-white/50">
-                  {displayAmount(
-                    stats.reversals,
-                  )}
-                </span>
-              </div>
-
-              <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/[0.06] pt-2">
-                <span className="text-[9px] font-medium text-white/40">
-                  Current balance
-                </span>
-
-                <span className="text-[10px] font-semibold text-[#4da3ff]">
-                  {displayAmount(
-                    calculatedSavings,
-                  )}
-                </span>
-              </div>
+              <span className="text-[10px] font-semibold text-[#4da3ff]">
+                {displayAmount(
+                  stats.savings,
+                )}
+              </span>
             </div>
           </div>
         </div>
-      </button>
+      </MobileNavigationCard>
 
       {/* LOANS */}
 
-      <button
-        type="button"
+      <MobileNavigationCard
         onClick={() =>
-          window.location.assign(
+          router.push(
             "/dashboard/loans",
           )
         }
-        className="group relative w-full overflow-hidden rounded-[22px] border border-[#1683ff]/15 bg-gradient-to-br from-[#0a1826] via-[#07131e] to-[#060b11] p-4 text-left shadow-[0_12px_35px_rgba(0,0,0,0.25)] transition active:scale-[0.99]"
+        icon={
+          <HandCoins
+            size={17}
+            strokeWidth={1.8}
+          />
+        }
+        label="Loans"
+        description="Lending portfolio"
       >
-        <div className="absolute -bottom-12 -right-10 h-32 w-32 rounded-full bg-[#1683ff]/10 blur-3xl" />
+        <div className="mt-3">
 
-        <div className="relative">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1683ff]/10 text-[#4da3ff]">
-                <HandCoins
-                  size={17}
-                  strokeWidth={1.8}
-                />
-              </div>
+          <p className="truncate text-[25px] font-semibold leading-none tracking-tight text-white">
+            {displayAmount(
+              stats.outstandingLoans,
+            )}
+          </p>
 
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
-                  Loans
-                </p>
+          <p className="mt-1 text-[10px] text-white/30">
+            outstanding balance
+          </p>
+        </div>
 
-                <p className="text-[9px] text-white/20">
-                  Lending portfolio
-                </p>
-              </div>
-            </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/[0.06] pt-3">
 
-            <ArrowRight
-              size={15}
-              className="text-white/20"
-            />
-          </div>
+          <div>
 
-          <div className="mt-3">
-            <p className="truncate text-[25px] font-semibold leading-none tracking-tight text-white">
-              {displayAmount(
-                stats.outstandingLoans,
-              )}
+            <p className="text-sm font-semibold text-white/80">
+              {stats.loans.toLocaleString()}
             </p>
 
-            <p className="mt-1 text-[10px] text-white/30">
-              outstanding
-              balance
+            <p className="mt-0.5 text-[9px] uppercase tracking-[0.12em] text-white/25">
+              Active loans
             </p>
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/[0.06] pt-3">
-            <div>
-              <p className="text-sm font-semibold text-white/80">
-                {stats.loans.toLocaleString()}
-              </p>
+          <div className="text-right">
 
-              <p className="mt-0.5 text-[9px] uppercase tracking-[0.12em] text-white/25">
-                Active loans
-              </p>
-            </div>
+            <p
+              className={`text-sm font-semibold ${
+                stats.defaulters >
+                0
+                  ? "text-red-400"
+                  : "text-[#4da3ff]"
+              }`}
+            >
+              {stats.defaulters.toLocaleString()}
+            </p>
 
-            <div className="text-right">
-              <p
-                className={`text-sm font-semibold ${
-                  stats.defaulters > 0
-                    ? "text-red-400"
-                    : "text-[#4da3ff]"
-                }`}
-              >
-                {stats.defaulters.toLocaleString()}
-              </p>
-
-              <p className="mt-0.5 text-[9px] uppercase tracking-[0.12em] text-white/25">
-                Defaulters
-              </p>
-            </div>
+            <p className="mt-0.5 text-[9px] uppercase tracking-[0.12em] text-white/25">
+              Defaulters
+            </p>
           </div>
         </div>
-      </button>
+      </MobileNavigationCard>
 
-      {/* SMS INGESTION MONITOR */}
+      {/* SMS */}
 
       <SmsInboxMonitor />
 
       {/* RECENT ACTIVITY */}
 
       <section className="overflow-hidden rounded-[22px] border border-white/[0.07] bg-white/[0.025]">
+
         <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3.5">
+
           <div>
+
             <p className="text-xs font-semibold text-white/75">
               Recent activity
             </p>
@@ -1802,8 +2416,10 @@ function MobileDashboard({
           </span>
         </div>
 
-        {activities.length === 0 ? (
+        {activities.length ===
+        0 ? (
           <div className="px-4 py-8 text-center">
+
             <Bell
               size={18}
               className="mx-auto text-white/20"
@@ -1815,10 +2431,13 @@ function MobileDashboard({
           </div>
         ) : (
           <div className="max-h-[260px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10">
+
             {activities
               .slice(0, 6)
               .map(
-                (activity) => (
+                (
+                  activity,
+                ) => (
                   <MobileActivityRow
                     key={
                       activity.id
@@ -1833,14 +2452,99 @@ function MobileDashboard({
         )}
       </section>
 
-      {/* MOBILE FOOTER */}
+      {/* FOOTER */}
 
       <div className="px-1 pb-3 pt-1 text-center">
+
         <p className="text-[9px] text-white/15">
           GEO-SHUA SACCO
           Management
         </p>
       </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   MOBILE NAVIGATION CARD
+========================================================= */
+
+function MobileNavigationCard({
+  onClick,
+  icon,
+  label,
+  description,
+  children,
+}: {
+  onClick: () => void;
+  icon: ReactNode;
+  label: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group relative w-full overflow-hidden rounded-[22px] border border-[#1683ff]/15 bg-gradient-to-br from-[#0b1c30] via-[#081521] to-[#060b11] p-4 text-left shadow-[0_12px_35px_rgba(0,0,0,0.25)] transition active:scale-[0.99]"
+    >
+      <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-[#1683ff]/10 blur-3xl" />
+
+      <div className="relative">
+
+        <div className="flex items-center justify-between">
+
+          <div className="flex items-center gap-2.5">
+
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1683ff]/10 text-[#4da3ff]">
+              {icon}
+            </div>
+
+            <div>
+
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
+                {label}
+              </p>
+
+              <p className="text-[9px] text-white/20">
+                {description}
+              </p>
+            </div>
+          </div>
+
+          <ArrowRight
+            size={15}
+            className="text-white/20 transition group-hover:translate-x-0.5"
+          />
+        </div>
+
+        {children}
+      </div>
+    </button>
+  );
+}
+
+/* =========================================================
+   MOBILE AMOUNT ROW
+========================================================= */
+
+function MobileAmountRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+
+      <span className="text-[9px] text-white/30">
+        {label}
+      </span>
+
+      <span className="text-[10px] font-medium text-white/55">
+        {value}
+      </span>
     </div>
   );
 }
@@ -1878,22 +2582,21 @@ function MobileActivityRow({
         strokeWidth={1.8}
       />
     ),
-
-    notification: (
-      <Bell
-        size={14}
-        strokeWidth={1.8}
-      />
-    ),
   };
 
   return (
     <div className="flex min-w-0 items-center gap-3 border-b border-white/[0.045] px-4 py-3 last:border-b-0">
+
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1683ff]/[0.07] text-[#4da3ff]/70">
-        {icons[activity.type]}
+        {
+          icons[
+            activity.type
+          ]
+        }
       </div>
 
       <div className="min-w-0 flex-1">
+
         <p className="truncate text-[10px] font-medium text-white/60">
           {activity.title}
         </p>
@@ -1921,6 +2624,7 @@ function OverviewCard({
   icon,
   footerLabel,
   footerHref,
+  onNavigate,
   progress,
   progressLabel,
   progressValue,
@@ -1932,6 +2636,9 @@ function OverviewCard({
   icon: ReactNode;
   footerLabel: string;
   footerHref: string;
+  onNavigate: (
+    href: string,
+  ) => void;
   progress?: number;
   progressLabel?: string;
   progressValue?: string;
@@ -1942,8 +2649,11 @@ function OverviewCard({
 }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
+
       <div className="flex items-start justify-between gap-4">
+
         <div className="min-w-0">
+
           <p className="text-xs uppercase tracking-[0.18em] text-white/25">
             {eyebrow}
           </p>
@@ -1962,9 +2672,12 @@ function OverviewCard({
         </div>
       </div>
 
-      {progress !== undefined && (
+      {progress !==
+        undefined && (
         <div className="mt-5">
+
           <div className="mb-2 flex items-center justify-between">
+
             <span className="text-[10px] text-white/25">
               {progressLabel}
             </span>
@@ -1975,6 +2688,7 @@ function OverviewCard({
           </div>
 
           <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+
             <div
               className="h-full rounded-full bg-yellow-500 transition-all"
               style={{
@@ -1994,6 +2708,7 @@ function OverviewCard({
       {metrics &&
         metrics.length > 0 && (
           <div className="mt-5 grid grid-cols-3 gap-3">
+
             {metrics.map(
               (metric) => (
                 <MiniMetric
@@ -2015,7 +2730,7 @@ function OverviewCard({
       <button
         type="button"
         onClick={() =>
-          window.location.assign(
+          onNavigate(
             footerHref,
           )
         }
@@ -2042,15 +2757,22 @@ function LoanOverviewCard({
   loans,
   outstanding,
   defaulters,
+  onNavigate,
 }: {
   loans: number;
   outstanding: number;
   defaulters: number;
+  onNavigate: (
+    href: string,
+  ) => void;
 }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
+
       <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+
         <div className="flex min-w-0 items-start gap-4">
+
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
             <HandCoins
               size={20}
@@ -2059,6 +2781,7 @@ function LoanOverviewCard({
           </div>
 
           <div className="min-w-0">
+
             <p className="text-xs uppercase tracking-[0.18em] text-white/25">
               Loan Overview
             </p>
@@ -2077,6 +2800,7 @@ function LoanOverviewCard({
         </div>
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+
           <MiniMetric
             label="Loans"
             value={loans.toLocaleString()}
@@ -2098,7 +2822,7 @@ function LoanOverviewCard({
         <button
           type="button"
           onClick={() =>
-            window.location.assign(
+            onNavigate(
               "/dashboard/loans",
             )
           }
@@ -2131,6 +2855,7 @@ function MetricCard({
 }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
+
       <p className="truncate text-[10px] uppercase tracking-[0.14em] text-white/25">
         {label}
       </p>
@@ -2155,6 +2880,7 @@ function MiniMetric({
 }) {
   return (
     <div className="min-w-0">
+
       <p className="truncate text-[9px] uppercase tracking-[0.12em] text-white/20">
         {label}
       </p>
@@ -2175,19 +2901,21 @@ function QuickAccess({
   description,
   icon,
   href,
+  onNavigate,
 }: {
   label: string;
   description: string;
   icon: ReactNode;
   href: string;
+  onNavigate: (
+    href: string,
+  ) => void;
 }) {
   return (
     <button
       type="button"
       onClick={() =>
-        window.location.assign(
-          href,
-        )
+        onNavigate(href)
       }
       className="group flex min-w-0 items-center gap-3 rounded-xl border border-transparent px-3 py-3 text-left transition hover:border-white/[0.06] hover:bg-white/[0.04]"
     >
@@ -2196,6 +2924,7 @@ function QuickAccess({
       </div>
 
       <div className="min-w-0 flex-1">
+
         <p className="truncate text-xs font-medium text-white/65 group-hover:text-white">
           {label}
         </p>
@@ -2224,25 +2953,29 @@ function StatCard({
   subtitle,
   icon,
   href,
+  onNavigate,
 }: {
   title: string;
   value: string | number;
   subtitle: string;
   icon: ReactNode;
   href: string;
+  onNavigate: (
+    href: string,
+  ) => void;
 }) {
   return (
     <button
       type="button"
       onClick={() =>
-        window.location.assign(
-          href,
-        )
+        onNavigate(href)
       }
       className="group min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition hover:border-white/[0.12] hover:bg-white/[0.04] sm:p-5"
     >
       <div className="flex items-start justify-between gap-3">
+
         <div className="min-w-0 flex-1">
+
           <p className="truncate text-xs font-medium text-white/35">
             {title}
           </p>
@@ -2297,22 +3030,21 @@ function ActivityRow({
         strokeWidth={1.8}
       />
     ),
-
-    notification: (
-      <Bell
-        size={15}
-        strokeWidth={1.8}
-      />
-    ),
   };
 
   return (
     <div className="flex min-w-0 items-center gap-3 px-4 py-3.5 sm:px-5">
+
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.04] text-white/35">
-        {icons[activity.type]}
+        {
+          icons[
+            activity.type
+          ]
+        }
       </div>
 
       <div className="min-w-0 flex-1">
+
         <p className="truncate text-xs font-medium text-white/65">
           {activity.title}
         </p>
@@ -2330,13 +3062,46 @@ function ActivityRow({
 }
 
 /* =========================================================
+   EMPTY ACTIVITY
+========================================================= */
+
+function EmptyActivity() {
+  return (
+    <div className="flex min-h-[180px] items-center justify-center p-6">
+
+      <div className="text-center">
+
+        <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-white/25">
+
+          <Bell
+            size={19}
+            strokeWidth={1.5}
+          />
+        </div>
+
+        <p className="mt-4 text-sm font-medium text-white/45">
+          No recent activity
+        </p>
+
+        <p className="mt-2 text-xs text-white/25">
+          New records will appear
+          here automatically.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
    DESKTOP LOADING
 ========================================================= */
 
 function DashboardLoading() {
   return (
     <div className="w-full animate-pulse space-y-5">
+
       <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+
         {Array.from({
           length: 4,
         }).map(
@@ -2350,6 +3115,7 @@ function DashboardLoading() {
       </section>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+
         {Array.from({
           length: 4,
         }).map(
@@ -2363,12 +3129,14 @@ function DashboardLoading() {
       </section>
 
       <section className="grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
+
         <div className="min-h-[330px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
 
         <div className="min-h-[330px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
       </section>
 
       <section className="grid gap-5 md:grid-cols-2">
+
         <div className="h-[220px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
 
         <div className="h-[220px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
@@ -2377,43 +3145,6 @@ function DashboardLoading() {
       <section>
         <div className="h-[125px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
       </section>
-    </div>
-  );
-}
-
-/* =========================================================
-   MOBILE LOADING
-========================================================= */
-
-function MobileDashboardLoading() {
-  return (
-    <div className="animate-pulse space-y-3">
-      <div className="mb-5 flex items-center justify-between">
-        <div>
-          <div className="h-2.5 w-20 rounded bg-white/[0.06]" />
-
-          <div className="mt-2 h-5 w-28 rounded bg-white/[0.06]" />
-
-          <div className="mt-2 h-2.5 w-36 rounded bg-white/[0.04]" />
-        </div>
-
-        <div className="h-10 w-10 rounded-xl bg-white/[0.05]" />
-      </div>
-
-      {Array.from({
-        length: 3,
-      }).map(
-        (_, index) => (
-          <div
-            key={index}
-            className="h-[137px] rounded-[22px] border border-white/[0.06] bg-white/[0.025]"
-          />
-        ),
-      )}
-
-      <div className="h-[170px] rounded-[22px] border border-white/[0.06] bg-white/[0.025]" />
-
-      <div className="h-[220px] rounded-[22px] border border-white/[0.06] bg-white/[0.025]" />
     </div>
   );
 }

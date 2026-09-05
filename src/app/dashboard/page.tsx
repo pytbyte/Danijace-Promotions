@@ -1964,8 +1964,8 @@ function GeoShuaNavigator(): ReactNode {
 
   const navigation = [
     {
-      title: "Dashboard",
-      description: "SACCO overview & activity",
+      title: "Summary",
+      description: "Overview & activity",
       icon: LayoutDashboard,
       path: "/dashboard/summery",
     },

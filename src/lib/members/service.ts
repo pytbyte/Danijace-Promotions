@@ -108,6 +108,8 @@ export type GetMembersOptions = {
   limit?: number;
 
   search?: string;
+
+  forLoan?: boolean;
 };
 
 export type PaginatedMembers = {

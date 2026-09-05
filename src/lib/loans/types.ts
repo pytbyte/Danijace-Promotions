@@ -2,16 +2,16 @@
  * GEO-SHUA
  * Loan Domain Types
  *
- * Financial records are append-oriented.
- *
- * IMPORTANT:
- * - Public/domain IDs are strings.
- * - MongoDB persistence IDs are ObjectId values.
- * - Conversion happens at the persistence boundary.
- *
- * Existing loan terms are snapshots.
- * Changing global loan settings must NOT modify
- * an existing loan.
+ * Financial rules:
+ * - No daily fines.
+ * - Fines are percentage-based.
+ * - A fine may be assessed once per completed repayment cycle.
+ * - Repayment cycles default to 7 days.
+ * - Fines are calculated from core outstanding balance only.
+ * - Existing fines never compound.
+ * - Financial records are append-only.
+ * - Repayments, fines, waivers, assessments and audits
+ *   must never be permanently deleted.
  */
 
 export type LoanType =
@@ -24,335 +24,277 @@ export type LoanStatus =
   | "completed"
   | "cancelled";
 
+export type LoanRepaymentStatus =
+  | "current"
+  | "defaulted"
+  | "completed";
+
 export type FineStatus =
   | "active"
   | "stopped";
-
-export type FineSource =
-  | "default"
-  | "custom";
 
 export type TransactionSource =
   | "manual"
   | "sms"
   | "system";
 
-/**
- * Person responsible for creating, authorizing,
- * updating, or recording a financial action.
- */
+export type FineSource =
+  | "system"
+  | "manual";
+
+export type LoanAssessmentStatus =
+  | "assessed"
+  | "defaulted";
+
+/* =========================================================
+   ACTOR
+========================================================= */
+
 export interface LoanActor {
   name: string;
   email: string;
 }
 
-/**
- * Loan guarantor snapshot.
- *
- * This information belongs to the loan record and
- * should remain unchanged even if the member's
- * information changes later.
- */
+/* =========================================================
+   GUARANTOR
+========================================================= */
+
 export interface LoanGuarantor {
   name: string;
   phone: string;
   idNumber?: string;
 }
 
-/**
- * Global loan configuration.
- *
- * These settings apply when a NEW loan is created.
- * They do not retroactively modify existing loans.
- */
+/* =========================================================
+   LOAN SETTINGS
+========================================================= */
+
 export interface LoanSettings {
   id: string;
 
-  /**
-   * Interest rates are stored as decimal fractions.
-   *
-   * 30% = 0.30
-   * 40% = 0.40
-   */
   regularInterestRate: number;
   emergencyInterestRate: number;
 
-  /**
-   * Regular-loan eligibility.
-   */
   regularMinimumSavings: number;
   regularSavingsMultiplier: number;
 
   /**
-   * Number of calendar days after disbursement
-   * before repayment becomes due.
+   * Retained for compatibility with existing settings
+   * documents and consumers.
+   *
+   * The authoritative repayment timing for the new
+   * periodic-fine model is repaymentCycleDays.
    */
   repaymentGraceDays: number;
 
   /**
-   * Default daily overdue fine.
+   * Number of days in one repayment assessment cycle.
+   *
+   * Default: 7 days.
    */
-  defaultDailyFine: number;
+  repaymentCycleDays: number;
 
   /**
-   * Whether each loan type can currently be created.
+   * Fine percentage expressed as a decimal.
+   *
+   * Example:
+   * 0.10 = 10%
    */
+  fineRate: number;
+
   emergencyLoansEnabled: boolean;
   regularLoansEnabled: boolean;
 
-  /**
-   * Last person who changed the settings.
-   */
   updatedBy: LoanActor;
 
   createdAt: Date;
   updatedAt: Date;
 }
 
-/**
- * Loan record.
- *
- * Financial terms are snapshots captured when
- * the loan is created.
- */
+/* =========================================================
+   LOAN
+========================================================= */
+
 export interface Loan {
   id: string;
 
-  /**
-   * Human-readable sequential loan number.
-   *
-   * Example:
-   * LOAN-000001
-   */
   loanNumber: string;
 
-  /**
-   * Public/domain member identifier.
-   */
   memberId: string;
-
-  /**
-   * Member number and name are snapshots.
-   *
-   * This prevents historical loan records from
-   * changing when member profile information changes.
-   */
   memberNumber: string;
   memberName: string;
 
   type: LoanType;
 
-  /**
-   * Original principal issued.
-   */
   principal: number;
 
-  /**
-   * Interest rate captured at loan creation.
-   *
-   * Example:
-   * 0.30 = 30%
-   */
   interestRate: number;
-
-  /**
-   * Interest calculated from the original principal.
-   */
   interestAmount: number;
 
   /**
-   * Daily overdue fine captured at loan creation.
+   * Percentage fine applied once per completed
+   * repayment cycle when applicable.
    */
-  dailyFine: number;
+  fineRate: number;
 
   /**
-   * Whether dailyFine came from global settings
-   * or was manually supplied during loan creation.
+   * Number of days in each repayment assessment cycle.
    */
-  fineSource: FineSource;
+  repaymentCycleDays: number;
 
-  /**
-   * Original disbursement date.
-   */
   disbursementDate: Date;
 
   /**
-   * First repayment due date.
+   * Scheduled repayment date.
+   */
+  repaymentDate: Date;
+
+  /**
+   * Final contractual loan end date.
+   */
+  endDate: Date;
+
+  /**
+   * First scheduled assessment/due date.
+   *
+   * Kept because existing application code may consume it.
+   * It is derived from:
+   *
+   * disbursementDate + repaymentCycleDays
    */
   firstDueDate: Date;
 
   /**
-   * Original principal + interest.
+   * Principal + interest.
    *
-   * Fines are NOT included here because fines
-   * are separate append-only financial records.
+   * Does not include fines.
    */
   totalDue: number;
 
   /**
-   * Current amount paid through repayment records.
+   * Authoritative projection of total repayments recorded.
    */
   amountPaid: number;
 
   /**
-   * Current total of all recorded fines.
+   * Authoritative projection of all assessed fines.
    */
   totalFines: number;
 
   /**
-   * Current outstanding liability.
+   * Authoritative projection of all approved fine waivers.
+   */
+  totalWaivedFines: number;
+
+  /**
+   * Cached final outstanding balance:
    *
-   * outstandingBalance =
-   *   totalDue +
-   *   totalFines -
-   *   amountPaid
+   * totalDue
+   * + totalFines
+   * - totalWaivedFines
+   * - amountPaid
    */
   outstandingBalance: number;
 
-  /**
-   * Controls whether future overdue fines can accrue.
-   *
-   * Existing fines remain part of the financial history
-   * even when fineStatus becomes "stopped".
-   */
   fineStatus: FineStatus;
 
-  /**
-   * Guarantor snapshot.
-   */
+  repaymentStatus: LoanRepaymentStatus;
+
   guarantor: LoanGuarantor;
 
   status: LoanStatus;
 
-  /**
-   * Loan creation actor.
-   */
   createdBy: LoanActor;
 
-  /**
-   * Person who authorized the loan.
-   */
   authorizedBy: LoanActor;
 
-  /**
-   * Time at which authorization occurred.
-   */
   authorizedAt: Date;
 
   createdAt: Date;
+
   updatedAt: Date;
 }
 
-/**
- * Input used to create a new loan.
- */
+/* =========================================================
+   CREATE LOAN
+========================================================= */
+
 export interface CreateLoanInput {
   memberId: string;
 
   type: LoanType;
 
-  /**
-   * Required for both loan types.
-   *
-   * Regular:
-   *   Must satisfy the configured savings multiplier.
-   *
-   * Emergency:
-   *   Manually entered subject to the SACCO's
-   *   emergency-loan rules.
-   */
   principal: number;
 
   guarantor: LoanGuarantor;
 
   /**
-   * Optional custom daily overdue fine.
+   * Percentage-based fine.
    *
-   * When omitted, the current global default is
-   * captured into the loan.
+   * Example:
+   * 0.10 = 10%
    */
-  dailyFine?: number;
+  fineRate?: number;
 
-  /**
-   * Optional disbursement date.
-   *
-   * When omitted, the current server time is used.
-   */
+  repaymentDate?: Date;
+
+  endDate?: Date;
+
   disbursementDate?: Date;
 }
 
-/**
- * Persisted repayment transaction.
- *
- * Repayments are append-only.
- *
- * A repayment must never be edited or permanently
- * deleted in order to correct financial history.
- */
+/* =========================================================
+   REPAYMENT
+========================================================= */
+
 export interface LoanRepayment {
   id: string;
 
   loanId: string;
+
   loanNumber: string;
 
   memberId: string;
+
   memberNumber: string;
 
-  /**
-   * Positive amount actually received.
-   */
   amount: number;
 
   /**
-   * Unique transaction reference.
+   * Immutable bank/payment transaction reference.
    *
-   * For M-Pesa/SMS this should normally be the
-   * M-Pesa transaction code.
+   * Must be globally unique.
    */
   transactionReference: string;
 
-  /**
-   * Time the payment actually occurred.
-   */
   transactionDate: Date;
 
   source: TransactionSource;
 
-  /**
-   * Original SMS message where applicable.
-   *
-   * Kept for audit/reconciliation purposes.
-   */
   rawMessage?: string;
 
-  /**
-   * Person/system that recorded the transaction.
-   */
   recordedBy?: LoanActor;
 
   createdAt: Date;
 }
 
-/**
- * Input used when recording a repayment.
- *
- * Either loanId or memberId may be supplied.
- *
- * If only memberId is supplied, the service must
- * safely resolve exactly one open loan.
- */
 export interface CreateLoanRepaymentInput {
+  /**
+   * Preferred when the payment is already associated
+   * with a specific loan.
+   */
   loanId?: string;
 
+  /**
+   * Can be used when the system must safely resolve
+   * the member's only open loan.
+   */
   memberId?: string;
 
   amount: number;
 
   /**
-   * Mandatory idempotency key.
-   *
-   * This prevents the same SMS/M-Pesa transaction
-   * from being recorded more than once.
+   * Immutable idempotency key.
    */
   transactionReference: string;
 
@@ -360,103 +302,275 @@ export interface CreateLoanRepaymentInput {
 
   source: TransactionSource;
 
-  /**
-   * Original SMS where source === "sms".
-   */
   rawMessage?: string;
 
-  /**
-   * Human/system actor recording the payment.
-   */
   recordedBy?: LoanActor;
 }
 
-/**
- * A single overdue-fine event.
- *
- * Normally one system fine is recorded per applicable
- * calendar day.
- */
+/* =========================================================
+   FINE
+========================================================= */
+
 export interface LoanFine {
   id: string;
 
   loanId: string;
+
   loanNumber: string;
 
   memberId: string;
 
   /**
-   * Amount charged for this particular fine event.
+   * Fine amount actually assessed.
    */
   amount: number;
 
   /**
-   * Calendar date to which this fine belongs.
+   * Date the fine became assessable/was recorded.
    */
   fineDate: Date;
 
   /**
-   * Daily fine rate captured at the time the fine
-   * was created.
+   * Percentage used to calculate the fine.
+   *
+   * Example:
+   * 0.10 = 10%
    */
-  dailyFineRate: number;
-
-  source:
-    | "system"
-    | "manual";
+  fineRate: number;
 
   /**
-   * Optional actor for manually-created fines.
+   * Fixed repayment assessment cycle number.
+   *
+   * Cycle 1:
+   * disbursement -> +7 days
+   *
+   * Cycle 2:
+   * +7 days -> +14 days
    */
+  periodNumber: number;
+
+  periodStart: Date;
+
+  periodEnd: Date;
+
+  /**
+   * Core outstanding balance used to calculate
+   * this particular fine.
+   *
+   * Existing fines are excluded.
+   */
+  assessedCoreBalance: number;
+
+  /**
+   * How the fine was created.
+   */
+  source: FineSource;
+
   createdBy?: LoanActor;
 
   createdAt: Date;
 }
 
-/**
- * Input used to stop future fine accrual.
- *
- * Existing fine records are never removed.
- */
+/* =========================================================
+   STOP / RESUME FINES
+========================================================= */
+
 export interface StopLoanFineInput {
   reason: string;
   stoppedBy: LoanActor;
 }
 
-/**
- * Immutable audit history for loan operations.
- *
- * Audit entries are append-only.
- */
+/* =========================================================
+   FINE WAIVER
+========================================================= */
+
+export interface LoanWaiver {
+  id: string;
+
+  loanId: string;
+
+  loanNumber: string;
+
+  memberId: string;
+
+  amount: number;
+
+  reason: string;
+
+  waivedBy: LoanActor;
+
+  createdAt: Date;
+}
+
+export interface CreateLoanWaiverInput {
+  loanId: string;
+
+  amount: number;
+
+  reason: string;
+
+  waivedBy: LoanActor;
+}
+
+/* =========================================================
+   ASSESSMENT
+========================================================= */
+
+export interface LoanAssessment {
+  id: string;
+
+  loanId: string;
+
+  loanNumber: string;
+
+  memberId: string;
+
+  memberNumber: string;
+
+  /**
+   * Fixed repayment cycle number.
+   */
+  periodNumber: number;
+
+  periodStart: Date;
+
+  periodEnd: Date;
+
+  assessmentDate: Date;
+
+  /**
+   * Core balance at the beginning of the period.
+   */
+  openingCoreBalance: number;
+
+  /**
+   * Repayments recorded during this period.
+   */
+  paymentsDuringPeriod: number;
+
+  /**
+   * Core balance used when determining the fine.
+   *
+   * This must represent the balance applicable to the
+   * completed period, not a future balance.
+   */
+  balanceBeforeFine: number;
+
+  paymentMade: boolean;
+
+  defaulted: boolean;
+
+  fineRate: number;
+
+  fineAmount: number;
+
+  /**
+   * Human-readable assessment state.
+   */
+  status: LoanAssessmentStatus;
+
+  createdAt: Date;
+}
+
+/* =========================================================
+   AUDIT
+========================================================= */
+
+export type LoanAuditAction =
+  | "created"
+  | "authorized"
+  | "updated"
+  | "repayment_recorded"
+  | "fine_recorded"
+  | "fine_stopped"
+  | "assessment_recorded"
+  | "waiver_recorded"
+  | "cancelled"
+  | "completed"
+  | "defaulted";
+
 export interface LoanAuditEntry {
   id: string;
 
   loanId: string;
+
   loanNumber: string;
 
-  action:
-    | "created"
-    | "authorized"
-    | "updated"
-    | "repayment_recorded"
-    | "fine_recorded"
-    | "fine_stopped"
-    | "cancelled"
-    | "completed";
+  action: LoanAuditAction;
 
   actor: LoanActor;
 
-  /**
-   * Structured historical information about the action.
-   *
-   * Examples:
-   * - original loan terms
-   * - repayment reference
-   * - cancellation reason
-   * - fine date
-   * - setting changes
-   */
-  details?: Record<string, unknown>;
+  details: Record<string, unknown>;
 
   createdAt: Date;
+}
+
+/* =========================================================
+   LIST OPTIONS
+========================================================= */
+
+export interface LoanListOptions {
+  page?: number;
+
+  limit?: number;
+
+  status?: LoanStatus;
+
+  type?: LoanType;
+
+  repaymentStatus?: LoanRepaymentStatus;
+
+  memberId?: string;
+
+  repaymentDate?: Date | string;
+
+  endDate?: Date | string;
+
+  search?: string;
+}
+
+/* =========================================================
+   PAGINATION
+========================================================= */
+
+export interface PaginatedLoans {
+  loans: Loan[];
+
+  total: number;
+
+  page: number;
+
+  limit: number;
+
+  totalPages: number;
+}
+
+/* =========================================================
+   SUMMARY
+========================================================= */
+
+export interface LoanSummary {
+  totalLoans: number;
+
+  activeLoans: number;
+
+  completedLoans: number;
+
+  pendingLoans: number;
+
+  cancelledLoans: number;
+
+  defaultedLoans: number;
+
+  totalPrincipal: number;
+
+  totalInterest: number;
+
+  totalFines: number;
+
+  totalWaivedFines: number;
+
+  totalPaid: number;
+
+  totalOutstanding: number;
 }

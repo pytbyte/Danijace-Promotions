@@ -143,10 +143,10 @@ function settingsToForm(
 
     defaultDailyFine:
       Number.isFinite(
-        settings.defaultDailyFine,
+        settings.fineRate,
       )
         ? String(
-            settings.defaultDailyFine,
+            settings.fineRate,
           )
         : "",
 

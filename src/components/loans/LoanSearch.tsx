@@ -1,7 +1,7 @@
-
 "use client";
 
 import {
+  CalendarDays,
   Filter,
   RotateCcw,
   Search,
@@ -16,20 +16,30 @@ import { useState } from "react";
 
 export type LoanSearchFilters = {
   search: string;
+
   status:
     | ""
     | "pending"
     | "active"
     | "completed"
     | "cancelled";
+
   type: string;
-};
+
+  /**
+   * Local calendar date in YYYY-MM-DD format.
+   *
+   * Example:
+   * 2026-09-10
+   */
+  repaymentDate: string;
+}
 
 type LoanSearchProps = {
   value: LoanSearchFilters;
 
   onChange: (
-    filters: LoanSearchFilters
+    filters: LoanSearchFilters,
   ) => void;
 
   onReset?: () => void;
@@ -45,6 +55,7 @@ export const DEFAULT_LOAN_FILTERS: LoanSearchFilters = {
   search: "",
   status: "",
   type: "",
+  repaymentDate: "",
 };
 
 /* =========================================================
@@ -63,7 +74,8 @@ export default function LoanSearch({
   const hasFilters =
     value.search.trim() !== "" ||
     value.status !== "" ||
-    value.type !== "";
+    value.type !== "" ||
+    value.repaymentDate !== "";
 
   /* =======================================================
      UPDATE FILTER
@@ -73,7 +85,7 @@ export default function LoanSearch({
     K extends keyof LoanSearchFilters
   >(
     key: K,
-    filterValue: LoanSearchFilters[K]
+    filterValue: LoanSearchFilters[K],
   ) => {
     onChange({
       ...value,
@@ -86,9 +98,9 @@ export default function LoanSearch({
   ======================================================= */
 
   const resetFilters = () => {
-    onChange(
-      DEFAULT_LOAN_FILTERS
-    );
+    onChange({
+      ...DEFAULT_LOAN_FILTERS,
+    });
 
     onReset?.();
   };
@@ -102,20 +114,15 @@ export default function LoanSearch({
       new Set(
         loanTypes
           .filter(
-            (
-              type
-            ) =>
-              typeof type ===
-                "string" &&
-              type.trim() !== ""
+            (type) =>
+              typeof type === "string" &&
+              type.trim() !== "",
           )
           .map(
-            (
-              type
-            ) =>
-              type.trim()
-          )
-      )
+            (type) =>
+              type.trim(),
+          ),
+      ),
     );
 
   return (
@@ -137,15 +144,11 @@ export default function LoanSearch({
 
           <input
             type="search"
-            value={
-              value.search
-            }
-            onChange={(
-              event
-            ) =>
+            value={value.search}
+            onChange={(event) =>
               updateFilter(
                 "search",
-                event.target.value
+                event.target.value,
               )
             }
             placeholder="Search loan number, member or member number..."
@@ -176,7 +179,7 @@ export default function LoanSearch({
               onClick={() =>
                 updateFilter(
                   "search",
-                  ""
+                  "",
                 )
               }
               className="
@@ -211,10 +214,7 @@ export default function LoanSearch({
           type="button"
           onClick={() =>
             setFiltersOpen(
-              (
-                current
-              ) =>
-                !current
+              (current) => !current,
             )
           }
           className={`
@@ -231,8 +231,7 @@ export default function LoanSearch({
             font-medium
             transition
             ${
-              filtersOpen ||
-              hasFilters
+              filtersOpen || hasFilters
                 ? "border-yellow-500/20 bg-yellow-500/10 text-yellow-400"
                 : "border-white/[0.08] bg-white/[0.03] text-white/55 hover:bg-white/[0.06] hover:text-white"
             }
@@ -243,9 +242,7 @@ export default function LoanSearch({
             strokeWidth={1.8}
           />
 
-          <span>
-            Filters
-          </span>
+          <span>Filters</span>
 
           {hasFilters && (
             <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-yellow-500 px-1.5 text-[10px] font-bold text-black">
@@ -253,8 +250,8 @@ export default function LoanSearch({
                 [
                   value.status,
                   value.type,
-                ].filter(Boolean)
-                  .length +
+                  value.repaymentDate,
+                ].filter(Boolean).length +
                 (value.search.trim()
                   ? 1
                   : 0)
@@ -268,9 +265,7 @@ export default function LoanSearch({
         {hasFilters && (
           <button
             type="button"
-            onClick={
-              resetFilters
-            }
+            onClick={resetFilters}
             className="
               inline-flex
               h-11
@@ -305,7 +300,7 @@ export default function LoanSearch({
 
       {filtersOpen && (
         <div className="mt-3 border-t border-white/[0.06] pt-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
 
             {/* STATUS */}
 
@@ -317,15 +312,11 @@ export default function LoanSearch({
                   strokeWidth={1.8}
                 />
               }
-              value={
-                value.status
-              }
-              onChange={(
-                nextValue
-              ) =>
+              value={value.status}
+              onChange={(nextValue) =>
                 updateFilter(
                   "status",
-                  nextValue as LoanSearchFilters["status"]
+                  nextValue as LoanSearchFilters["status"],
                 )
               }
               options={[
@@ -334,23 +325,19 @@ export default function LoanSearch({
                   label: "All statuses",
                 },
                 {
-                  value:
-                    "pending",
+                  value: "pending",
                   label: "Pending",
                 },
                 {
-                  value:
-                    "active",
+                  value: "active",
                   label: "Active",
                 },
                 {
-                  value:
-                    "completed",
+                  value: "completed",
                   label: "Completed",
                 },
                 {
-                  value:
-                    "cancelled",
+                  value: "cancelled",
                   label: "Cancelled",
                 },
               ]}
@@ -360,15 +347,11 @@ export default function LoanSearch({
 
             <FilterSelect
               label="Loan type"
-              value={
-                value.type
-              }
-              onChange={(
-                nextValue
-              ) =>
+              value={value.type}
+              onChange={(nextValue) =>
                 updateFilter(
                   "type",
-                  nextValue
+                  nextValue,
                 )
               }
               options={[
@@ -377,24 +360,100 @@ export default function LoanSearch({
                   label: "All loan types",
                 },
                 ...uniqueLoanTypes.map(
-                  (
-                    type
-                  ) => ({
-                    value:
-                      type,
+                  (type) => ({
+                    value: type,
                     label:
                       type
-                        .charAt(
-                          0
-                        )
+                        .charAt(0)
                         .toUpperCase() +
-                      type.slice(
-                        1
-                      ),
-                  })
+                      type.slice(1),
+                  }),
                 ),
               ]}
             />
+
+            {/* REPAYMENT DATE */}
+
+            <div className="block">
+              <label
+                htmlFor="loan-repayment-date"
+                className="mb-1.5 flex items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/25"
+              >
+                <CalendarDays
+                  size={14}
+                  strokeWidth={1.8}
+                />
+
+                Repayment date
+              </label>
+
+              <div className="relative">
+                <input
+                  id="loan-repayment-date"
+                  type="date"
+                  value={
+                    value.repaymentDate
+                  }
+                  onChange={(event) =>
+                    updateFilter(
+                      "repaymentDate",
+                      event.target.value,
+                    )
+                  }
+                  className="
+                    h-10
+                    w-full
+                    rounded-xl
+                    border
+                    border-white/[0.08]
+                    bg-[#111111]
+                    px-3
+                    text-sm
+                    text-white/70
+                    outline-none
+                    transition
+                    focus:border-yellow-500/30
+                    focus:ring-2
+                    focus:ring-yellow-500/10
+                    [color-scheme:dark]
+                  "
+                />
+
+                {value.repaymentDate && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateFilter(
+                        "repaymentDate",
+                        "",
+                      )
+                    }
+                    className="
+                      absolute
+                      right-2
+                      top-1/2
+                      flex
+                      h-7
+                      w-7
+                      -translate-y-1/2
+                      items-center
+                      justify-center
+                      rounded-lg
+                      text-white/30
+                      transition
+                      hover:bg-white/[0.06]
+                      hover:text-white
+                    "
+                    aria-label="Clear repayment date"
+                  >
+                    <X
+                      size={14}
+                      strokeWidth={1.8}
+                    />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -412,7 +471,7 @@ type FilterSelectProps = {
   value: string;
 
   onChange: (
-    value: string
+    value: string,
   ) => void;
 
   options: {
@@ -439,12 +498,9 @@ function FilterSelect({
 
       <select
         value={value}
-        onChange={(
-          event
-        ) =>
+        onChange={(event) =>
           onChange(
-            event.target
-              .value
+            event.target.value,
           )
         }
         className="
@@ -462,27 +518,18 @@ function FilterSelect({
           focus:border-yellow-500/30
           focus:ring-2
           focus:ring-yellow-500/10
+          [color-scheme:dark]
         "
       >
-        {options.map(
-          (
-            option
-          ) => (
-            <option
-              key={
-                option.value
-              }
-              value={
-                option.value
-              }
-              className="bg-[#111111] text-white"
-            >
-              {
-                option.label
-              }
-            </option>
-          )
-        )}
+        {options.map((option) => (
+          <option
+            key={option.value}
+            value={option.value}
+            className="bg-[#111111] text-white"
+          >
+            {option.label}
+          </option>
+        ))}
       </select>
     </label>
   );

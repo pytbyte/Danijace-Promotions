@@ -2,20 +2,27 @@
  * GEO-SHUA
  * Loan Validation
  *
- * This file handles input validation only.
+ * Input validation only.
  *
  * IMPORTANT:
+ * ---------------------------------------------------------
  * Database/business-rule checks belong in the loan service.
  *
- * Examples:
+ * This file MUST NOT query MongoDB.
+ *
+ * Business rules such as:
  * - member existence
  * - member status
  * - existing open loan
  * - savings balance
  * - maximum loan amount
  * - outstanding balance
- * - loan completion
+ * - repayment history
+ * - default status
  * - fine history
+ * - waiver balance
+ *
+ * belong in service.ts.
  *
  * Financial records are append-oriented.
  */
@@ -23,6 +30,7 @@
 import type {
   CreateLoanInput,
   CreateLoanRepaymentInput,
+  CreateLoanWaiverInput,
   LoanGuarantor,
   LoanSettings,
   LoanType,
@@ -41,42 +49,22 @@ export interface ValidationResult {
    CONSTANTS
 ========================================================= */
 
-/**
- * Money values are stored to two decimal places.
- *
- * We allow more precision during validation because
- * the service will normalize monetary values before
- * persistence.
- */
 const MAX_MONEY = 1_000_000_000_000;
 
-/**
- * Prevent accidentally accepting absurdly large text
- * fields from API/SMS input.
- */
 const MAX_TEXT_LENGTH = 500;
 
-/**
- * Transaction references are deliberately smaller.
- *
- * M-Pesa references are normally short, but allowing
- * some extra room keeps the validator future-proof.
- */
 const MAX_TRANSACTION_REFERENCE_LENGTH = 100;
 
-/**
- * SMS messages can be considerably longer than normal
- * user-entered fields.
- */
 const MAX_RAW_MESSAGE_LENGTH = 10_000;
+
+const MAX_RATE = 1;
+
+const MAX_CYCLE_DAYS = 3650;
 
 /* =========================================================
    INTERNAL HELPERS
 ========================================================= */
 
-/**
- * Check whether a value is a finite number.
- */
 function isFiniteNumber(
   value: unknown,
 ): value is number {
@@ -86,9 +74,6 @@ function isFiniteNumber(
   );
 }
 
-/**
- * Validate a non-empty string.
- */
 function validateRequiredText(
   value: unknown,
   fieldName: string,
@@ -119,9 +104,6 @@ function validateRequiredText(
   return errors;
 }
 
-/**
- * Validate an optional string.
- */
 function validateOptionalText(
   value: unknown,
   fieldName: string,
@@ -153,9 +135,6 @@ function validateOptionalText(
   return errors;
 }
 
-/**
- * Validate a valid JavaScript Date.
- */
 function validateDate(
   value: unknown,
   fieldName: string,
@@ -172,10 +151,7 @@ function validateDate(
   return [];
 }
 
-/**
- * Validate a positive finite monetary amount.
- */
-export function validateAmount(
+function validateAmount(
   amount: number,
   fieldName = "Amount",
 ): string[] {
@@ -204,12 +180,6 @@ export function validateAmount(
   return errors;
 }
 
-/**
- * Validate a non-negative monetary amount.
- *
- * Used for settings such as daily fines where zero
- * may legitimately mean "no fine".
- */
 function validateNonNegativeAmount(
   amount: number,
   fieldName: string,
@@ -239,13 +209,56 @@ function validateNonNegativeAmount(
   return errors;
 }
 
+function validateRate(
+  rate: unknown,
+  fieldName: string,
+): string[] {
+  if (
+    !isFiniteNumber(rate) ||
+    rate < 0 ||
+    rate > MAX_RATE
+  ) {
+    return [
+      `${fieldName} must be between 0 and 1.`,
+    ];
+  }
+
+  return [];
+}
+
+function validatePositiveInteger(
+  value: unknown,
+  fieldName: string,
+  maximum = MAX_CYCLE_DAYS,
+): string[] {
+  const errors: string[] = [];
+
+  if (
+    !Number.isInteger(value) ||
+    (value as number) <= 0
+  ) {
+    errors.push(
+      `${fieldName} must be a whole number greater than zero.`,
+    );
+
+    return errors;
+  }
+
+  if (
+    (value as number) > maximum
+  ) {
+    errors.push(
+      `${fieldName} is too large.`,
+    );
+  }
+
+  return errors;
+}
+
 /* =========================================================
    LOAN TYPE
 ========================================================= */
 
-/**
- * Validate a loan type.
- */
 export function validateLoanType(
   type: LoanType,
 ): string[] {
@@ -265,11 +278,6 @@ export function validateLoanType(
    GUARANTOR
 ========================================================= */
 
-/**
- * Validate guarantor details.
- *
- * Guarantor ID number is optional.
- */
 export function validateGuarantor(
   guarantor: LoanGuarantor,
 ): string[] {
@@ -329,22 +337,6 @@ export function validateGuarantor(
    CREATE LOAN
 ========================================================= */
 
-/**
- * Validate loan creation input.
- *
- * This function validates only the input itself.
- *
- * It does NOT query MongoDB.
- *
- * Service-level checks include:
- * - member exists
- * - member is active
- * - fixed savings account exists
- * - minimum savings
- * - maximum regular loan
- * - existing open loan
- * - existing outstanding liability
- */
 export function validateCreateLoan(
   input: CreateLoanInput,
 ): ValidationResult {
@@ -405,17 +397,18 @@ export function validateCreateLoan(
     ),
   );
 
+
   /* -------------------------------------------------------
-     DAILY FINE
+     NEW FINE RATE
   ------------------------------------------------------- */
 
   if (
-    input.dailyFine !== undefined
+    input.fineRate !== undefined
   ) {
     errors.push(
-      ...validateNonNegativeAmount(
-        input.dailyFine,
-        "Daily fine",
+      ...validateRate(
+        input.fineRate,
+        "Fine rate",
       ),
     );
   }
@@ -436,6 +429,44 @@ export function validateCreateLoan(
     );
   }
 
+  /* -------------------------------------------------------
+     REPAYMENT DATE
+  ------------------------------------------------------- */
+
+  if (
+    input.repaymentDate !==
+    undefined
+  ) {
+    errors.push(
+      ...validateDate(
+        input.repaymentDate,
+        "Repayment date",
+      ),
+    );
+  }
+
+  /* -------------------------------------------------------
+     END DATE
+  ------------------------------------------------------- */
+
+  if (
+    input.endDate !==
+    undefined
+  ) {
+    errors.push(
+      ...validateDate(
+        input.endDate,
+        "Loan end date",
+      ),
+    );
+  }
+
+  /*
+   * Date ordering is additionally checked in the service
+   * because the service determines the authoritative
+   * disbursement date.
+   */
+
   return {
     valid:
       errors.length === 0,
@@ -447,22 +478,6 @@ export function validateCreateLoan(
    CREATE REPAYMENT
 ========================================================= */
 
-/**
- * Validate loan repayment input.
- *
- * This function deliberately does not determine whether
- * the repayment can actually be applied to a loan.
- *
- * The service must determine:
- *
- * - which loan receives the payment
- * - whether the loan exists
- * - whether the loan is cancelled
- * - current outstanding balance
- * - whether the transaction reference already exists
- *
- * The transaction reference is the idempotency key.
- */
 export function validateLoanRepayment(
   input: CreateLoanRepaymentInput,
 ): ValidationResult {
@@ -512,12 +527,6 @@ export function validateLoanRepayment(
     );
   }
 
-  /*
-   * At least one of loanId or memberId must be supplied.
-   *
-   * This is important because the service needs some
-   * way to resolve the destination loan.
-   */
   if (
     input.loanId === undefined &&
     input.memberId === undefined
@@ -591,15 +600,6 @@ export function validateLoanRepayment(
     );
   }
 
-  /*
-   * SMS transactions should normally contain the
-   * original message for reconciliation.
-   *
-   * We intentionally do NOT make this mandatory here
-   * because callers may already have parsed/normalized
-   * SMS data before reaching this layer.
-   */
-
   /* -------------------------------------------------------
      RECORDED BY
   ------------------------------------------------------- */
@@ -642,20 +642,101 @@ export function validateLoanRepayment(
 }
 
 /* =========================================================
+   CREATE WAIVER
+========================================================= */
+
+export function validateCreateLoanWaiver(
+  input: CreateLoanWaiverInput,
+): ValidationResult {
+  const errors: string[] = [];
+
+  if (
+    !input ||
+    typeof input !== "object"
+  ) {
+    return {
+      valid: false,
+      errors: [
+        "Loan waiver data is required.",
+      ],
+    };
+  }
+
+  /* -------------------------------------------------------
+     LOAN ID
+  ------------------------------------------------------- */
+
+  errors.push(
+    ...validateRequiredText(
+      input.loanId,
+      "Loan ID",
+      100,
+    ),
+  );
+
+  /* -------------------------------------------------------
+     AMOUNT
+  ------------------------------------------------------- */
+
+  errors.push(
+    ...validateAmount(
+      input.amount,
+      "Waiver amount",
+    ),
+  );
+
+  /* -------------------------------------------------------
+     REASON
+  ------------------------------------------------------- */
+
+  errors.push(
+    ...validateRequiredText(
+      input.reason,
+      "Waiver reason",
+      500,
+    ),
+  );
+
+  /* -------------------------------------------------------
+     ACTOR
+  ------------------------------------------------------- */
+
+  if (
+    !input.waivedBy ||
+    typeof input.waivedBy !== "object"
+  ) {
+    errors.push(
+      "Waived-by information is required.",
+    );
+  } else {
+    errors.push(
+      ...validateRequiredText(
+        input.waivedBy.name,
+        "Waived-by name",
+        150,
+      ),
+    );
+
+    errors.push(
+      ...validateRequiredText(
+        input.waivedBy.email,
+        "Waived-by email",
+        254,
+      ),
+    );
+  }
+
+  return {
+    valid:
+      errors.length === 0,
+    errors,
+  };
+}
+
+/* =========================================================
    LOAN SETTINGS
 ========================================================= */
 
-/**
- * Validate loan settings.
- *
- * Interest rates are decimal fractions:
- *
- * 30% = 0.30
- * 40% = 0.40
- *
- * Database/business rules such as whether changing a
- * particular setting is authorized belong elsewhere.
- */
 export function validateLoanSettings(
   settings: Partial<LoanSettings>,
 ): ValidationResult {
@@ -681,19 +762,12 @@ export function validateLoanSettings(
     settings.regularInterestRate !==
     undefined
   ) {
-    if (
-      !isFiniteNumber(
+    errors.push(
+      ...validateRate(
         settings.regularInterestRate,
-      ) ||
-      settings.regularInterestRate <
-        0 ||
-      settings.regularInterestRate >
-        1
-    ) {
-      errors.push(
-        "Regular interest rate must be between 0 and 1.",
-      );
-    }
+        "Regular interest rate",
+      ),
+    );
   }
 
   /* -------------------------------------------------------
@@ -704,19 +778,12 @@ export function validateLoanSettings(
     settings.emergencyInterestRate !==
     undefined
   ) {
-    if (
-      !isFiniteNumber(
+    errors.push(
+      ...validateRate(
         settings.emergencyInterestRate,
-      ) ||
-      settings.emergencyInterestRate <
-        0 ||
-      settings.emergencyInterestRate >
-        1
-    ) {
-      errors.push(
-        "Emergency interest rate must be between 0 and 1.",
-      );
-    }
+        "Emergency interest rate",
+      ),
+    );
   }
 
   /* -------------------------------------------------------
@@ -769,7 +836,39 @@ export function validateLoanSettings(
   }
 
   /* -------------------------------------------------------
-     GRACE DAYS
+     NEW 7-DAY REPAYMENT CYCLE
+  ------------------------------------------------------- */
+
+  if (
+    settings.repaymentCycleDays !==
+    undefined
+  ) {
+    errors.push(
+      ...validatePositiveInteger(
+        settings.repaymentCycleDays,
+        "Repayment cycle days",
+      ),
+    );
+  }
+
+  /* -------------------------------------------------------
+     NEW FINE RATE
+  ------------------------------------------------------- */
+
+  if (
+    settings.fineRate !==
+    undefined
+  ) {
+    errors.push(
+      ...validateRate(
+        settings.fineRate,
+        "Fine rate",
+      ),
+    );
+  }
+
+  /* -------------------------------------------------------
+     LEGACY GRACE DAYS
   ------------------------------------------------------- */
 
   if (
@@ -800,29 +899,14 @@ export function validateLoanSettings(
     }
   }
 
-  /* -------------------------------------------------------
-     DEFAULT DAILY FINE
-  ------------------------------------------------------- */
-
-  if (
-    settings.defaultDailyFine !==
-    undefined
-  ) {
-    errors.push(
-      ...validateNonNegativeAmount(
-        settings.defaultDailyFine,
-        "Default daily fine",
-      ),
-    );
-  }
 
   /* -------------------------------------------------------
-     EMERGENCY LOANS ENABLED
+     EMERGENCY LOANS
   ------------------------------------------------------- */
 
   if (
     settings.emergencyLoansEnabled !==
-    undefined &&
+      undefined &&
     typeof settings.emergencyLoansEnabled !==
       "boolean"
   ) {
@@ -832,7 +916,7 @@ export function validateLoanSettings(
   }
 
   /* -------------------------------------------------------
-     REGULAR LOANS ENABLED
+     REGULAR LOANS
   ------------------------------------------------------- */
 
   if (
@@ -857,15 +941,6 @@ export function validateLoanSettings(
    TEXT NORMALIZATION
 ========================================================= */
 
-/**
- * Normalize ordinary user-entered text.
- *
- * This:
- * - removes leading/trailing whitespace
- * - collapses repeated whitespace
- *
- * It does NOT modify the semantic contents of the text.
- */
 export function normalizeText(
   value: string,
 ): string {
@@ -878,11 +953,6 @@ export function normalizeText(
    GUARANTOR NORMALIZATION
 ========================================================= */
 
-/**
- * Normalize guarantor information before persistence.
- *
- * Validation should happen before this function is called.
- */
 export function normalizeGuarantor(
   guarantor: LoanGuarantor,
 ): LoanGuarantor {

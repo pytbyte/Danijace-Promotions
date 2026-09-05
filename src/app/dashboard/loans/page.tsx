@@ -210,56 +210,143 @@ export default function LoansPage() {
      FILTERED LOANS
   ======================================================= */
 
-  const filteredLoans = useMemo(() => {
-    const search = loanFilters.search
+const filteredLoans = useMemo(() => {
+  const search =
+    loanFilters.search
       .trim()
       .toLowerCase();
 
-    return loans.filter((loan) => {
-      /* SEARCH */
+  const repaymentDate =
+    loanFilters.repaymentDate.trim();
 
-      if (search) {
-        const searchableText = [
-          loan.loanNumber,
-          loan.memberName,
-          loan.memberNumber,
-          loan.type,
-        ]
-          .filter(
-            (value) =>
-              typeof value === "string" &&
-              value.trim().length > 0,
-          )
-          .join(" ")
-          .toLowerCase();
+  return loans.filter((loan) => {
+    /* =====================================================
+       SEARCH
+    ===================================================== */
 
-        if (!searchableText.includes(search)) {
-          return false;
-        }
-      }
-
-      /* STATUS */
+    if (search) {
+      const searchableText = [
+        loan.loanNumber,
+        loan.memberName,
+        loan.memberNumber,
+        loan.type,
+      ]
+        .filter(
+          (value) =>
+            typeof value === "string" &&
+            value.trim().length > 0,
+        )
+        .join(" ")
+        .toLowerCase();
 
       if (
-        loanFilters.status &&
-        loan.status !== loanFilters.status
+        !searchableText.includes(search)
+      ) {
+        return false;
+      }
+    }
+
+    /* =====================================================
+       STATUS
+    ===================================================== */
+
+    if (
+      loanFilters.status &&
+      loan.status !==
+        loanFilters.status
+    ) {
+      return false;
+    }
+
+    /* =====================================================
+       TYPE
+    ===================================================== */
+
+    if (
+      loanFilters.type &&
+      loan.type
+        .trim()
+        .toLowerCase() !==
+        loanFilters.type
+          .trim()
+          .toLowerCase()
+    ) {
+      return false;
+    }
+
+    /* =====================================================
+       REPAYMENT DATE
+    ===================================================== */
+
+    if (repaymentDate) {
+      if (
+        !loan.repaymentDate
       ) {
         return false;
       }
 
-      /* TYPE */
+      const loanDate =
+        getCalendarDate(
+          loan.repaymentDate,
+        );
 
       if (
-        loanFilters.type &&
-        loan.type.trim().toLowerCase() !==
-          loanFilters.type.trim().toLowerCase()
+        loanDate !==
+        repaymentDate
       ) {
         return false;
       }
+    }
 
-      return true;
-    });
-  }, [loans, loanFilters]);
+    return true;
+  });
+}, [loans, loanFilters]);
+
+
+/* =========================================================
+   CALENDAR DATE HELPER
+========================================================= */
+
+/**
+ * Converts a loan repayment date into YYYY-MM-DD
+ * for comparison with the native HTML date input.
+ *
+ * Handles:
+ * - Date
+ * - ISO date strings
+ * - serialized dates
+ */
+function getCalendarDate(
+  value: Date | string,
+): string {
+  const date =
+    value instanceof Date
+      ? value
+      : new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime(),
+    )
+  ) {
+    return "";
+  }
+
+  const year =
+    date.getFullYear();
+
+  const month =
+    String(
+      date.getMonth() + 1,
+    ).padStart(2, "0");
+
+  const day =
+    String(
+      date.getDate(),
+    ).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
 
   /* =======================================================
      LOAN TYPES

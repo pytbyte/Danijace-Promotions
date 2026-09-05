@@ -13,7 +13,7 @@ import {
 import {
   FormEvent,
   useEffect,
-  useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -34,13 +34,6 @@ interface LoanFormProps {
   open: boolean;
   onClose: () => void;
   onSuccess?: (loan: Loan) => void;
-
-  /**
-   * Optional member supplied by another part of the UI.
-   *
-   * When supplied, the member selector is locked to
-   * that member.
-   */
   memberId?: string;
 }
 
@@ -51,12 +44,6 @@ interface LoanFormProps {
 type MembersResponse = {
   success: boolean;
   data?: Member[];
-  error?: string;
-};
-
-type MemberResponse = {
-  success: boolean;
-  data?: Member;
   error?: string;
 };
 
@@ -89,26 +76,35 @@ type LoanApiResponse = {
 };
 
 /* =========================================================
+   ERROR SECTIONS
+========================================================= */
+
+type ErrorSection =
+  | "member"
+  | "savings"
+  | "settings"
+  | "type"
+  | "principal"
+  | "dates"
+  | "guarantor"
+  | "general"
+  | null;
+
+/* =========================================================
    HELPERS
 ========================================================= */
 
-function getMemberId(
-  member: Member | null,
-): string {
+function getMemberId(member: Member | null): string {
   if (!member) {
     return "";
   }
 
-  const value = member._id;
-
-  return typeof value === "string"
-    ? value.trim()
+  return typeof member._id === "string"
+    ? member._id.trim()
     : "";
 }
 
-function getMemberFullName(
-  member: Member,
-): string {
+function getMemberFullName(member: Member): string {
   return [
     member.firstName,
     member.middleName,
@@ -124,31 +120,21 @@ function getMemberFullName(
     .trim();
 }
 
-function formatKES(
-  value: number,
-): string {
-  if (
-    !Number.isFinite(value)
-  ) {
+function formatKES(value: number): string {
+  if (!Number.isFinite(value)) {
     return "KES 0.00";
   }
 
-  return new Intl.NumberFormat(
-    "en-KE",
-    {
-      style: "currency",
-      currency: "KES",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    },
-  ).format(value);
+  return new Intl.NumberFormat("en-KE", {
+    style: "currency",
+    currency: "KES",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
-function parseMoney(
-  value: string,
-): number | null {
-  const cleaned =
-    value.replace(/,/g, "").trim();
+function parseMoney(value: string): number | null {
+  const cleaned = value.replace(/,/g, "").trim();
 
   if (!cleaned) {
     return null;
@@ -156,10 +142,7 @@ function parseMoney(
 
   const amount = Number(cleaned);
 
-  if (
-    !Number.isFinite(amount) ||
-    amount <= 0
-  ) {
+  if (!Number.isFinite(amount) || amount <= 0) {
     return null;
   }
 
@@ -171,18 +154,15 @@ function parseMoney(
 function getDefaultDate(): string {
   const now = new Date();
 
-  const year =
-    now.getFullYear();
-
-  const month =
-    String(
-      now.getMonth() + 1,
-    ).padStart(2, "0");
-
-  const day =
-    String(
-      now.getDate(),
-    ).padStart(2, "0");
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(
+    2,
+    "0",
+  );
+  const day = String(now.getDate()).padStart(
+    2,
+    "0",
+  );
 
   return `${year}-${month}-${day}`;
 }
@@ -191,16 +171,19 @@ function addDays(
   date: string,
   days: number,
 ): string {
-  const result =
-    new Date(
-      `${date}T00:00:00`,
-    );
-
   if (
-    Number.isNaN(
-      result.getTime(),
-    )
+    !date ||
+    !Number.isInteger(days) ||
+    days < 0
   ) {
+    return "";
+  }
+
+  const result = new Date(
+    `${date}T00:00:00`,
+  );
+
+  if (Number.isNaN(result.getTime())) {
     return "";
   }
 
@@ -208,20 +191,83 @@ function addDays(
     result.getDate() + days,
   );
 
-  const year =
-    result.getFullYear();
-
-  const month =
-    String(
-      result.getMonth() + 1,
-    ).padStart(2, "0");
-
-  const day =
-    String(
-      result.getDate(),
-    ).padStart(2, "0");
+  const year = result.getFullYear();
+  const month = String(
+    result.getMonth() + 1,
+  ).padStart(2, "0");
+  const day = String(
+    result.getDate(),
+  ).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
+}
+
+function getDateObject(
+  value: string,
+): Date | null {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(
+    `${value}T00:00:00`,
+  );
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date;
+}
+
+/* =========================================================
+   INLINE ERROR
+========================================================= */
+
+function FieldError({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <p
+      role="alert"
+      className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-4 text-red-300"
+    >
+      <AlertCircle
+        size={12}
+        className="mt-0.5 shrink-0"
+      />
+
+      <span>{children}</span>
+    </p>
+  );
+}
+
+/* =========================================================
+   SECTION ERROR
+========================================================= */
+
+function SectionError({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      role="alert"
+      className="mt-3 flex items-start gap-2 rounded-xl border border-red-500/15 bg-red-500/[0.06] px-3 py-2.5"
+    >
+      <AlertCircle
+        size={14}
+        className="mt-0.5 shrink-0 text-red-400"
+      />
+
+      <p className="text-xs leading-5 text-red-200/80">
+        {children}
+      </p>
+    </div>
+  );
 }
 
 /* =========================================================
@@ -254,36 +300,24 @@ export default function LoanForm({
      SAVINGS
   ======================================================= */
 
-  const [
-    savingsAccount,
-    setSavingsAccount,
-  ] = useState<SavingsAccount | null>(
-    null,
-  );
+  const [savingsAccount, setSavingsAccount] =
+    useState<SavingsAccount | null>(null);
 
-  const [
-    loadingSavings,
-    setLoadingSavings,
-  ] = useState(false);
+  const [loadingSavings, setLoadingSavings] =
+    useState(false);
 
   /* =======================================================
      SETTINGS
   ======================================================= */
 
-  const [
-    settings,
-    setSettings,
-  ] = useState<LoanSettings | null>(
-    null,
-  );
+  const [settings, setSettings] =
+    useState<LoanSettings | null>(null);
 
-  const [
-    loadingSettings,
-    setLoadingSettings,
-  ] = useState(false);
+  const [loadingSettings, setLoadingSettings] =
+    useState(false);
 
   /* =======================================================
-     FORM
+     LOAN FORM
   ======================================================= */
 
   const [type, setType] =
@@ -292,15 +326,24 @@ export default function LoanForm({
   const [principal, setPrincipal] =
     useState("");
 
-  const [dailyFine, setDailyFine] =
+  const [disbursementDate, setDisbursementDate] =
+    useState(getDefaultDate());
+
+  const [repaymentDate, setRepaymentDate] =
     useState("");
 
-  const [
-    disbursementDate,
-    setDisbursementDate,
-  ] = useState(
-    getDefaultDate(),
-  );
+  const [endDate, setEndDate] =
+    useState("");
+
+  /*
+   * These flags prevent automatic date calculation
+   * from overwriting dates manually selected by the user.
+   */
+  const repaymentDateAuto =
+    useRef(true);
+
+  const endDateAuto =
+    useRef(true);
 
   /* =======================================================
      GUARANTOR
@@ -316,18 +359,53 @@ export default function LoanForm({
     useState("");
 
   /* =======================================================
-     STATE
+     ERROR / SUBMISSION STATE
   ======================================================= */
 
   const [error, setError] =
     useState<string | null>(null);
 
+  const [errorSection, setErrorSection] =
+    useState<ErrorSection>(null);
+
   const [submitting, setSubmitting] =
     useState(false);
 
-  /* =======================================================
-     RESET
-  ======================================================= */
+  /* =========================================================
+     ERROR HELPERS
+  ========================================================= */
+
+  function showError(
+    message: string,
+    section: Exclude<
+      ErrorSection,
+      null
+    >,
+  ) {
+    setError(message);
+    setErrorSection(section);
+  }
+
+  function clearError() {
+    setError(null);
+    setErrorSection(null);
+  }
+
+  function clearSectionError(
+    section: Exclude<
+      ErrorSection,
+      null
+    >,
+  ) {
+    if (errorSection === section) {
+      setError(null);
+      setErrorSection(null);
+    }
+  }
+
+  /* =========================================================
+     RESET FORM
+  ========================================================= */
 
   function resetForm() {
     setMember(null);
@@ -339,17 +417,22 @@ export default function LoanForm({
 
     setType("regular");
     setPrincipal("");
-    setDailyFine("");
 
     setDisbursementDate(
       getDefaultDate(),
     );
 
+    setRepaymentDate("");
+    setEndDate("");
+
+    repaymentDateAuto.current = true;
+    endDateAuto.current = true;
+
     setGuarantorName("");
     setGuarantorPhone("");
     setGuarantorIdNumber("");
 
-    setError(null);
+    clearError();
 
     setLoadingMembers(false);
     setLoadingSavings(false);
@@ -357,9 +440,54 @@ export default function LoanForm({
     setSubmitting(false);
   }
 
-  /* =======================================================
-     LOAD SETTINGS
-  ======================================================= */
+  /* =========================================================
+     AUTO-CALCULATE REPAYMENT DATE
+  ========================================================= */
+
+  useEffect(() => {
+    if (!settings || !disbursementDate) {
+      return;
+    }
+
+    const cycleDays =
+      settings.repaymentCycleDays;
+
+    if (
+      !Number.isInteger(cycleDays) ||
+      cycleDays <= 0
+    ) {
+      return;
+    }
+
+    const defaultRepaymentDate =
+      addDays(
+        disbursementDate,
+        cycleDays,
+      );
+
+    if (!defaultRepaymentDate) {
+      return;
+    }
+
+    if (repaymentDateAuto.current) {
+      setRepaymentDate(
+        defaultRepaymentDate,
+      );
+    }
+
+    if (endDateAuto.current) {
+      setEndDate(
+        defaultRepaymentDate,
+      );
+    }
+  }, [
+    settings,
+    disbursementDate,
+  ]);
+
+  /* =========================================================
+     LOAD LOAN SETTINGS
+  ========================================================= */
 
   useEffect(() => {
     if (!open) {
@@ -372,25 +500,17 @@ export default function LoanForm({
       setLoadingSettings(true);
 
       try {
-        /*
-         * The settings route is intentionally isolated from
-         * the create-loan route.
-         *
-         * If your route uses a different path, only this
-         * fetch URL needs to change.
-         */
-        const response =
-          await fetch(
-            "/api/loans/settings",
-            {
-              method: "GET",
-              cache: "no-store",
-              headers: {
-                Accept:
-                  "application/json",
-              },
+        const response = await fetch(
+          "/api/loans/settings",
+          {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              Accept:
+                "application/json",
             },
-          );
+          },
+        );
 
         let result:
           | LoanSettingsResponse
@@ -418,9 +538,14 @@ export default function LoanForm({
           );
         }
 
-        setSettings(
-          result.data,
-        );
+        setSettings(result.data);
+
+        if (
+          errorSection ===
+          "settings"
+        ) {
+          clearError();
+        }
       } catch (loadError) {
         if (cancelled) {
           return;
@@ -431,18 +556,13 @@ export default function LoanForm({
           loadError,
         );
 
-        /*
-         * Do not silently invent settings.
-         *
-         * The service itself has defaults, but the UI should
-         * not present a potentially inaccurate preview.
-         */
         setSettings(null);
 
-        setError(
+        showError(
           loadError instanceof Error
             ? loadError.message
             : "Unable to load loan settings.",
+          "settings",
         );
       } finally {
         if (!cancelled) {
@@ -458,9 +578,9 @@ export default function LoanForm({
     };
   }, [open]);
 
-  /* =======================================================
+  /* =========================================================
      LOAD PRESELECTED MEMBER
-  ======================================================= */
+  ========================================================= */
 
   useEffect(() => {
     if (!open) {
@@ -468,7 +588,7 @@ export default function LoanForm({
     }
 
     const cleanMemberId =
-      memberId.trim();
+      memberId?.trim();
 
     if (!cleanMemberId) {
       return;
@@ -478,22 +598,23 @@ export default function LoanForm({
 
     async function loadSelectedMember() {
       try {
-        setError(null);
+        clearSectionError(
+          "member",
+        );
 
-        const response =
-          await fetch(
-            `/api/members?search=${encodeURIComponent(
-              cleanMemberId,
-            )}&page=1&limit=10`,
-            {
-              method: "GET",
-              cache: "no-store",
-              headers: {
-                Accept:
-                  "application/json",
-              },
+        const response = await fetch(
+          `/api/members?search=${encodeURIComponent(
+            cleanMemberId,
+          )}&page=1&limit=10&forLoan=true`,
+          {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              Accept:
+                "application/json",
             },
-          );
+          },
+        );
 
         let result:
           | MembersResponse
@@ -523,16 +644,21 @@ export default function LoanForm({
           );
         }
 
+        /*
+         * forLoan=true means the API has
+         * already excluded members who have
+         * pending or active loans.
+         */
         const found =
           result.data.find(
             (item) =>
-              item._id ===
+              String(item._id) ===
               cleanMemberId,
           );
 
         if (!found) {
           throw new Error(
-            "The selected member could not be found.",
+            "The selected member could not be found or is not eligible for a new loan.",
           );
         }
 
@@ -549,10 +675,11 @@ export default function LoanForm({
 
         setMember(null);
 
-        setError(
+        showError(
           loadError instanceof Error
             ? loadError.message
             : "Unable to load member.",
+          "member",
         );
       }
     }
@@ -564,20 +691,15 @@ export default function LoanForm({
     };
   }, [open, memberId]);
 
-  /* =======================================================
+  /* =========================================================
      MEMBER SEARCH
-  ======================================================= */
+  ========================================================= */
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    /*
-     * When a member was supplied by the parent, there is
-     * no reason to search for another member.
-     */
-    if (memberId.trim()) {
+    if (
+      !open ||
+      memberId.trim()
+    ) {
       return;
     }
 
@@ -589,26 +711,26 @@ export default function LoanForm({
 
       if (!query) {
         setMembers([]);
+        setLoadingMembers(false);
         return;
       }
 
       setLoadingMembers(true);
 
       try {
-        const response =
-          await fetch(
-            `/api/members?search=${encodeURIComponent(
-              query,
-            )}&page=1&limit=20`,
-            {
-              method: "GET",
-              cache: "no-store",
-              headers: {
-                Accept:
-                  "application/json",
-              },
+        const response = await fetch(
+          `/api/members?search=${encodeURIComponent(
+            query,
+          )}&page=1&limit=20&forLoan=true`,
+          {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              Accept:
+                "application/json",
             },
-          );
+          },
+        );
 
         let result:
           | MembersResponse
@@ -646,6 +768,10 @@ export default function LoanForm({
               )
             : [],
         );
+
+        clearSectionError(
+          "member",
+        );
       } catch (searchError) {
         if (cancelled) {
           return;
@@ -658,14 +784,17 @@ export default function LoanForm({
 
         setMembers([]);
 
-        setError(
+        showError(
           searchError instanceof Error
             ? searchError.message
             : "Unable to search members.",
+          "member",
         );
       } finally {
         if (!cancelled) {
-          setLoadingMembers(false);
+          setLoadingMembers(
+            false,
+          );
         }
       }
     }
@@ -686,9 +815,9 @@ export default function LoanForm({
     memberId,
   ]);
 
-  /* =======================================================
+  /* =========================================================
      LOAD SAVINGS ACCOUNT
-  ======================================================= */
+  ========================================================= */
 
   useEffect(() => {
     if (!open) {
@@ -710,20 +839,19 @@ export default function LoanForm({
       setLoadingSavings(true);
 
       try {
-        const response =
-          await fetch(
-            `/api/savings/accounts?memberId=${encodeURIComponent(
-              selectedMemberId,
-            )}`,
-            {
-              method: "GET",
-              cache: "no-store",
-              headers: {
-                Accept:
-                  "application/json",
-              },
+        const response = await fetch(
+          `/api/savings/accounts?memberId=${encodeURIComponent(
+            selectedMemberId,
+          )}`,
+          {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              Accept:
+                "application/json",
             },
-          );
+          },
+        );
 
         let result:
           | SavingsAccountResponse
@@ -740,14 +868,10 @@ export default function LoanForm({
           return;
         }
 
-        if (!response.ok) {
-          throw new Error(
-            result?.error ||
-              "Unable to load savings account.",
-          );
-        }
-
-        if (!result?.success) {
+        if (
+          !response.ok ||
+          !result?.success
+        ) {
           throw new Error(
             result?.error ||
               "Unable to load savings account.",
@@ -756,6 +880,10 @@ export default function LoanForm({
 
         setSavingsAccount(
           result.data || null,
+        );
+
+        clearSectionError(
+          "savings",
         );
       } catch (accountError) {
         if (cancelled) {
@@ -769,14 +897,17 @@ export default function LoanForm({
 
         setSavingsAccount(null);
 
-        setError(
+        showError(
           accountError instanceof Error
             ? accountError.message
             : "Unable to load savings account.",
+          "savings",
         );
       } finally {
         if (!cancelled) {
-          setLoadingSavings(false);
+          setLoadingSavings(
+            false,
+          );
         }
       }
     }
@@ -788,9 +919,9 @@ export default function LoanForm({
     };
   }, [open, member]);
 
-  /* =======================================================
-     ELIGIBILITY
-  ======================================================= */
+  /* =========================================================
+     CALCULATIONS
+  ========================================================= */
 
   const savingsBalance =
     typeof savingsAccount?.balance ===
@@ -800,13 +931,6 @@ export default function LoanForm({
     )
       ? savingsAccount.balance
       : 0;
-
-  const regularEligible =
-    Boolean(
-      settings &&
-        savingsBalance >=
-          settings.regularMinimumSavings,
-    );
 
   const maximumRegularLoan =
     settings
@@ -820,13 +944,17 @@ export default function LoanForm({
   const parsedPrincipal =
     parseMoney(principal);
 
-  const calculatedInterest =
-    parsedPrincipal !== null &&
+  const interestRate =
     settings
+      ? type === "emergency"
+        ? settings.emergencyInterestRate
+        : settings.regularInterestRate
+      : 0;
+
+  const calculatedInterest =
+    parsedPrincipal !== null
       ? parsedPrincipal *
-        (type === "emergency"
-          ? settings.emergencyInterestRate
-          : settings.regularInterestRate)
+        interestRate
       : 0;
 
   const calculatedTotalDue =
@@ -834,20 +962,6 @@ export default function LoanForm({
       ? parsedPrincipal +
         calculatedInterest
       : 0;
-
-  const calculatedFine =
-    dailyFine.trim()
-      ? parseMoney(dailyFine) || 0
-      : settings?.defaultDailyFine || 0;
-
-  const calculatedDueDate =
-    settings &&
-    disbursementDate
-      ? addDays(
-          disbursementDate,
-          settings.repaymentGraceDays,
-        )
-      : "";
 
   const exceedsRegularLimit =
     type === "regular" &&
@@ -861,9 +975,9 @@ export default function LoanForm({
     savingsBalance <
       settings.regularMinimumSavings;
 
-  /* =======================================================
+  /* =========================================================
      MEMBER SELECTION
-  ======================================================= */
+  ========================================================= */
 
   function handleSelectMember(
     selectedMember: Member,
@@ -876,20 +990,19 @@ export default function LoanForm({
       selectedMember.status !==
       "active"
     ) {
-      setError(
+      showError(
         "Only active members can receive loans.",
+        "member",
       );
 
       return;
     }
 
-    setMember(
-      selectedMember,
-    );
-
+    setMember(selectedMember);
     setMemberSearch("");
     setMembers([]);
-    setError(null);
+
+    clearError();
   }
 
   function clearMember() {
@@ -903,12 +1016,13 @@ export default function LoanForm({
     setMember(null);
     setSavingsAccount(null);
     setMemberSearch("");
-    setError(null);
+
+    clearError();
   }
 
-  /* =======================================================
-     TYPE CHANGE
-  ======================================================= */
+  /* =========================================================
+     LOAN TYPE
+  ========================================================= */
 
   function handleTypeChange(
     nextType: LoanType,
@@ -918,17 +1032,130 @@ export default function LoanForm({
     }
 
     setType(nextType);
-    setError(null);
 
-    /*
-     * Emergency and regular loans use different rates.
-     * The preview updates automatically.
-     */
+    clearSectionError(
+      "type",
+    );
   }
 
-  /* =======================================================
+  /* =========================================================
+     DATE HANDLERS
+  ========================================================= */
+
+  function handleDisbursementDateChange(
+    value: string,
+  ) {
+    if (submitting) {
+      return;
+    }
+
+    setDisbursementDate(value);
+
+    clearSectionError(
+      "dates",
+    );
+  }
+
+  function handleRepaymentDateChange(
+    value: string,
+  ) {
+    if (submitting) {
+      return;
+    }
+
+    repaymentDateAuto.current =
+      false;
+
+    setRepaymentDate(value);
+
+    clearSectionError(
+      "dates",
+    );
+  }
+
+  function handleEndDateChange(
+    value: string,
+  ) {
+    if (submitting) {
+      return;
+    }
+
+    endDateAuto.current = false;
+
+    setEndDate(value);
+
+    clearSectionError(
+      "dates",
+    );
+  }
+
+  /* =========================================================
+     PRINCIPAL HANDLER
+  ========================================================= */
+
+  function handlePrincipalChange(
+    value: string,
+  ) {
+    if (submitting) {
+      return;
+    }
+
+    setPrincipal(value);
+
+    clearSectionError(
+      "principal",
+    );
+  }
+
+  /* =========================================================
+     GUARANTOR HANDLERS
+  ========================================================= */
+
+  function handleGuarantorNameChange(
+    value: string,
+  ) {
+    if (submitting) {
+      return;
+    }
+
+    setGuarantorName(value);
+
+    clearSectionError(
+      "guarantor",
+    );
+  }
+
+  function handleGuarantorPhoneChange(
+    value: string,
+  ) {
+    if (submitting) {
+      return;
+    }
+
+    setGuarantorPhone(value);
+
+    clearSectionError(
+      "guarantor",
+    );
+  }
+
+  function handleGuarantorIdChange(
+    value: string,
+  ) {
+    if (submitting) {
+      return;
+    }
+
+    setGuarantorIdNumber(value);
+
+    clearSectionError(
+      "guarantor",
+    );
+  }
+
+  /* =========================================================
      SUBMIT
-  ======================================================= */
+  ========================================================= */
 
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
@@ -939,57 +1166,56 @@ export default function LoanForm({
       return;
     }
 
-    setError(null);
+    clearError();
 
-    /* -----------------------------------------------------
+    /* -------------------------------------------------------
        MEMBER
-    ----------------------------------------------------- */
+    ------------------------------------------------------- */
 
-    const selectedMember =
-      member;
-
-    if (!selectedMember) {
-      setError(
+    if (!member) {
+      showError(
         "Select a member before creating the loan.",
+        "member",
       );
 
       return;
     }
 
     const selectedMemberId =
-      getMemberId(
-        selectedMember,
-      );
+      getMemberId(member);
 
     if (!selectedMemberId) {
-      setError(
+      showError(
         "Selected member has no valid member ID.",
+        "member",
       );
 
       return;
     }
 
     if (
-      selectedMember.status !==
+      member.status !==
       "active"
     ) {
-      setError(
+      showError(
         "Only active members can receive loans.",
+        "member",
       );
 
       return;
     }
 
-    /* -----------------------------------------------------
-       SAVINGS ACCOUNT
-    ----------------------------------------------------- */
+    /* -------------------------------------------------------
+       SAVINGS
+    ------------------------------------------------------- */
 
     if (
       type === "regular" &&
       !savingsAccount
     ) {
-      setError(
+      showError(
         "The member does not have an active fixed savings account.",
+        "savings",
       );
 
       return;
@@ -999,46 +1225,76 @@ export default function LoanForm({
       type === "regular" &&
       savingsAccount
     ) {
-      const accountStatus =
-        savingsAccount.status;
-
       const active =
         savingsAccount.isActive !==
           false &&
-        accountStatus !==
+        savingsAccount.status !==
           "inactive";
 
       if (!active) {
-        setError(
+        showError(
           "The member's fixed savings account is inactive.",
+          "savings",
         );
 
         return;
       }
     }
 
-    /* -----------------------------------------------------
+    /* -------------------------------------------------------
        SETTINGS
-    ----------------------------------------------------- */
+    ------------------------------------------------------- */
 
     if (!settings) {
-      setError(
+      showError(
         "Loan settings are not available. Please refresh and try again.",
+        "settings",
       );
 
       return;
     }
 
-    /* -----------------------------------------------------
-       TYPE ENABLED
-    ----------------------------------------------------- */
+    if (
+      !Number.isInteger(
+        settings.repaymentCycleDays,
+      ) ||
+      settings.repaymentCycleDays <=
+        0
+    ) {
+      showError(
+        "Loan repayment cycle settings are invalid.",
+        "settings",
+      );
+
+      return;
+    }
+
+    if (
+      !Number.isFinite(
+        settings.fineRate,
+      ) ||
+      settings.fineRate < 0 ||
+      settings.fineRate > 1
+    ) {
+      showError(
+        "Loan fine rate settings are invalid.",
+        "settings",
+      );
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       LOAN TYPE ENABLED
+    ------------------------------------------------------- */
 
     if (
       type === "emergency" &&
       !settings.emergencyLoansEnabled
     ) {
-      setError(
+      showError(
         "Emergency loans are currently disabled.",
+        "type",
       );
 
       return;
@@ -1048,40 +1304,43 @@ export default function LoanForm({
       type === "regular" &&
       !settings.regularLoansEnabled
     ) {
-      setError(
+      showError(
         "Regular loans are currently disabled.",
+        "type",
       );
 
       return;
     }
 
-    /* -----------------------------------------------------
+    /* -------------------------------------------------------
        PRINCIPAL
-    ----------------------------------------------------- */
+    ------------------------------------------------------- */
 
     const amount =
       parseMoney(principal);
 
     if (amount === null) {
-      setError(
+      showError(
         "Enter a valid loan amount greater than zero.",
+        "principal",
       );
 
       return;
     }
 
-    /* -----------------------------------------------------
+    /* -------------------------------------------------------
        REGULAR ELIGIBILITY
-    ----------------------------------------------------- */
+    ------------------------------------------------------- */
 
     if (
       type === "regular" &&
       belowRegularMinimum
     ) {
-      setError(
+      showError(
         `Regular loan requires minimum savings of ${formatKES(
           settings.regularMinimumSavings,
         )}.`,
+        "savings",
       );
 
       return;
@@ -1091,77 +1350,95 @@ export default function LoanForm({
       type === "regular" &&
       exceedsRegularLimit
     ) {
-      setError(
+      showError(
         `Regular loan cannot exceed ${formatKES(
           maximumRegularLoan,
         )} based on the member's current savings.`,
+        "principal",
       );
 
       return;
     }
 
-    /* -----------------------------------------------------
-       DAILY FINE
-    ----------------------------------------------------- */
+    /* -------------------------------------------------------
+       DISBURSEMENT DATE
+    ------------------------------------------------------- */
 
-    let customDailyFine:
-      | number
-      | undefined;
-
-    if (
-      dailyFine.trim()
-    ) {
-      customDailyFine =
-        parseMoney(
-          dailyFine,
-        ) ?? undefined;
-
-      if (
-        customDailyFine ===
-        undefined
-      ) {
-        setError(
-          "Enter a valid daily fine or leave it blank to use the configured default.",
-        );
-
-        return;
-      }
-    }
-
-    /* -----------------------------------------------------
-       DATE
-    ----------------------------------------------------- */
-
-    if (
-      !disbursementDate
-    ) {
-      setError(
-        "Disbursement date is required.",
+    const parsedDisbursementDate =
+      getDateObject(
+        disbursementDate,
       );
 
-      return;
-    }
-
-    const parsedDate =
-      new Date(
-        `${disbursementDate}T00:00:00`,
-      );
-
-    if (
-      Number.isNaN(
-        parsedDate.getTime(),
-      )
-    ) {
-      setError(
+    if (!parsedDisbursementDate) {
+      showError(
         "Enter a valid disbursement date.",
+        "dates",
       );
 
       return;
     }
 
-    /* -----------------------------------------------------
+    /* -------------------------------------------------------
+       REPAYMENT DATE
+    ------------------------------------------------------- */
+
+    const parsedRepaymentDate =
+      getDateObject(
+        repaymentDate,
+      );
+
+    if (!parsedRepaymentDate) {
+      showError(
+        "A valid repayment date is required.",
+        "dates",
+      );
+
+      return;
+    }
+
+    if (
+      parsedRepaymentDate.getTime() <
+      parsedDisbursementDate.getTime()
+    ) {
+      showError(
+        "Repayment date cannot be before the disbursement date.",
+        "dates",
+      );
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       END DATE
+    ------------------------------------------------------- */
+
+    const parsedEndDate =
+      getDateObject(endDate);
+
+    if (!parsedEndDate) {
+      showError(
+        "A valid loan end date is required.",
+        "dates",
+      );
+
+      return;
+    }
+
+    if (
+      parsedEndDate.getTime() <
+      parsedRepaymentDate.getTime()
+    ) {
+      showError(
+        "End date cannot be before the repayment date.",
+        "dates",
+      );
+
+      return;
+    }
+
+    /* -------------------------------------------------------
        GUARANTOR
-    ----------------------------------------------------- */
+    ------------------------------------------------------- */
 
     const cleanGuarantorName =
       guarantorName.trim();
@@ -1173,24 +1450,26 @@ export default function LoanForm({
       guarantorIdNumber.trim();
 
     if (!cleanGuarantorName) {
-      setError(
+      showError(
         "Guarantor name is required.",
+        "guarantor",
       );
 
       return;
     }
 
     if (!cleanGuarantorPhone) {
-      setError(
+      showError(
         "Guarantor phone number is required.",
+        "guarantor",
       );
 
       return;
     }
 
-    /* -----------------------------------------------------
-       BUILD INPUT
-    ----------------------------------------------------- */
+    /* -------------------------------------------------------
+       CREATE INPUT
+    ------------------------------------------------------- */
 
     const input: CreateLoanInput = {
       memberId:
@@ -1198,8 +1477,19 @@ export default function LoanForm({
 
       type,
 
-      principal:
-        amount,
+      principal: amount,
+
+      fineRate:
+        settings.fineRate,
+
+      disbursementDate:
+        parsedDisbursementDate,
+
+      repaymentDate:
+        parsedRepaymentDate,
+
+      endDate:
+        parsedEndDate,
 
       guarantor: {
         name:
@@ -1215,50 +1505,42 @@ export default function LoanForm({
             }
           : {}),
       },
-
-      ...(customDailyFine !==
-      undefined
-        ? {
-            dailyFine:
-              customDailyFine,
-          }
-        : {}),
-
-      disbursementDate:
-        parsedDate,
     };
 
-    /* -----------------------------------------------------
-       SUBMIT
-    ----------------------------------------------------- */
+    /* -------------------------------------------------------
+       API REQUEST
+    ------------------------------------------------------- */
 
     setSubmitting(true);
 
     try {
-      const response =
-        await fetch(
-          "/api/loans",
-          {
-            method: "POST",
+      const response = await fetch(
+        "/api/loans",
+        {
+          method: "POST",
 
-            headers: {
-              "Content-Type":
-                "application/json",
-              Accept:
-                "application/json",
-            },
+          headers: {
+            "Content-Type":
+              "application/json",
 
-            body: JSON.stringify({
-              ...input,
-
-              /*
-               * Date is serialized explicitly.
-               */
-              disbursementDate:
-                parsedDate.toISOString(),
-            }),
+            Accept:
+              "application/json",
           },
-        );
+
+          body: JSON.stringify({
+            ...input,
+
+            disbursementDate:
+              parsedDisbursementDate.toISOString(),
+
+            repaymentDate:
+              parsedRepaymentDate.toISOString(),
+
+            endDate:
+              parsedEndDate.toISOString(),
+          }),
+        },
+      );
 
       let result:
         | LoanApiResponse
@@ -1288,9 +1570,7 @@ export default function LoanForm({
         );
       }
 
-      onSuccess?.(
-        result.data,
-      );
+      onSuccess?.(result.data);
 
       resetForm();
       onClose();
@@ -1300,19 +1580,20 @@ export default function LoanForm({
         submitError,
       );
 
-      setError(
+      showError(
         submitError instanceof Error
           ? submitError.message
           : "Failed to create loan.",
+        "general",
       );
     } finally {
       setSubmitting(false);
     }
   }
 
-  /* =======================================================
+  /* =========================================================
      CLOSE
-  ======================================================= */
+  ========================================================= */
 
   function handleClose() {
     if (submitting) {
@@ -1323,17 +1604,17 @@ export default function LoanForm({
     onClose();
   }
 
-  /* =======================================================
+  /* =========================================================
      CLOSED
-  ======================================================= */
+  ========================================================= */
 
   if (!open) {
     return null;
   }
 
-  /* =======================================================
+  /* =========================================================
      UI
-  ======================================================= */
+  ========================================================= */
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
@@ -1377,7 +1658,7 @@ export default function LoanForm({
         </div>
 
         {/* =================================================
-            BODY
+            FORM
         ================================================= */}
 
         <form
@@ -1386,28 +1667,59 @@ export default function LoanForm({
         >
           <div className="space-y-5 p-5 sm:p-6">
 
-            {/* =============================================
-                ERROR
-            ============================================= */}
+            {/* =================================================
+                SYSTEM ERROR
+            ================================================= */}
 
-            {error && (
-              <div className="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-3.5">
-                <AlertCircle
-                  size={18}
-                  className="mt-0.5 shrink-0 text-red-400"
-                />
+            {error &&
+              errorSection ===
+                "general" && (
+                <div
+                  role="alert"
+                  className="flex items-start gap-3 rounded-2xl border border-red-400/20 bg-red-500/[0.07] px-4 py-3"
+                >
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-red-500/10">
+                    <AlertCircle
+                      size={15}
+                      className="text-red-400"
+                    />
+                  </div>
 
-                <p className="text-sm leading-5 text-red-200">
-                  {error}
-                </p>
-              </div>
-            )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-red-200">
+                      Unable to create loan
+                    </p>
 
-            {/* =============================================
+                    <p className="mt-0.5 text-xs leading-5 text-red-200/70">
+                      {error}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={
+                      clearError
+                    }
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-red-300/50 transition hover:bg-red-500/10 hover:text-red-200"
+                    aria-label="Dismiss error"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+            {/* =================================================
                 MEMBER
-            ============================================= */}
+            ================================================= */}
 
-            <section className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+            <section
+              className={`rounded-2xl border bg-white/[0.025] p-4 ${
+                errorSection ===
+                "member"
+                  ? "border-red-500/25"
+                  : "border-white/10"
+              }`}
+            >
               <div className="mb-4">
                 <h3 className="text-sm font-semibold text-white">
                   Member
@@ -1420,7 +1732,14 @@ export default function LoanForm({
 
               {!member ? (
                 <div className="relative">
-                  <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3">
+                  <div
+                    className={`flex items-center gap-2 rounded-xl border bg-black/20 px-3 ${
+                      errorSection ===
+                      "member"
+                        ? "border-red-500/30"
+                        : "border-white/10"
+                    }`}
+                  >
                     <Search
                       size={16}
                       className="shrink-0 text-white/30"
@@ -1428,13 +1747,22 @@ export default function LoanForm({
 
                     <input
                       type="search"
-                      value={memberSearch}
-                      onChange={(event) =>
-                        setMemberSearch(
-                          event.target.value,
-                        )
+                      value={
+                        memberSearch
                       }
-                      placeholder="Search name, member number, phone..."
+                      onChange={(
+                        event,
+                      ) => {
+                        setMemberSearch(
+                          event.target
+                            .value,
+                        );
+
+                        clearSectionError(
+                          "member",
+                        );
+                      }}
+                      placeholder="Search member first and middle name"
                       disabled={
                         submitting ||
                         Boolean(
@@ -1462,13 +1790,11 @@ export default function LoanForm({
                         ) : members.length ===
                           0 ? (
                           <div className="p-4 text-center text-xs text-white/40">
-                            No active members found.
+                            No eligible active members found.
                           </div>
                         ) : (
                           members.map(
-                            (
-                              item,
-                            ) => {
+                            (item) => {
                               const itemId =
                                 item._id;
 
@@ -1511,6 +1837,7 @@ export default function LoanForm({
                                       {
                                         item.membershipNumber
                                       }
+
                                       {item.phone
                                         ? ` • ${item.phone}`
                                         : ""}
@@ -1518,7 +1845,7 @@ export default function LoanForm({
                                   </div>
 
                                   <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] capitalize text-emerald-300">
-                                    active
+                                    eligible
                                   </span>
                                 </button>
                               );
@@ -1542,7 +1869,10 @@ export default function LoanForm({
                     </p>
 
                     <p className="mt-0.5 text-xs text-white/45">
-                      {member.membershipNumber}
+                      {
+                        member.membershipNumber
+                      }
+
                       {member.phone
                         ? ` • ${member.phone}`
                         : ""}
@@ -1554,7 +1884,7 @@ export default function LoanForm({
                       <CheckCircle2
                         size={11}
                       />
-                      Active
+                      Eligible
                     </span>
 
                     {!memberId.trim() && (
@@ -1576,7 +1906,17 @@ export default function LoanForm({
                 </div>
               )}
 
-              {/* SAVINGS STATUS */}
+              {/* MEMBER ERROR */}
+
+              {error &&
+                errorSection ===
+                  "member" && (
+                  <SectionError>
+                    {error}
+                  </SectionError>
+                )}
+
+              {/* SAVINGS */}
 
               {member && (
                 <div className="mt-3 rounded-xl bg-black/20 p-3">
@@ -1622,13 +1962,30 @@ export default function LoanForm({
                   </div>
                 </div>
               )}
+
+              {/* SAVINGS ERROR */}
+
+              {error &&
+                errorSection ===
+                  "savings" && (
+                  <SectionError>
+                    {error}
+                  </SectionError>
+                )}
             </section>
 
-            {/* =============================================
+            {/* =================================================
                 LOAN TYPE
-            ============================================= */}
+            ================================================= */}
 
-            <section className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+            <section
+              className={`rounded-2xl border bg-white/[0.025] p-4 ${
+                errorSection ===
+                "type"
+                  ? "border-red-500/25"
+                  : "border-white/10"
+              }`}
+            >
               <div className="mb-4">
                 <h3 className="text-sm font-semibold text-white">
                   Loan type
@@ -1737,6 +2094,14 @@ export default function LoanForm({
                 </button>
               </div>
 
+              {error &&
+                errorSection ===
+                  "type" && (
+                  <SectionError>
+                    {error}
+                  </SectionError>
+                )}
+
               {/* REGULAR ELIGIBILITY */}
 
               {type === "regular" &&
@@ -1783,28 +2148,46 @@ export default function LoanForm({
                 )}
             </section>
 
-            {/* =============================================
+            {/* =================================================
                 LOAN TERMS
-            ============================================= */}
+            ================================================= */}
 
-            <section className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+            <section
+              className={`rounded-2xl border bg-white/[0.025] p-4 ${
+                errorSection ===
+                  "principal" ||
+                errorSection ===
+                  "dates"
+                  ? "border-red-500/25"
+                  : "border-white/10"
+              }`}
+            >
               <div className="mb-4">
                 <h3 className="text-sm font-semibold text-white">
                   Loan terms
                 </h3>
 
                 <p className="mt-1 text-xs text-white/40">
-                  Enter the requested principal and disbursement details.
+                  Enter the principal and repayment schedule.
                 </p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
+                {/* PRINCIPAL */}
+
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-medium text-white/55">
                     Principal
                   </span>
 
-                  <div className="flex items-center rounded-xl border border-white/10 bg-black/20 px-3">
+                  <div
+                    className={`flex items-center rounded-xl border bg-black/20 px-3 ${
+                      errorSection ===
+                      "principal"
+                        ? "border-red-500/30"
+                        : "border-white/10"
+                    }`}
+                  >
                     <CircleDollarSign
                       size={16}
                       className="mr-2 shrink-0 text-white/30"
@@ -1815,10 +2198,15 @@ export default function LoanForm({
                       min="0.01"
                       step="0.01"
                       inputMode="decimal"
-                      value={principal}
-                      onChange={(event) =>
-                        setPrincipal(
-                          event.target.value,
+                      value={
+                        principal
+                      }
+                      onChange={(
+                        event,
+                      ) =>
+                        handlePrincipalChange(
+                          event.target
+                            .value,
                         )
                       }
                       placeholder="0.00"
@@ -1828,14 +2216,31 @@ export default function LoanForm({
                       className="h-11 w-full bg-transparent text-sm text-white outline-none placeholder:text-white/25"
                     />
                   </div>
+
+                  {error &&
+                    errorSection ===
+                      "principal" && (
+                      <FieldError>
+                        {error}
+                      </FieldError>
+                    )}
                 </label>
+
+                {/* DISBURSEMENT */}
 
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-medium text-white/55">
                     Disbursement date
                   </span>
 
-                  <div className="flex items-center rounded-xl border border-white/10 bg-black/20 px-3">
+                  <div
+                    className={`flex items-center rounded-xl border bg-black/20 px-3 ${
+                      errorSection ===
+                      "dates"
+                        ? "border-red-500/30"
+                        : "border-white/10"
+                    }`}
+                  >
                     <CalendarDays
                       size={16}
                       className="mr-2 shrink-0 text-white/30"
@@ -1846,9 +2251,12 @@ export default function LoanForm({
                       value={
                         disbursementDate
                       }
-                      onChange={(event) =>
-                        setDisbursementDate(
-                          event.target.value,
+                      onChange={(
+                        event,
+                      ) =>
+                        handleDisbursementDateChange(
+                          event.target
+                            .value,
                         )
                       }
                       disabled={
@@ -1859,54 +2267,160 @@ export default function LoanForm({
                   </div>
                 </label>
 
-                <label className="block sm:col-span-2">
+                {/* REPAYMENT */}
+
+                <label className="block">
                   <span className="mb-1.5 block text-xs font-medium text-white/55">
-                    Daily overdue fine
-                    <span className="ml-1 text-white/25">
-                      optional
-                    </span>
+                    Repayment date
                   </span>
 
-                  <div className="flex items-center rounded-xl border border-white/10 bg-black/20 px-3">
-                    <CircleDollarSign
+                  <div
+                    className={`flex items-center rounded-xl border bg-black/20 px-3 ${
+                      errorSection ===
+                      "dates"
+                        ? "border-red-500/30"
+                        : "border-white/10"
+                    }`}
+                  >
+                    <CalendarDays
                       size={16}
-                      className="mr-2 shrink-0 text-white/30"
+                      className="mr-2 shrink-0 text-emerald-400/60"
                     />
 
                     <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      inputMode="decimal"
-                      value={dailyFine}
-                      onChange={(event) =>
-                        setDailyFine(
-                          event.target.value,
-                        )
+                      type="date"
+                      value={
+                        repaymentDate
                       }
-                      placeholder={
-                        settings
-                          ? `Default: ${settings.defaultDailyFine}`
-                          : "Use configured default"
+                      min={
+                        disbursementDate ||
+                        undefined
+                      }
+                      onChange={(
+                        event,
+                      ) =>
+                        handleRepaymentDateChange(
+                          event.target
+                            .value,
+                        )
                       }
                       disabled={
                         submitting
                       }
-                      className="h-11 w-full bg-transparent text-sm text-white outline-none placeholder:text-white/25"
+                      className="h-11 w-full bg-transparent text-sm text-white outline-none"
                     />
                   </div>
 
-                  <p className="mt-1.5 text-[10px] text-white/30">
-                    Leave blank to use the current configured default.
+                  <p className="mt-1.5 text-[10px] leading-4 text-white/30">
+                    Defaults to the configured repayment cycle from disbursement.
+                  </p>
+                </label>
+
+                {/* END DATE */}
+
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-medium text-white/55">
+                    Loan end date
+                  </span>
+
+                  <div
+                    className={`flex items-center rounded-xl border bg-black/20 px-3 ${
+                      errorSection ===
+                      "dates"
+                        ? "border-red-500/30"
+                        : "border-white/10"
+                    }`}
+                  >
+                    <CalendarDays
+                      size={16}
+                      className="mr-2 shrink-0 text-amber-400/60"
+                    />
+
+                    <input
+                      type="date"
+                      value={
+                        endDate
+                      }
+                      min={
+                        repaymentDate ||
+                        disbursementDate ||
+                        undefined
+                      }
+                      onChange={(
+                        event,
+                      ) =>
+                        handleEndDateChange(
+                          event.target
+                            .value,
+                        )
+                      }
+                      disabled={
+                        submitting
+                      }
+                      className="h-11 w-full bg-transparent text-sm text-white outline-none"
+                    />
+                  </div>
+
+                  <p className="mt-1.5 text-[10px] leading-4 text-white/30">
+                    The final date by which the loan should be completed.
                   </p>
                 </label>
               </div>
+
+              {error &&
+                errorSection ===
+                  "dates" && (
+                  <SectionError>
+                    {error}
+                  </SectionError>
+                )}
+
+              {/* CONFIGURED TERMS */}
+
+              {settings && (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-[9px] uppercase tracking-wide text-white/30">
+                      Repayment cycle
+                    </p>
+
+                    <p className="mt-1 text-sm font-semibold text-white">
+                      {
+                        settings.repaymentCycleDays
+                      }{" "}
+                      days
+                    </p>
+
+                    <p className="mt-1 text-[10px] leading-4 text-white/30">
+                      Measured from the disbursement date.
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-[9px] uppercase tracking-wide text-white/30">
+                      Fine rate
+                    </p>
+
+                    <p className="mt-1 text-sm font-semibold text-white">
+                      {(
+                        settings.fineRate *
+                        100
+                      ).toFixed(2)}
+                      %
+                    </p>
+
+                    <p className="mt-1 text-[10px] leading-4 text-white/30">
+                      Applied once per completed repayment cycle.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* PREVIEW */}
 
               {parsedPrincipal !==
                 null && (
-                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
                   <div className="rounded-xl bg-black/20 p-3">
                     <p className="text-[9px] uppercase tracking-wide text-white/30">
                       Principal
@@ -1945,16 +2459,29 @@ export default function LoanForm({
 
                   <div className="rounded-xl bg-black/20 p-3">
                     <p className="text-[9px] uppercase tracking-wide text-white/30">
-                      First due
+                      Repayment
                     </p>
 
                     <p className="mt-1 text-xs font-semibold text-white">
-                      {calculatedDueDate ||
+                      {repaymentDate ||
+                        "—"}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-black/20 p-3">
+                    <p className="text-[9px] uppercase tracking-wide text-white/30">
+                      End date
+                    </p>
+
+                    <p className="mt-1 text-xs font-semibold text-white">
+                      {endDate ||
                         "—"}
                     </p>
                   </div>
                 </div>
               )}
+
+              {/* REGULAR LIMIT */}
 
               {type === "regular" &&
                 exceedsRegularLimit && (
@@ -1977,11 +2504,30 @@ export default function LoanForm({
                 )}
             </section>
 
-            {/* =============================================
-                GUARANTOR
-            ============================================= */}
+            {/* =================================================
+                SETTINGS ERROR
+            ================================================= */}
 
-            <section className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+            {error &&
+              errorSection ===
+                "settings" && (
+                <SectionError>
+                  {error}
+                </SectionError>
+              )}
+
+            {/* =================================================
+                GUARANTOR
+            ================================================= */}
+
+            <section
+              className={`rounded-2xl border bg-white/[0.025] p-4 ${
+                errorSection ===
+                "guarantor"
+                  ? "border-red-500/25"
+                  : "border-white/10"
+              }`}
+            >
               <div className="mb-4">
                 <h3 className="text-sm font-semibold text-white">
                   Guarantor
@@ -1993,6 +2539,8 @@ export default function LoanForm({
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
+                {/* NAME */}
+
                 <label className="block sm:col-span-2">
                   <span className="mb-1.5 block text-xs font-medium text-white/55">
                     Full name
@@ -2000,19 +2548,31 @@ export default function LoanForm({
 
                   <input
                     type="text"
-                    value={guarantorName}
-                    onChange={(event) =>
-                      setGuarantorName(
-                        event.target.value,
+                    value={
+                      guarantorName
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      handleGuarantorNameChange(
+                        event.target
+                          .value,
                       )
                     }
                     placeholder="Guarantor full name"
                     disabled={
                       submitting
                     }
-                    className="h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-white/20"
+                    className={`h-11 w-full rounded-xl border bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-white/20 ${
+                      errorSection ===
+                      "guarantor"
+                        ? "border-red-500/30"
+                        : "border-white/10"
+                    }`}
                   />
                 </label>
+
+                {/* PHONE */}
 
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-medium text-white/55">
@@ -2021,19 +2581,31 @@ export default function LoanForm({
 
                   <input
                     type="tel"
-                    value={guarantorPhone}
-                    onChange={(event) =>
-                      setGuarantorPhone(
-                        event.target.value,
+                    value={
+                      guarantorPhone
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      handleGuarantorPhoneChange(
+                        event.target
+                          .value,
                       )
                     }
                     placeholder="07xx xxx xxx"
                     disabled={
                       submitting
                     }
-                    className="h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-white/20"
+                    className={`h-11 w-full rounded-xl border bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-white/20 ${
+                      errorSection ===
+                      "guarantor"
+                        ? "border-red-500/30"
+                        : "border-white/10"
+                    }`}
                   />
                 </label>
+
+                {/* ID */}
 
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-medium text-white/55">
@@ -2048,9 +2620,12 @@ export default function LoanForm({
                     value={
                       guarantorIdNumber
                     }
-                    onChange={(event) =>
-                      setGuarantorIdNumber(
-                        event.target.value,
+                    onChange={(
+                      event,
+                    ) =>
+                      handleGuarantorIdChange(
+                        event.target
+                          .value,
                       )
                     }
                     placeholder="Guarantor ID number"
@@ -2061,11 +2636,19 @@ export default function LoanForm({
                   />
                 </label>
               </div>
+
+              {error &&
+                errorSection ===
+                  "guarantor" && (
+                  <SectionError>
+                    {error}
+                  </SectionError>
+                )}
             </section>
 
-            {/* =============================================
+            {/* =================================================
                 FINAL SUMMARY
-            ============================================= */}
+            ================================================= */}
 
             {parsedPrincipal !==
               null && (
@@ -2132,13 +2715,50 @@ export default function LoanForm({
 
                   <div className="flex justify-between gap-4">
                     <span className="text-white/45">
-                      Daily fine
+                      Repayment date
                     </span>
 
-                    <span className="text-white">
-                      {formatKES(
-                        calculatedFine,
-                      )}
+                    <span className="font-medium text-white">
+                      {repaymentDate ||
+                        "—"}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between gap-4">
+                    <span className="text-white/45">
+                      Loan end date
+                    </span>
+
+                    <span className="font-medium text-white">
+                      {endDate ||
+                        "—"}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between gap-4">
+                    <span className="text-white/45">
+                      Repayment cycle
+                    </span>
+
+                    <span className="font-medium text-white">
+                      {settings
+                        ? `${settings.repaymentCycleDays} days`
+                        : "—"}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between gap-4">
+                    <span className="text-white/45">
+                      Fine rate
+                    </span>
+
+                    <span className="font-medium text-white">
+                      {settings
+                        ? `${(
+                            settings.fineRate *
+                            100
+                          ).toFixed(2)}%`
+                        : "—"}
                     </span>
                   </div>
 
@@ -2160,15 +2780,17 @@ export default function LoanForm({
             )}
           </div>
 
-          {/* =============================================
+          {/* =================================================
               FOOTER
-          ============================================= */}
+          ================================================= */}
 
           <div className="sticky bottom-0 border-t border-white/10 bg-[#0b0f0e]/95 px-5 py-4 backdrop-blur sm:px-6">
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <button
                 type="button"
-                onClick={handleClose}
+                onClick={
+                  handleClose
+                }
                 disabled={
                   submitting
                 }
@@ -2181,16 +2803,7 @@ export default function LoanForm({
                 type="submit"
                 disabled={
                   submitting ||
-                  !member ||
-                  !settings ||
-                  !parsedPrincipal ||
-                  !guarantorName.trim() ||
-                  !guarantorPhone.trim() ||
-                  (type ===
-                    "regular" &&
-                    (!savingsAccount ||
-                      belowRegularMinimum ||
-                      exceedsRegularLimit))
+                  loadingSettings
                 }
                 className="flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-6 text-sm font-semibold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
               >
