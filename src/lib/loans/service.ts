@@ -4772,9 +4772,17 @@ export async function createLoanRepayment(
    CREATE LOAN WAIVER
 ========================================================= */
 
+/* =========================================================
+   CREATE LOAN WAIVER
+========================================================= */
+
 export async function createLoanWaiver(
   input: CreateLoanWaiverInput,
 ): Promise<LoanWaiver> {
+  /* =======================================================
+     INPUT VALIDATION
+  ======================================================= */
+
   const validation =
     validateCreateLoanWaiver(
       input,
@@ -4788,261 +4796,628 @@ export async function createLoanWaiver(
     );
   }
 
+  /* =======================================================
+     NORMALIZE IMMUTABLE IDEMPOTENCY REFERENCE
+     
+     The reference belongs to the financial event.
+     
+     It must remain exactly the same when the client
+     retries the same waiver request.
+  ======================================================= */
+
+  const reference =
+    normalizeText(
+      input.waiverReference,
+    );
+
+  if (!reference) {
+    throw new Error(
+      "Waiver reference is required.",
+    );
+  }
+
+  /* =======================================================
+     NORMALIZE REQUEST VALUES
+  ======================================================= */
+
+  const amount =
+    money(
+      input.amount,
+    );
+
+  const loanId =
+    createObjectId(
+      input.loanId,
+    );
+
+  const reason =
+    normalizeText(
+      input.reason,
+    );
+
+  if (!reason) {
+    throw new Error(
+      "A waiver reason is required.",
+    );
+  }
+
+  /* =======================================================
+     GET COLLECTIONS
+  ======================================================= */
+
   const {
     client,
+    waivers,
   } =
     await getCollections();
+
+  /* =======================================================
+     FIRST IDEMPOTENCY CHECK
+     
+     Handles normal retries where the original request
+     already committed successfully.
+  ======================================================= */
+
+  const existing =
+    await waivers.findOne({
+      waiverReference:
+        reference,
+    });
+
+  if (existing) {
+    /* -----------------------------------------------------
+       SAME REFERENCE + DIFFERENT AMOUNT
+       ----------------------------------------------------- */
+
+    if (
+      money(
+        existing.amount,
+      ) !== amount
+    ) {
+      throw new Error(
+        "Waiver reference already exists for a different amount.",
+      );
+    }
+
+    /* -----------------------------------------------------
+       SAME REFERENCE + DIFFERENT LOAN
+       ----------------------------------------------------- */
+
+    if (
+      existing.loanId.toString() !==
+      loanId.toString()
+    ) {
+      throw new Error(
+        "Waiver reference already exists for a different loan.",
+      );
+    }
+
+    /* -----------------------------------------------------
+       SAME REFERENCE + DIFFERENT REASON
+       
+       A reference represents one immutable financial
+       event. Reusing it for a different reason is unsafe.
+    ----------------------------------------------------- */
+
+    if (
+      normalizeText(
+        existing.reason,
+      ) !== reason
+    ) {
+      throw new Error(
+        "Waiver reference already exists for a different reason.",
+      );
+    }
+
+    return toWaiver(
+      existing,
+    );
+  }
+
+  /* =======================================================
+     DATABASE TRANSACTION
+  ======================================================= */
 
   const session =
     client.startSession();
 
   try {
-    return await session.withTransaction(
-      async (): Promise<LoanWaiver> => {
-        const {
-          loans,
-          waivers,
-        } =
-          await getCollections();
+    const transactionResult =
+      await session.withTransaction(
+        async (): Promise<LoanWaiver> => {
+          const {
+            loans,
+            waivers,
+          } =
+            await getCollections();
 
-        const loanId =
-          createObjectId(
-            input.loanId,
-          );
+          /* =================================================
+             SECOND IDEMPOTENCY CHECK
+             
+             Protects against concurrent requests using the
+             same waiver reference.
+          ================================================= */
 
-        const loan =
-          await loans.findOne(
-            {
-              _id:
-                loanId,
-            },
+          const alreadyExists =
+            await waivers.findOne(
+              {
+                waiverReference:
+                  reference,
+              },
+              {
+                session,
+              },
+            );
 
-            {
-              session,
-            },
-          );
+          if (alreadyExists) {
+            /* -----------------------------------------------
+               VERIFY AMOUNT
+            ----------------------------------------------- */
 
-        if (!loan) {
-          throw new Error(
-            "Loan not found.",
-          );
-        }
+            if (
+              money(
+                alreadyExists.amount,
+              ) !== amount
+            ) {
+              throw new Error(
+                "Waiver reference already exists for a different amount.",
+              );
+            }
 
-        if (
-          loan.status ===
-          "cancelled"
-        ) {
-          throw new Error(
-            "Cancelled loans cannot receive fine waivers.",
-          );
-        }
+            /* -----------------------------------------------
+               VERIFY LOAN
+            ----------------------------------------------- */
 
-        if (
-          loan.status ===
-          "completed"
-        ) {
-          throw new Error(
-            "Completed loans cannot receive fine waivers.",
-          );
-        }
+            if (
+              alreadyExists.loanId.toString() !==
+              loanId.toString()
+            ) {
+              throw new Error(
+                "Waiver reference already exists for a different loan.",
+              );
+            }
 
-        const totalFines =
-          await getLoanFineTotal(
-            loanId,
-            session,
-          );
+            /* -----------------------------------------------
+               VERIFY REASON
+            ----------------------------------------------- */
 
-        const totalWaived =
-          await getLoanWaivedFineTotal(
-            loanId,
-            session,
-          );
+            if (
+              normalizeText(
+                alreadyExists.reason,
+              ) !== reason
+            ) {
+              throw new Error(
+                "Waiver reference already exists for a different reason.",
+              );
+            }
 
-        const available =
-          money(
-            Math.max(
-              0,
-              totalFines -
-                totalWaived,
-            ),
-          );
+            return toWaiver(
+              alreadyExists,
+            );
+          }
 
-        const amount =
-          money(
-            input.amount,
-          );
+          /* =================================================
+             LOAD LOAN
+          ================================================= */
 
-        if (
-          available <=
-          0
-        ) {
-          throw new Error(
-            "There are no active fines available for waiver.",
-          );
-        }
+          const loan =
+            await loans.findOne(
+              {
+                _id:
+                  loanId,
+              },
+              {
+                session,
+              },
+            );
 
-        if (
-          amount >
-          available
-        ) {
-          throw new Error(
-            `Waiver cannot exceed the available fine balance of KSh ${available.toLocaleString()}.`,
-          );
-        }
+          if (!loan) {
+            throw new Error(
+              "Loan not found.",
+            );
+          }
 
-        const actor =
-          normalizeActor(
-            input.waivedBy,
-          );
+          /* =================================================
+             LOAN STATUS
+          ================================================= */
 
-        const now =
-          new Date();
+          if (
+            loan.status ===
+            "cancelled"
+          ) {
+            throw new Error(
+              "Cancelled loans cannot receive fine waivers.",
+            );
+          }
 
-        const waiverDocument:
-          LoanWaiverDocument = {
-          _id:
-            new ObjectId(),
+          if (
+            loan.status ===
+            "completed"
+          ) {
+            throw new Error(
+              "Completed loans cannot receive fine waivers.",
+            );
+          }
 
-          loanId,
+          /* =================================================
+             CURRENT FINE LEDGER
+          ================================================= */
 
-          loanNumber:
-            loan.loanNumber,
-
-          memberId:
-            loan.memberId,
-
-          amount,
-
-          reason:
-            normalizeText(
-              input.reason,
-            ),
-
-          waivedBy:
-            actor,
-
-          createdAt:
-            now,
-        };
-
-        await waivers.insertOne(
-          waiverDocument,
-          {
-            session,
-          },
-        );
-
-        const newTotalWaived =
-          money(
-            totalWaived +
-              amount,
-          );
-
-        const outstanding =
-          calculateFinalOutstanding(
-            loan.totalDue,
-            totalFines,
-            newTotalWaived,
-            await getLoanPaidTotal(
+          const totalFines =
+            await getLoanFineTotal(
               loanId,
               session,
-            ),
-          );
+            );
 
-        const updateResult =
-          await loans.updateOne(
-            {
-              _id:
-                loanId,
+          /* =================================================
+             CURRENT WAIVER LEDGER
+          ================================================= */
 
-              totalFines:
-                loan.totalFines,
-
-              totalWaivedFines:
-                loan.totalWaivedFines,
-
-              outstandingBalance:
-                loan.outstandingBalance,
-            },
-
-            {
-              $set: {
-                totalFines,
-
-                totalWaivedFines:
-                  newTotalWaived,
-
-                outstandingBalance:
-                  outstanding,
-
-                updatedAt:
-                  now,
-              },
-            },
-
-            {
+          const totalWaived =
+            await getLoanWaivedFineTotal(
+              loanId,
               session,
-            },
-          );
+            );
 
-        if (
-          updateResult.modifiedCount !==
-          1
-        ) {
-          throw new Error(
-            "Loan balance changed while recording the waiver. The transaction was aborted; please retry.",
-          );
-        }
+          /* =================================================
+             AVAILABLE FINE BALANCE
+             
+             Waivers can only consume fines that have not
+             already been waived.
+          ================================================= */
 
-        await writeAudit(
-          loanId,
-          loan.loanNumber,
-          "waiver_recorded",
-          actor,
-          {
-            waiverId:
-              waiverDocument._id!.toString(),
+          const available =
+            money(
+              Math.max(
+                0,
+                totalFines -
+                  totalWaived,
+              ),
+            );
+
+          if (
+            available <=
+            0
+          ) {
+            throw new Error(
+              "There are no active fines available for waiver.",
+            );
+          }
+
+          /* =================================================
+             OVER-WAIVER PROTECTION
+          ================================================= */
+
+          if (
+            amount >
+            available
+          ) {
+            throw new Error(
+              `Waiver cannot exceed the available fine balance of KSh ${available.toLocaleString()}.`,
+            );
+          }
+
+          /* =================================================
+             ACTOR
+          ================================================= */
+
+          const actor =
+            normalizeActor(
+              input.waivedBy,
+            );
+
+          /* =================================================
+             TIMESTAMP
+          ================================================= */
+
+          const now =
+            new Date();
+
+          /* =================================================
+             IMMUTABLE WAIVER DOCUMENT
+          ================================================= */
+
+          const waiverDocument:
+            LoanWaiverDocument = {
+            _id:
+              new ObjectId(),
+
+            loanId,
+
+            loanNumber:
+              loan.loanNumber,
+
+            memberId:
+              loan.memberId,
+
+            waiverReference:
+              reference,
 
             amount,
 
-            reason:
-              waiverDocument.reason,
+            reason,
 
-            availableBefore:
-              available,
+            waivedBy:
+              actor,
 
-            availableAfter:
-              money(
-                available -
-                  amount,
+            createdAt:
+              now,
+          };
+
+          /* =================================================
+             INSERT IMMUTABLE WAIVER
+             
+             The unique waiverReference index provides the
+             final database-level concurrency guarantee.
+          ================================================= */
+
+          try {
+            await waivers.insertOne(
+              waiverDocument,
+              {
+                session,
+              },
+            );
+          } catch (error) {
+            if (
+              isDuplicateKeyError(
+                error,
+              )
+            ) {
+              throw new Error(
+                "WAIVER_IDEMPOTENCY_RACE",
+              );
+            }
+
+            throw error;
+          }
+
+          /* =================================================
+             NEW WAIVED TOTAL
+          ================================================= */
+
+          const newTotalWaived =
+            money(
+              totalWaived +
+                amount,
+            );
+
+          /* =================================================
+             CURRENT PAID TOTAL
+          ================================================= */
+
+          const amountPaid =
+            await getLoanPaidTotal(
+              loanId,
+              session,
+            );
+
+          /* =================================================
+             NEW OUTSTANDING BALANCE
+          ================================================= */
+
+          const outstanding =
+            calculateFinalOutstanding(
+              loan.totalDue,
+              totalFines,
+              Math.min(
+                totalFines,
+                newTotalWaived,
               ),
+              amountPaid,
+            );
 
-            outstandingAfter:
-              outstanding,
+          /* =================================================
+             UPDATE LOAN PROJECTION
+             
+             Optimistic concurrency protection prevents this
+             waiver from silently overwriting another financial
+             mutation.
+          ================================================= */
+
+          const updateResult =
+            await loans.updateOne(
+              {
+                _id:
+                  loanId,
+
+                amountPaid:
+                  loan.amountPaid,
+
+                totalFines:
+                  loan.totalFines,
+
+                totalWaivedFines:
+                  loan.totalWaivedFines,
+
+                outstandingBalance:
+                  loan.outstandingBalance,
+
+                status: {
+                  $in: [
+                    "pending",
+                    "active",
+                  ],
+                },
+              },
+
+              {
+                $set: {
+                  totalFines,
+
+                  totalWaivedFines:
+                    newTotalWaived,
+
+                  outstandingBalance:
+                    outstanding,
+
+                  updatedAt:
+                    now,
+                },
+              },
+
+              {
+                session,
+              },
+            );
+
+          if (
+            updateResult.modifiedCount !==
+            1
+          ) {
+            throw new Error(
+              "Loan balance changed while recording the waiver. The transaction was aborted; please retry.",
+            );
+          }
+
+          /* =================================================
+             AUDIT
+          ================================================= */
+
+          await writeAudit(
+            loanId,
+            loan.loanNumber,
+            "waiver_recorded",
+            actor,
+            {
+              waiverId:
+                waiverDocument._id!.toString(),
+
+              waiverReference:
+                reference,
+
+              amount,
+
+              reason,
+
+              availableBefore:
+                available,
+
+              availableAfter:
+                money(
+                  available -
+                    amount,
+                ),
+
+              outstandingBefore:
+                loan.outstandingBalance,
+
+              outstandingAfter:
+                outstanding,
+
+              totalFines,
+
+              totalWaivedFinesBefore:
+                totalWaived,
+
+              totalWaivedFinesAfter:
+                newTotalWaived,
+            },
+            session,
+          );
+
+          /* =================================================
+             RETURN CREATED WAIVER
+          ================================================= */
+
+          return toWaiver(
+            waiverDocument,
+          );
+        },
+
+        {
+          readConcern: {
+            level:
+              "snapshot",
           },
-          session,
-        );
 
-        return toWaiver(
-          waiverDocument,
-        );
-      },
+          writeConcern: {
+            w:
+              "majority",
+          },
 
-      {
-        readConcern: {
-          level:
-            "snapshot",
+          maxCommitTimeMS:
+            10_000,
         },
+      );
 
-        writeConcern: {
-          w:
-            "majority",
-        },
+    return transactionResult;
+  } catch (error) {
+    /* =====================================================
+       IDEMPOTENCY RACE RECOVERY
+       
+       Two requests can pass the first check simultaneously.
+       
+       MongoDB's unique waiverReference index allows only one
+       to commit the waiver. The losing request comes here,
+       retrieves the committed waiver, validates that it is
+       the same financial event, and safely returns it.
+    ===================================================== */
 
-        maxCommitTimeMS:
-          10_000,
-      },
-    );
+    if (
+      error instanceof Error &&
+      error.message ===
+        "WAIVER_IDEMPOTENCY_RACE"
+    ) {
+      const existing =
+        await waivers.findOne({
+          waiverReference:
+            reference,
+        });
+
+      if (!existing) {
+        throw new Error(
+          "Waiver idempotency race occurred but the existing waiver could not be retrieved.",
+        );
+      }
+
+      /* -----------------------------------------------------
+         VERIFY AMOUNT
+      ----------------------------------------------------- */
+
+      if (
+        money(
+          existing.amount,
+        ) !== amount
+      ) {
+        throw new Error(
+          "Waiver reference already exists for a different amount.",
+        );
+      }
+
+      /* -----------------------------------------------------
+         VERIFY LOAN
+      ----------------------------------------------------- */
+
+      if (
+        existing.loanId.toString() !==
+        loanId.toString()
+      ) {
+        throw new Error(
+          "Waiver reference already exists for a different loan.",
+        );
+      }
+
+      /* -----------------------------------------------------
+         VERIFY REASON
+      ----------------------------------------------------- */
+
+      if (
+        normalizeText(
+          existing.reason,
+        ) !== reason
+      ) {
+        throw new Error(
+          "Waiver reference already exists for a different reason.",
+        );
+      }
+
+      return toWaiver(
+        existing,
+      );
+    }
+
+    throw error;
   } finally {
     await session.endSession();
   }

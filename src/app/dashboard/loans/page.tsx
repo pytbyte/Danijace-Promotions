@@ -1150,6 +1150,9 @@ function getCalendarDate(
         loan={selectedLoan}
         open={transactionHistoryOpen}
         onClose={handleCloseLoanHistory}
+        onLoanUpdated={() => {
+          void loadLoans(true);
+        }}
       />
     </main>
   );

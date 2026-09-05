@@ -387,6 +387,8 @@ export interface StopLoanFineInput {
 export interface LoanWaiver {
   id: string;
 
+  waiverReference: string;
+
   loanId: string;
 
   loanNumber: string;
@@ -403,6 +405,14 @@ export interface LoanWaiver {
 }
 
 export interface CreateLoanWaiverInput {
+  /**
+   * Immutable idempotency key supplied by the client.
+   *
+   * Used to prevent duplicate waiver records when a request
+   * is retried after an uncertain network failure.
+   */
+  waiverReference: string;
+
   loanId: string;
 
   amount: number;
