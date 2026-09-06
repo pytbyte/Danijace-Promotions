@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -8,6 +7,7 @@ import {
   CheckCircle2,
   Clock3,
   CreditCard,
+  Pencil,
   ShieldAlert,
   UserRound,
 } from "lucide-react";
@@ -16,7 +16,11 @@ import type { Loan } from "@/lib/loans/types";
 
 interface LoanCardProps {
   loan: Loan;
+
   onView?: () => void;
+
+  onEdit?: () => void;
+
   onRepay?: () => void;
 }
 
@@ -142,7 +146,9 @@ function formatFineRate(rate: number): string {
     return "0%";
   }
 
-  return `${(rate * 100).toFixed(2).replace(/\.00$/, "")}%`;
+  return `${(rate * 100)
+    .toFixed(2)
+    .replace(/\.00$/, "")}%`;
 }
 
 function formatCycleDays(days: number): string {
@@ -160,6 +166,7 @@ function formatCycleDays(days: number): string {
 export default function LoanCard({
   loan,
   onView,
+  onEdit,
   onRepay,
 }: LoanCardProps) {
   const progress = calculateProgress(loan);
@@ -616,6 +623,7 @@ export default function LoanCard({
                 {repaymentCycle}
               </span>{" "}
               repayment cycle.
+
               {loan.fineStatus === "stopped" &&
                 " Future fines are stopped."}
             </p>
@@ -676,7 +684,9 @@ export default function LoanCard({
           ACTIONS
       ====================================================== */}
 
-      <div className="grid grid-cols-2 gap-3 px-5 pb-5 pt-1">
+      <div className="grid grid-cols-3 gap-2.5 px-5 pb-5 pt-1">
+        {/* VIEW */}
+
         <button
           type="button"
           onClick={onView}
@@ -685,12 +695,12 @@ export default function LoanCard({
             h-11
             items-center
             justify-center
-            gap-2
+            gap-1.5
             rounded-2xl
             border
             border-sky-200
             bg-white/60
-            px-4
+            px-3
             text-sm
             font-semibold
             text-foreground
@@ -703,8 +713,44 @@ export default function LoanCard({
           "
         >
           <ArrowUpRight className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+
           View
         </button>
+
+        {/* EDIT */}
+
+        <button
+          type="button"
+          onClick={onEdit}
+          className="
+            inline-flex
+            h-11
+            items-center
+            justify-center
+            gap-1.5
+            rounded-2xl
+            border
+            border-amber-200
+            bg-amber-50/70
+            px-3
+            text-sm
+            font-semibold
+            text-amber-700
+            transition
+            hover:bg-amber-100
+            active:scale-[0.98]
+            dark:border-amber-900/40
+            dark:bg-amber-950/30
+            dark:text-amber-400
+            dark:hover:bg-amber-950/50
+          "
+        >
+          <Pencil className="h-4 w-4" />
+
+          Edit
+        </button>
+
+        {/* REPAY */}
 
         <button
           type="button"
@@ -715,10 +761,10 @@ export default function LoanCard({
             h-11
             items-center
             justify-center
-            gap-2
+            gap-1.5
             rounded-2xl
             bg-sky-600
-            px-4
+            px-3
             text-sm
             font-semibold
             text-white
@@ -737,7 +783,7 @@ export default function LoanCard({
             <Banknote className="h-4 w-4" />
           )}
 
-          {isCompleted ? "Completed" : "Repay"}
+          {isCompleted ? "Done" : "Repay"}
         </button>
       </div>
     </article>

@@ -10,6 +10,7 @@ interface LoanListProps {
   loading?: boolean;
   onSelectLoan?: (loan: Loan) => void;
   onView?: (loan: Loan) => void;
+  onEdit?: (loan: Loan) => void;
   onRepay?: (loan: Loan) => void;
 }
 
@@ -148,6 +149,7 @@ export default function LoanList({
   loading = false,
   onSelectLoan,
   onView,
+  onEdit,
   onRepay,
 }: LoanListProps) {
   if (loading) {
@@ -174,7 +176,7 @@ export default function LoanList({
 
   if (loans.length === 0) {
     return (
-      <div className="w-full lg:hidden px-4 sm:px-6">
+      <div className="w-full px-4 sm:px-6 lg:hidden">
         <EmptyLoans />
       </div>
     );
@@ -213,6 +215,9 @@ export default function LoanList({
               loan={loan}
               onView={() => {
                 onView?.(loan);
+              }}
+              onEdit={() => {
+                onEdit?.(loan);
               }}
               onRepay={() => {
                 onRepay?.(loan);

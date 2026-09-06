@@ -732,23 +732,64 @@ async function resolveSavingsAccount(
 }
 
 /* =========================================================
-   RESOLVE ACTIVE LOAN
+   RESOLVE ACTIVE LOAN FOR TRANSACTION
 ========================================================= */
 
 /**
- * Resolve exactly one active loan.
+ * Resolve exactly one active loan for the member and verify
+ * that the BANK transaction actually occurred after the
+ * loan was disbursed.
+ *
+ * IMPORTANT:
+ *
+ * We are scanning SMS messages that already exist in the
+ * Android inbox.
+ *
+ * Therefore:
+ *
+ *   smsDate
+ *
+ * tells us when Android received/stored the SMS.
+ *
+ * It MUST NOT be used to determine whether the payment
+ * belongs to the loan.
+ *
+ * The authoritative temporal comparison is:
+ *
+ *   transactionDate > loan.disbursementDate
+ *
+ * where transactionDate is the date/time reported by the
+ * bank inside the SMS.
  *
  * Zero loans:
  *   block automatic processing.
  *
- * Multiple loans:
+ * Multiple active loans:
  *   block automatic processing.
+ *
+ * Transaction before or at disbursement:
+ *   block automatic SMS repayment processing.
  *
  * We never guess where a payment belongs.
  */
-async function resolveActiveLoan(
+async function resolveLoanForTransaction(
   member: ResolvedMember,
+  transactionDate: Date,
 ): Promise<ResolvedLoan> {
+  if (
+    !(
+      transactionDate instanceof
+      Date
+    ) ||
+    Number.isNaN(
+      transactionDate.getTime(),
+    )
+  ) {
+    throw new Error(
+      "Bank transaction date is invalid.",
+    );
+  }
+
   const result =
     await getLoans({
       page: 1,
@@ -765,6 +806,10 @@ async function resolveActiveLoan(
   const loans =
     result.loans || [];
 
+  /* -------------------------------------------------------
+     NO ACTIVE LOAN
+  ------------------------------------------------------- */
+
   if (
     loans.length ===
     0
@@ -773,6 +818,10 @@ async function resolveActiveLoan(
       `No active GEO-SHUA loan could be found for member "${member.name}".`,
     );
   }
+
+  /* -------------------------------------------------------
+     MULTIPLE ACTIVE LOANS
+  ------------------------------------------------------- */
 
   if (
     loans.length >
@@ -811,6 +860,66 @@ async function resolveActiveLoan(
   if (!loan) {
     throw new Error(
       `Unable to resolve the active loan for member "${member.name}".`,
+    );
+  }
+
+  /* -------------------------------------------------------
+     VALIDATE DISBURSEMENT DATE
+  ------------------------------------------------------- */
+
+  if (
+    !(
+      loan.disbursementDate instanceof
+      Date
+    ) ||
+    Number.isNaN(
+      loan.disbursementDate.getTime(),
+    )
+  ) {
+    throw new Error(
+      `Active loan "${loan.loanNumber}" has an invalid disbursement date. Automatic SMS repayment processing is blocked.`,
+    );
+  }
+
+  /* -------------------------------------------------------
+     BANK TRANSACTION DATE PROTECTION
+  ------------------------------------------------------- */
+
+  /**
+   * The bank transaction must have occurred STRICTLY
+   * AFTER the loan was disbursed.
+   *
+   * This is deliberately NOT:
+   *
+   *   smsDate > disbursementDate
+   *
+   * because the SMS may have remained in the Android inbox
+   * for days before GEO-SHUA processed it.
+   *
+   * Example:
+   *
+   * Loan:
+   *   Sep 1 08:00
+   *
+   * Android receives SMS:
+   *   Sep 6 10:00
+   *
+   * Bank transaction:
+   *   Sep 5 14:00
+   *
+   * Result:
+   *   VALID
+   *
+   * because:
+   *
+   *   Sep 5 14:00 > Sep 1 08:00
+   */
+  if (
+    transactionDate.getTime() <=
+    loan.disbursementDate.getTime()
+  ) {
+    throw new Error(
+      "SMS_REPAYMENT_BEFORE_DISBURSEMENT",
     );
   }
 
@@ -968,9 +1077,10 @@ async function processLoanTransaction(
   repayment: LoanRepayment;
 }> {
   const loan =
-    await resolveActiveLoan(
-      member,
-    );
+  await resolveLoanForTransaction(
+    member,
+    classified.transactionDate,
+  );
 
   const repayment =
     await createLoanRepayment({

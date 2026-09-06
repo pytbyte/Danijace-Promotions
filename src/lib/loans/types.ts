@@ -584,3 +584,12 @@ export interface LoanSummary {
 
   totalOutstanding: number;
 }
+
+export type UpdateLoanInput = {
+  type?: LoanType;
+  principal?: number;
+  guarantor?: LoanGuarantor;
+  disbursementDate?: Date;
+  repaymentDate?: Date;
+  endDate?: Date;
+};

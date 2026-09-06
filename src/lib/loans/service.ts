@@ -2473,6 +2473,8 @@ export async function createLoan(
   }
 }
 
+
+
 /* =========================================================
    GET LOAN
 ========================================================= */
@@ -2530,6 +2532,767 @@ export async function getLoanByNumber(
     ? toLoan(loan)
     : null;
 }
+
+/* =========================================================
+   UPDATE LOAN
+========================================================= */
+
+/**
+ * Fields that may be corrected through the loan edit action.
+ *
+ * IMPORTANT
+ * ---------------------------------------------------------
+ * Financial projections are NEVER accepted from the client.
+ *
+ * The following are immutable:
+ * - loanNumber
+ * - memberId
+ * - memberNumber
+ * - memberName
+ * - amountPaid
+ * - totalFines
+ * - totalWaivedFines
+ * - outstandingBalance
+ * - createdAt
+ * - createdBy
+ * - authorizedBy
+ * - authorizedAt
+ *
+ * A loan may only have its originating terms edited before
+ * financial activity has been recorded against it.
+ */
+export type UpdateLoanInput = {
+  type?: Loan["type"];
+
+  principal?: number;
+
+  disbursementDate?: Date | string;
+
+  repaymentDate?: Date | string;
+
+  endDate?: Date | string;
+
+  guarantor?: CreateLoanInput["guarantor"];
+};
+
+/**
+ * Updates the originating terms of a loan safely.
+ *
+ * Financial history is never rewritten.
+ *
+ * A loan that already has repayments, fines, waivers, or
+ * assessments cannot have its originating financial terms
+ * changed.
+ */
+export async function updateLoan(
+  loanId: string,
+  changes: UpdateLoanInput,
+  updatedBy: LoanActor,
+): Promise<Loan> {
+  /* =======================================================
+     INPUT VALIDATION
+  ======================================================= */
+
+  if (
+    typeof loanId !== "string" ||
+    !ObjectId.isValid(loanId)
+  ) {
+    throw new Error(
+      "Invalid loan ID.",
+    );
+  }
+
+  const actor =
+    normalizeActor(
+      updatedBy,
+    );
+
+  if (
+    !changes ||
+    typeof changes !== "object"
+  ) {
+    throw new Error(
+      "Loan update data is required.",
+    );
+  }
+
+  const rawChanges =
+    changes as Record<
+      string,
+      unknown
+    >;
+
+  /*
+   * Reject fields that must never be writable through
+   * the update endpoint.
+   */
+  const forbiddenFields = [
+    "id",
+    "_id",
+    "loanNumber",
+    "memberId",
+    "memberNumber",
+    "memberName",
+    "interestRate",
+    "interestAmount",
+    "totalDue",
+    "amountPaid",
+    "totalFines",
+    "totalWaivedFines",
+    "outstandingBalance",
+    "fineStatus",
+    "repaymentStatus",
+    "createdBy",
+    "authorizedBy",
+    "authorizedAt",
+    "createdAt",
+    "updatedAt",
+  ];
+
+  for (
+    const field of forbiddenFields
+  ) {
+    if (field in rawChanges) {
+      throw new Error(
+        `${field} cannot be changed through loan editing.`,
+      );
+    }
+  }
+
+  /*
+   * Daily-fine fields belong to the old architecture and
+   * must never be reintroduced.
+   */
+  if (
+    "dailyFine" in rawChanges ||
+    "defaultDailyFine" in rawChanges ||
+    "fineSource" in rawChanges
+  ) {
+    throw new Error(
+      "Daily fines are no longer supported. Use fineRate.",
+    );
+  }
+
+  /*
+   * Only the explicitly supported fields are accepted.
+   */
+  const allowedFields = new Set([
+    "type",
+    "principal",
+    "disbursementDate",
+    "repaymentDate",
+    "endDate",
+    "guarantor",
+  ]);
+
+  for (
+    const field of Object.keys(rawChanges)
+  ) {
+    if (!allowedFields.has(field)) {
+      throw new Error(
+        `Loan field '${field}' cannot be changed.`,
+      );
+    }
+  }
+
+  if (
+    Object.keys(rawChanges).length === 0
+  ) {
+    throw new Error(
+      "No loan changes were supplied.",
+    );
+  }
+
+  /* =======================================================
+     COLLECTIONS + TRANSACTION
+  ======================================================= */
+
+  const {
+    client,
+  } =
+    await getCollections();
+
+  const session =
+    client.startSession();
+
+  try {
+    const updatedLoan =
+      await session.withTransaction(
+        async (): Promise<Loan> => {
+          const {
+            loans,
+            repayments,
+            fines,
+            waivers,
+            assessments,
+          } =
+            await getCollections();
+
+          const objectId =
+            createObjectId(
+              loanId,
+            );
+
+          /* =================================================
+             LOAD CURRENT LOAN
+          ================================================= */
+
+          const current =
+            await loans.findOne(
+              {
+                _id:
+                  objectId,
+              },
+              {
+                session,
+              },
+            );
+
+          if (!current) {
+            throw new Error(
+              "Loan not found.",
+            );
+          }
+
+          /* =================================================
+             PROTECT HISTORICAL / TERMINAL LOANS
+          ================================================= */
+
+          if (
+            current.status ===
+            "cancelled"
+          ) {
+            throw new Error(
+              "A cancelled loan cannot be edited.",
+            );
+          }
+
+          if (
+            current.status ===
+            "completed"
+          ) {
+            throw new Error(
+              "A completed loan cannot be edited.",
+            );
+          }
+
+          /* =================================================
+             CHECK FINANCIAL ACTIVITY
+          ================================================= */
+
+          const [
+            repaymentCount,
+            fineCount,
+            waiverCount,
+            assessmentCount,
+          ] =
+            await Promise.all([
+              repayments.countDocuments(
+                {
+                  loanId:
+                    objectId,
+                },
+                {
+                  session,
+                },
+              ),
+
+              fines.countDocuments(
+                {
+                  loanId:
+                    objectId,
+                },
+                {
+                  session,
+                },
+              ),
+
+              waivers.countDocuments(
+                {
+                  loanId:
+                    objectId,
+                },
+                {
+                  session,
+                },
+              ),
+
+              assessments.countDocuments(
+                {
+                  loanId:
+                    objectId,
+                },
+                {
+                  session,
+                },
+              ),
+            ]);
+
+          /*
+           * Once financial activity exists, changing the
+           * originating terms would alter the meaning of
+           * existing financial records.
+           */
+          if (
+            repaymentCount > 0 ||
+            fineCount > 0 ||
+            waiverCount > 0 ||
+            assessmentCount > 0
+          ) {
+            throw new Error(
+              "This loan cannot be edited because financial activity has already been recorded against it.",
+            );
+          }
+
+          /* =================================================
+             BUILD NEW VALUES
+          ================================================= */
+
+          const newType =
+            changes.type !==
+            undefined
+              ? changes.type
+              : current.type;
+
+          const newPrincipal =
+            changes.principal !==
+            undefined
+              ? money(
+                  Number(
+                    changes.principal,
+                  ),
+                )
+              : money(
+                  current.principal,
+                );
+
+          if (
+            !Number.isFinite(
+              newPrincipal,
+            ) ||
+            newPrincipal <= 0
+          ) {
+            throw new Error(
+              "Loan principal must be greater than zero.",
+            );
+          }
+
+          /*
+           * Loan type must remain one of the domain values.
+           *
+           * This is deliberately explicit rather than trusting
+           * the client payload.
+           */
+          if (
+            newType !==
+              "regular" &&
+            newType !==
+              "emergency"
+          ) {
+            throw new Error(
+              "Invalid loan type.",
+            );
+          }
+
+          /* =================================================
+             AUTHORITATIVE SETTINGS
+          ================================================= */
+
+          const settings =
+            await getLoanSettings(
+              session,
+            );
+
+          if (
+            newType ===
+              "emergency" &&
+            !settings.emergencyLoansEnabled
+          ) {
+            throw new Error(
+              "Emergency loans are currently disabled.",
+            );
+          }
+
+          if (
+            newType ===
+              "regular" &&
+            !settings.regularLoansEnabled
+          ) {
+            throw new Error(
+              "Regular loans are currently disabled.",
+            );
+          }
+
+          /*
+           * When the loan type changes, use the current
+           * authoritative rate for that loan type.
+           *
+           * Otherwise preserve the loan's existing rate.
+           */
+          const newInterestRate =
+            newType !==
+              current.type
+              ? newType ===
+                "emergency"
+                ? settings.emergencyInterestRate
+                : settings.regularInterestRate
+              : normalizeRate(
+                  current.interestRate,
+                );
+
+          const newInterestAmount =
+            money(
+              newPrincipal *
+                newInterestRate,
+            );
+
+          const newTotalDue =
+            money(
+              newPrincipal +
+                newInterestAmount,
+            );
+
+          /* =================================================
+             DATES
+          ================================================= */
+
+          const newDisbursementDate =
+            changes.disbursementDate !==
+            undefined
+              ? new Date(
+                  changes.disbursementDate,
+                )
+              : new Date(
+                  current.disbursementDate,
+                );
+
+          if (
+            !isValidDate(
+              newDisbursementDate,
+            )
+          ) {
+            throw new Error(
+              "Invalid disbursement date.",
+            );
+          }
+
+          const newRepaymentDate =
+            changes.repaymentDate !==
+            undefined
+              ? new Date(
+                  changes.repaymentDate,
+                )
+              : new Date(
+                  current.repaymentDate,
+                );
+
+          if (
+            !isValidDate(
+              newRepaymentDate,
+            )
+          ) {
+            throw new Error(
+              "Invalid repayment date.",
+            );
+          }
+
+          const newEndDate =
+            changes.endDate !==
+            undefined
+              ? new Date(
+                  changes.endDate,
+                )
+              : new Date(
+                  current.endDate,
+                );
+
+          if (
+            !isValidDate(
+              newEndDate,
+            )
+          ) {
+            throw new Error(
+              "Invalid loan end date.",
+            );
+          }
+
+          if (
+            newRepaymentDate.getTime() <
+            newDisbursementDate.getTime()
+          ) {
+            throw new Error(
+              "Repayment date cannot be before disbursement date.",
+            );
+          }
+
+          if (
+            newEndDate.getTime() <
+            newRepaymentDate.getTime()
+          ) {
+            throw new Error(
+              "Loan end date cannot be before repayment date.",
+            );
+          }
+
+          /*
+           * firstDueDate is derived from the disbursement
+           * date and the authoritative repayment cycle.
+           */
+          const repaymentCycleDays =
+            normalizeCycleDays(
+              current.repaymentCycleDays,
+            );
+
+          const newFirstDueDate =
+            addDays(
+              newDisbursementDate,
+              repaymentCycleDays,
+            );
+
+          /* =================================================
+             GUARANTOR
+          ================================================= */
+
+          const newGuarantor =
+            changes.guarantor !==
+            undefined
+              ? normalizeGuarantor(
+                  changes.guarantor,
+                )
+              : current.guarantor;
+
+          /* =================================================
+             SNAPSHOT FOR AUDIT
+          ================================================= */
+
+          const before = {
+            type:
+              current.type,
+
+            principal:
+              current.principal,
+
+            interestRate:
+              current.interestRate,
+
+            interestAmount:
+              current.interestAmount,
+
+            disbursementDate:
+              current.disbursementDate,
+
+            repaymentDate:
+              current.repaymentDate,
+
+            endDate:
+              current.endDate,
+
+            firstDueDate:
+              current.firstDueDate,
+
+            totalDue:
+              current.totalDue,
+
+            guarantor:
+              current.guarantor,
+          };
+
+          const after = {
+            type:
+              newType,
+
+            principal:
+              newPrincipal,
+
+            interestRate:
+              newInterestRate,
+
+            interestAmount:
+              newInterestAmount,
+
+            disbursementDate:
+              newDisbursementDate,
+
+            repaymentDate:
+              newRepaymentDate,
+
+            endDate:
+              newEndDate,
+
+            firstDueDate:
+              newFirstDueDate,
+
+            totalDue:
+              newTotalDue,
+
+            guarantor:
+              newGuarantor,
+          };
+
+          /* =================================================
+             CONCURRENT UPDATE PROTECTION
+          ================================================= */
+
+          const now =
+            new Date();
+
+          const result =
+            await loans.updateOne(
+              {
+                _id:
+                  objectId,
+
+                /*
+                 * These projections must still be untouched
+                 * when the update is committed.
+                 *
+                 * This prevents an update from silently
+                 * overwriting financial activity created
+                 * between our read and write.
+                 */
+                amountPaid:
+                  current.amountPaid,
+
+                totalFines:
+                  current.totalFines,
+
+                totalWaivedFines:
+                  current.totalWaivedFines,
+
+                outstandingBalance:
+                  current.outstandingBalance,
+
+                updatedAt:
+                  current.updatedAt,
+              },
+
+              {
+                $set: {
+                  type:
+                    newType,
+
+                  principal:
+                    newPrincipal,
+
+                  interestRate:
+                    newInterestRate,
+
+                  interestAmount:
+                    newInterestAmount,
+
+                  disbursementDate:
+                    newDisbursementDate,
+
+                  repaymentDate:
+                    newRepaymentDate,
+
+                  endDate:
+                    newEndDate,
+
+                  firstDueDate:
+                    newFirstDueDate,
+
+                  totalDue:
+                    newTotalDue,
+
+                  guarantor:
+                    newGuarantor,
+
+                  /*
+                   * Because no financial activity exists,
+                   * these projections remain exactly as they
+                   * were. They are NOT accepted from the client.
+                   */
+                  updatedAt:
+                    now,
+                },
+              },
+
+              {
+                session,
+              },
+            );
+
+          if (
+            result.modifiedCount !==
+            1
+          ) {
+            throw new Error(
+              "Loan update failed because the loan changed concurrently. Please retry.",
+            );
+          }
+
+          /* =================================================
+             AUDIT
+          ================================================= */
+
+          await writeAudit(
+            objectId,
+            current.loanNumber,
+            "updated",
+            actor,
+            {
+              action:
+                "loan_terms_updated",
+
+              before,
+
+              after,
+
+              updatedAt:
+                now,
+            },
+            session,
+          );
+
+          /* =================================================
+             RETURN UPDATED DOCUMENT
+          ================================================= */
+
+          const updated =
+            await loans.findOne(
+              {
+                _id:
+                  objectId,
+              },
+              {
+                session,
+              },
+            );
+
+          if (!updated) {
+            throw new Error(
+              "Updated loan could not be retrieved.",
+            );
+          }
+
+          return toLoan(
+            updated,
+          );
+        },
+
+        {
+          readConcern: {
+            level:
+              "snapshot",
+          },
+
+          writeConcern: {
+            w:
+              "majority",
+          },
+
+          maxCommitTimeMS:
+            10_000,
+        },
+      );
+
+    return updatedLoan;
+  } finally {
+    await session.endSession();
+  }
+}
+
 
 /* =========================================================
    LIST LOANS
@@ -4506,6 +5269,7 @@ export async function createLoanRepayment(
              another repayment cannot silently overwrite
              this transaction's financial state.
           ================================================= */
+          
 
           const {
             loans,

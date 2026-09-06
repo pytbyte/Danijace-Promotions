@@ -12,6 +12,7 @@ import {
   ArrowUpRight,
   Banknote,
   Eye,
+  Pencil,
   Plus,
   RefreshCw,
   Settings2,
@@ -89,6 +90,9 @@ export default function LoansPage() {
 
   const [loanFormOpen, setLoanFormOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const [editingLoan, setEditingLoan] =
+  useState<Loan | null>(null);
 
   /* =======================================================
      REPAYMENT MODAL
@@ -384,11 +388,45 @@ function getCalendarDate(
 
   const handleNewLoan = useCallback(() => {
     setError("");
+    setEditingLoan(null);
     setLoanFormOpen(true);
   }, []);
 
-  const handleLoanCreated = useCallback(() => {
+  const handleEditLoan = useCallback(
+  (loan: Loan) => {
+    if (
+      !loan ||
+      typeof loan.id !== "string" ||
+      !loan.id.trim()
+    ) {
+      setError(
+        "This loan does not have a valid ID and cannot be edited.",
+      );
+
+      return;
+    }
+
+    if (
+      loan.status === "completed" ||
+      loan.status === "cancelled"
+    ) {
+      setError(
+        "Completed or cancelled loans cannot be edited.",
+      );
+
+      return;
+    }
+
+    setError("");
+    setEditingLoan(loan);
+    setLoanFormOpen(true);
+  },
+  [],
+);
+
+  const handleLoanFormSuccess = useCallback(() => {
     setLoanFormOpen(false);
+    setEditingLoan(null);
     void loadLoans(true);
   }, [loadLoans]);
 
@@ -980,12 +1018,9 @@ function getCalendarDate(
                                 <LoanRow
                                   key={loan.id}
                                   loan={loan}
-                                  onRepay={
-                                    handleOpenRepayment
-                                  }
-                                  onView={
-                                    handleViewLoanHistory
-                                  }
+                                  onEdit={handleEditLoan}
+                                  onRepay={handleOpenRepayment}
+                                  onView={handleViewLoanHistory}
                                 />
                               ),
                             )}
@@ -1034,18 +1069,17 @@ function getCalendarDate(
                                 "
                               >
                                 <LoanCard
-                                  loan={loan}
-                                  onView={() =>
-                                    handleViewLoanHistory(
-                                      loan,
-                                    )
-                                  }
-                                  onRepay={() =>
-                                    handleOpenRepayment(
-                                      loan,
-                                    )
-                                  }
-                                />
+                                loan={loan}
+                                onEdit={() =>
+                                  handleEditLoan(loan)
+                                }
+                                onView={() =>
+                                  handleViewLoanHistory(loan)
+                                }
+                                onRepay={() =>
+                                  handleOpenRepayment(loan)
+                                }
+                              />
                               </div>
                             ),
                           )}
@@ -1113,12 +1147,14 @@ function getCalendarDate(
           NEW LOAN MODAL
       ===================================================== */}
 
-      <LoanForm
+     <LoanForm
         open={loanFormOpen}
-        onClose={() =>
-          setLoanFormOpen(false)
-        }
-        onSuccess={handleLoanCreated}
+        loan={editingLoan}
+        onClose={() => {
+          setLoanFormOpen(false);
+          setEditingLoan(null);
+        }}
+        onSuccess={handleLoanFormSuccess}
       />
 
       {/* =====================================================
@@ -1277,10 +1313,12 @@ function NoMatchingLoans({
 
 function LoanRow({
   loan,
+  onEdit,
   onRepay,
   onView,
 }: {
   loan: Loan;
+  onEdit: (loan: Loan) => void;
   onRepay: (loan: Loan) => void;
   onView: (loan: Loan) => void;
 }) {
@@ -1400,6 +1438,35 @@ function LoanRow({
             strokeWidth={1.8}
           />
         </button>
+
+        {/* EDIT */}
+
+        {loan.status !== "completed" &&
+        loan.status !== "cancelled" ? (
+          <button
+            type="button"
+            onClick={() => onEdit(loan)}
+            className="
+              flex h-8 w-8 shrink-0
+              items-center justify-center
+              rounded-lg
+              text-white/30
+              transition
+              hover:bg-white/[0.06]
+              hover:text-yellow-400
+              focus:outline-none
+              focus:ring-1
+              focus:ring-white/15
+            "
+            aria-label={`Edit ${loan.loanNumber}`}
+            title={`Edit ${loan.loanNumber}`}
+          >
+            <Pencil
+              size={15}
+              strokeWidth={1.8}
+            />
+          </button>
+        ) : null}
 
         {/* REPAY */}
 
