@@ -1,15 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
+import {
+  after,
+  NextRequest,
+  NextResponse,
+} from "next/server";
 
 import { auth } from "@/auth";
-
 
 import {
   accrueAllLoanFines,
   createLoan,
   getLoans,
 } from "@/lib/loans/service";
-
-
 
 import type {
   CreateLoanInput,
@@ -172,6 +173,41 @@ function parseGuarantor(
     name,
     phone,
   };
+}
+
+/* =========================================================
+   BACKGROUND FINE ACCRUAL
+========================================================= */
+
+/**
+ * Fine accrual must NEVER delay the loan-list response.
+ *
+ * Next.js `after()` schedules this work after the response
+ * has been sent.
+ *
+ * This keeps:
+ *
+ *   GET /api/loans
+ *
+ * fast while still allowing the authoritative fine engine
+ * to update overdue loans in the background.
+ *
+ * IMPORTANT:
+ *
+ * `accrueAllLoanFines()` remains the authoritative fine
+ * calculation. We are only changing WHEN it executes.
+ */
+function scheduleBackgroundFineAccrual() {
+  after(async () => {
+    try {
+      await accrueAllLoanFines();
+    } catch (error) {
+      console.error(
+        "Background loan fine accrual failed:",
+        error,
+      );
+    }
+  });
 }
 
 /* =========================================================
@@ -341,15 +377,16 @@ export async function GET(
     }
 
     /* -------------------------------------------------------
-       PREPARE LOAN FINES
+       GET LOANS IMMEDIATELY
     ------------------------------------------------------- */
 
-    await accrueAllLoanFines();
-
-    /* -------------------------------------------------------
-       GET LOANS
-    ------------------------------------------------------- */
-
+    /**
+     * IMPORTANT:
+     *
+     * Fine accrual is intentionally NOT awaited here.
+     *
+     * The loan list is returned immediately.
+     */
     const result =
       await getLoans({
         page,
@@ -367,6 +404,16 @@ export async function GET(
           ? { type }
           : {}),
       });
+
+    /* -------------------------------------------------------
+       SCHEDULE FINE ACCRUAL AFTER RESPONSE
+    ------------------------------------------------------- */
+
+    scheduleBackgroundFineAccrual();
+
+    /* -------------------------------------------------------
+       RESPONSE
+    ------------------------------------------------------- */
 
     return NextResponse.json(
       {
@@ -699,7 +746,6 @@ export async function POST(
      *     throw new Error(
      *       "Only active members can receive loans."
      *     );
-     *   }
      *
      * Therefore manipulating this API request cannot bypass
      * the inactive-member restriction.
