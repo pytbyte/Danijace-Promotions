@@ -3294,6 +3294,98 @@ export async function updateLoan(
 }
 
 
+
+
+
+/**
+ * =========================================================
+ * ACCRUE ALL ELIGIBLE LOAN FINES
+ * =========================================================
+ *
+ * Finds active loans that have reached at least their first
+ * repayment cycle and passes them to the existing
+ * accrueLoanFines() engine.
+ *
+ * This function does NOT calculate fines itself.
+ *
+ * accrueLoanFines() remains the authoritative financial
+ * calculation and persistence engine.
+ */
+export async function accrueAllLoanFines(): Promise<number> {
+  const {
+    loans,
+  } = await getCollections();
+
+  const now =
+    new Date();
+
+  /*
+   * Only select loans that are potentially ready for
+   * repayment-cycle assessment.
+   *
+   * The actual eligibility decision remains inside
+   * accrueLoanFines().
+   */
+  const candidates =
+    await loans
+      .find(
+        {
+          status:
+            "active",
+
+          fineStatus:
+            "active",
+
+          firstDueDate:
+            {
+              $lte:
+                now,
+            },
+        },
+        {
+          projection:
+            {
+              _id: 1,
+            },
+        },
+      )
+      .toArray();
+
+  let created =
+    0;
+
+  /*
+   * Process each loan independently.
+   *
+   * If one loan fails, the remaining loans still get
+   * processed.
+   */
+  for (
+    const loan of candidates
+  ) {
+    if (!loan._id) {
+      continue;
+    }
+
+    try {
+      created +=
+        await accrueLoanFines(
+          loan._id.toString(),
+          now,
+        );
+    } catch (error) {
+      console.error(
+        `Failed to accrue fines for loan ${loan._id.toString()}:`,
+        error,
+      );
+    }
+  }
+
+  return created;
+}
+
+
+
 /* =========================================================
    LIST LOANS
 ========================================================= */
@@ -3685,6 +3777,7 @@ async function getPeriodPaymentTotal(
   );
 }
 
+
 /* =========================================================
    ASSESS LOAN PERIOD
 ========================================================= */
@@ -3699,16 +3792,13 @@ async function assessLoanPeriod(
     loans,
     assessments,
     fines,
-  } =
-    await getCollections();
+  } = await getCollections();
 
   const loan =
     await loans.findOne(
       {
-        _id:
-          loanId,
+        _id: loanId,
       },
-
       {
         session,
       },
@@ -3721,10 +3811,8 @@ async function assessLoanPeriod(
   }
 
   if (
-    loan.status ===
-      "cancelled" ||
-    loan.status ===
-      "completed"
+    loan.status === "cancelled" ||
+    loan.status === "completed"
   ) {
     throw new Error(
       "Cancelled or completed loans cannot be assessed.",
@@ -3735,10 +3823,8 @@ async function assessLoanPeriod(
     await assessments.findOne(
       {
         loanId,
-
         periodNumber,
       },
-
       {
         session,
       },
@@ -3765,6 +3851,12 @@ async function assessLoanPeriod(
     );
   }
 
+  /*
+   * Balance at the beginning of the repayment cycle.
+   *
+   * This is calculated from the core loan balance only.
+   * Existing fines are deliberately excluded.
+   */
   const amountPaidBeforePeriod =
     await getLoanPaidTotalAsOf(
       loanId,
@@ -3778,6 +3870,12 @@ async function assessLoanPeriod(
       amountPaidBeforePeriod,
     );
 
+  /*
+   * Balance at the end of the repayment cycle.
+   *
+   * Payments made during the cycle reduce the core
+   * outstanding balance before the fine is calculated.
+   */
   const amountPaidAsOfPeriodEnd =
     await getLoanPaidTotalAsOf(
       loanId,
@@ -3791,6 +3889,14 @@ async function assessLoanPeriod(
       amountPaidAsOfPeriodEnd,
     );
 
+  /*
+   * Payment information is still recorded for the
+   * assessment and audit trail.
+   *
+   * IMPORTANT:
+   * paymentMade does NOT determine whether a fine
+   * is charged.
+   */
   const paymentsDuringPeriod =
     await getPeriodPaymentTotal(
       loanId,
@@ -3799,16 +3905,22 @@ async function assessLoanPeriod(
     );
 
   const paymentMade =
-    paymentsDuringPeriod >
-    0;
-
-  const defaulted =
-    !paymentMade &&
-    balanceBeforeFine >
-      0;
+    paymentsDuringPeriod > 0;
 
   /*
-   * Fines are calculated only against core outstanding.
+   * A loan is defaulted for this repayment cycle
+   * whenever there is still a core outstanding balance
+   * at the end of the cycle.
+   *
+   * It does NOT matter whether the member made a
+   * partial payment during the cycle.
+   */
+  const defaulted =
+    balanceBeforeFine > 0;
+
+  /*
+   * Fines are calculated only against the core
+   * outstanding balance.
    *
    * Existing fines are deliberately excluded.
    * Therefore fines never compound.
@@ -3829,16 +3941,16 @@ async function assessLoanPeriod(
   let actualFineAmount =
     0;
 
+  /*
+   * Only active fine status permits a new fine.
+   */
   if (
-    loan.fineStatus ===
-      "active" &&
-    calculatedFine >
-      0
+    loan.fineStatus === "active" &&
+    calculatedFine > 0
   ) {
     const fineDocument:
       LoanFineDocument = {
-      _id:
-        new ObjectId(),
+      _id: new ObjectId(),
 
       loanId,
 
@@ -3910,6 +4022,14 @@ async function assessLoanPeriod(
         session,
       );
     } catch (error) {
+      /*
+       * Another concurrent transaction may have
+       * created the fine for this repayment cycle.
+       *
+       * The unique index on:
+       * { loanId, periodNumber }
+       * protects against duplicate fines.
+       */
       if (
         !isDuplicateKeyError(
           error,
@@ -3925,7 +4045,6 @@ async function assessLoanPeriod(
 
             periodNumber,
           },
-
           {
             session,
           },
@@ -3937,6 +4056,10 @@ async function assessLoanPeriod(
     }
   }
 
+  /*
+   * Store the assessment regardless of whether
+   * a fine was created.
+   */
   const assessmentDocument:
     LoanAssessmentDocument = {
     _id:
@@ -3995,6 +4118,9 @@ async function assessLoanPeriod(
       },
     );
   } catch (error) {
+    /*
+     * Handle concurrent assessment creation.
+     */
     if (
       isDuplicateKeyError(
         error,
@@ -4007,7 +4133,6 @@ async function assessLoanPeriod(
 
             periodNumber,
           },
-
           {
             session,
           },
@@ -4025,6 +4150,9 @@ async function assessLoanPeriod(
     throw error;
   }
 
+  /*
+   * Record the completed assessment.
+   */
   await writeAudit(
     loanId,
     loan.loanNumber,
@@ -4057,6 +4185,11 @@ async function assessLoanPeriod(
     session,
   );
 
+  /*
+   * Record a separate default audit event
+   * whenever the cycle ended with an outstanding
+   * core balance.
+   */
   if (defaulted) {
     await writeAudit(
       loanId,
@@ -4082,6 +4215,7 @@ async function assessLoanPeriod(
     assessmentDocument,
   );
 }
+
 
 /* =========================================================
    ACCRUE LOAN FINES
@@ -4113,8 +4247,7 @@ export async function accrueLoanFines(
 
   const {
     client,
-  } =
-    await getCollections();
+  } = await getCollections();
 
   const session =
     client.startSession();
@@ -4125,8 +4258,7 @@ export async function accrueLoanFines(
         async (): Promise<number> => {
           const {
             loans,
-          } =
-            await getCollections();
+          } = await getCollections();
 
           const objectId =
             createObjectId(
@@ -4139,7 +4271,6 @@ export async function accrueLoanFines(
                 _id:
                   objectId,
               },
-
               {
                 session,
               },
@@ -4152,10 +4283,8 @@ export async function accrueLoanFines(
           }
 
           if (
-            loan.status ===
-              "cancelled" ||
-            loan.status ===
-              "completed"
+            loan.status === "cancelled" ||
+            loan.status === "completed"
           ) {
             return 0;
           }
@@ -4167,6 +4296,10 @@ export async function accrueLoanFines(
             return 0;
           }
 
+          /*
+           * Determine how many complete repayment
+           * cycles have elapsed.
+           */
           const latestPeriod =
             getLatestDueAssessmentPeriod(
               loan,
@@ -4174,15 +4307,22 @@ export async function accrueLoanFines(
             );
 
           if (
-            latestPeriod <=
-            0
+            latestPeriod <= 0
           ) {
             return 0;
           }
 
-          let created =
-            0;
+          let created = 0;
 
+          /*
+           * Assess every completed repayment cycle
+           * that has not already been assessed.
+           *
+           * Example:
+           * 7 days  -> period 1
+           * 14 days -> period 2
+           * 21 days -> period 3
+           */
           for (
             let periodNumber = 1;
             periodNumber <=
@@ -4191,8 +4331,7 @@ export async function accrueLoanFines(
           ) {
             const {
               assessments,
-            } =
-              await getCollections();
+            } = await getCollections();
 
             const existing =
               await assessments.findOne(
@@ -4202,7 +4341,6 @@ export async function accrueLoanFines(
 
                   periodNumber,
                 },
-
                 {
                   session,
                 },
@@ -4219,6 +4357,9 @@ export async function accrueLoanFines(
               session,
             );
 
+            /*
+             * Confirm that the assessment now exists.
+             */
             const inserted =
               await assessments.findOne(
                 {
@@ -4227,7 +4368,6 @@ export async function accrueLoanFines(
 
                   periodNumber,
                 },
-
                 {
                   session,
                 },
@@ -4238,10 +4378,13 @@ export async function accrueLoanFines(
             }
           }
 
+          /*
+           * Determine whether the loan has ever
+           * defaulted on a completed repayment cycle.
+           */
           const {
             assessments,
-          } =
-            await getCollections();
+          } = await getCollections();
 
           const defaultAssessment =
             await assessments.findOne(
@@ -4252,12 +4395,15 @@ export async function accrueLoanFines(
                 defaulted:
                   true,
               },
-
               {
                 session,
               },
             );
 
+          /*
+           * Read authoritative financial totals
+           * from the append-only ledgers.
+           */
           const paid =
             await getLoanPaidTotal(
               objectId,
@@ -4276,14 +4422,27 @@ export async function accrueLoanFines(
               session,
             );
 
+          /*
+           * Final outstanding:
+           *
+           * core balance
+           * + fines
+           * - effective waivers
+           * - payments
+           *
+           * Existing fines never compound.
+           */
           const outstanding =
             calculateFinalOutstanding(
               loan.totalDue,
+
               fines,
+
               Math.min(
                 fines,
                 waived,
               ),
+
               paid,
             );
 
@@ -4292,8 +4451,7 @@ export async function accrueLoanFines(
             "current";
 
           if (
-            outstanding <=
-            0
+            outstanding <= 0
           ) {
             repaymentStatus =
               "completed";
@@ -4306,12 +4464,14 @@ export async function accrueLoanFines(
               "defaulted";
           }
 
+          /*
+           * Update the loan status projection.
+           */
           await loans.updateOne(
             {
               _id:
                 objectId,
             },
-
             {
               $set: {
                 repaymentStatus,
@@ -4320,12 +4480,15 @@ export async function accrueLoanFines(
                   new Date(),
               },
             },
-
             {
               session,
             },
           );
 
+          /*
+           * Reconcile the loan projections from
+           * the authoritative ledgers.
+           */
           await reconcileLoan(
             objectId,
             session,
@@ -4333,7 +4496,6 @@ export async function accrueLoanFines(
 
           return created;
         },
-
         {
           readConcern: {
             level:
@@ -6623,6 +6785,149 @@ export async function cancelLoan(
   }
 }
 
+
+/* =========================================================
+   Delete LOAN
+========================================================= */
+
+export async function deleteLoan(
+  loanId: string,
+): Promise<void> {
+  if (!ObjectId.isValid(loanId)) {
+    throw new Error("Invalid loan ID.");
+  }
+
+  const {
+    client,
+  } = await getCollections();
+
+  const session =
+    client.startSession();
+
+  try {
+    await session.withTransaction(
+      async () => {
+        const {
+          loans,
+          repayments,
+          fines,
+          waivers,
+          assessments,
+          audit,
+        } = await getCollections();
+
+        const objectId =
+          createObjectId(
+            loanId,
+          );
+
+        /* ---------------------------------------------------
+           VERIFY LOAN EXISTS
+        --------------------------------------------------- */
+
+        const loan =
+          await loans.findOne(
+            {
+              _id: objectId,
+            },
+            {
+              session,
+            },
+          );
+
+        if (!loan) {
+          throw new Error(
+            "Loan not found.",
+          );
+        }
+
+        /* ---------------------------------------------------
+           DELETE ASSOCIATED FINANCIAL RECORDS
+        --------------------------------------------------- */
+
+        await repayments.deleteMany(
+          {
+            loanId: objectId,
+          },
+          {
+            session,
+          },
+        );
+
+        await fines.deleteMany(
+          {
+            loanId: objectId,
+          },
+          {
+            session,
+          },
+        );
+
+        await waivers.deleteMany(
+          {
+            loanId: objectId,
+          },
+          {
+            session,
+          },
+        );
+
+        await assessments.deleteMany(
+          {
+            loanId: objectId,
+          },
+          {
+            session,
+          },
+        );
+
+        await audit.deleteMany(
+          {
+            loanId: objectId,
+          },
+          {
+            session,
+          },
+        );
+
+        /* ---------------------------------------------------
+           DELETE LOAN
+        --------------------------------------------------- */
+
+        const result =
+          await loans.deleteOne(
+            {
+              _id: objectId,
+            },
+            {
+              session,
+            },
+          );
+
+        if (
+          result.deletedCount !== 1
+        ) {
+          throw new Error(
+            "Failed to delete loan.",
+          );
+        }
+      },
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        maxCommitTimeMS: 10_000,
+      },
+    );
+  } finally {
+    await session.endSession();
+  }
+}
 /* =========================================================
    LOAN SUMMARY
 ========================================================= */

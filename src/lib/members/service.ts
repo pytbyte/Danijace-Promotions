@@ -1599,149 +1599,333 @@ export async function updateMember(
 }
 
 /* =========================================================
-   DEACTIVATE MEMBER
+   DELETE MEMBER - PERMANENT
 ========================================================= */
 
+
 /**
- * NEVER permanently delete a member.
+ * Permanently deletes a member and all directly associated
+ * financial records.
  *
- * Deactivation preserves all historical relationships.
+ * WARNING:
  *
- * Only the member status changes.
+ * This is an irreversible operation.
  *
- * The savings account is NOT deleted.
+ * Deletes:
+ *
+ * - member
+ * - savings account
+ * - savings transactions
+ * - loans
+ * - loan repayments
+ * - loan fines
+ * - loan waivers
+ * - loan assessments
+ * - loan audit records
+ *
+ * The member ID is an ObjectId in MongoDB.
+ *
+ * Historical financial records may contain memberId as either:
+ *
+ *   ObjectId
+ *
+ * or
+ *
+ *   string
+ *
+ * Therefore both formats are matched.
  */
-export async function deactivateMember(
+export async function deleteMember(
   id: string,
-  updatedBy?: string,
-): Promise<Member> {
+): Promise<boolean> {
   if (!ObjectId.isValid(id)) {
     throw new Error(
       "Invalid member ID.",
     );
   }
 
-  const actor =
-    normalizeActor(updatedBy);
-
   const memberId =
     createObjectId(id);
 
-  const {
-    members,
-  } = await getCollections();
+  const client =
+    await clientPromise;
 
-  const existing =
-    await members.findOne({
-      _id:
-        memberId,
-    });
-
-  if (!existing) {
-    throw new Error(
-      "Member not found.",
+  const db =
+    client.db(
+      process.env.MONGODB_DB ||
+        "geo-shua",
     );
-  }
 
-  /**
-   * Already inactive.
-   */
-  if (
-    existing.status ===
-    "inactive"
-  ) {
-    return toMember(
-      existing,
-    );
-  }
+  const session =
+    client.startSession();
 
-  const now =
-    new Date().toISOString();
+  try {
+    await session.withTransaction(
+      async () => {
+        /* =====================================================
+           FIND MEMBER
+        ===================================================== */
 
-  const result =
-    await members.updateOne(
-      {
-        _id:
+        const member =
+          await db
+            .collection(
+              MEMBERS_COLLECTION,
+            )
+            .findOne(
+              {
+                _id:
+                  memberId,
+              },
+              {
+                session,
+              },
+            );
+
+        if (!member) {
+          throw new Error(
+            "Member not found.",
+          );
+        }
+
+        /*
+         * The same member can exist in financial records with
+         * either representation.
+         */
+        const memberIdString =
+          memberId.toString();
+
+        const memberIdValues = [
           memberId,
+          memberIdString,
+        ];
+
+        /* =====================================================
+           FIND MEMBER LOANS
+        ===================================================== */
+
+        const loans =
+          await db
+            .collection(
+              "loans",
+            )
+            .find(
+              {
+                memberId: {
+                  $in:
+                    memberIdValues,
+                },
+              },
+              {
+                session,
+
+                projection: {
+                  _id: 1,
+                },
+              },
+            )
+            .toArray();
+
+        const loanIds =
+          loans
+            .map(
+              (loan) =>
+                loan._id,
+            )
+            .filter(
+              (loanId) =>
+                loanId !== undefined &&
+                loanId !== null,
+            );
+
+        /* =====================================================
+           DELETE LOAN CHILD RECORDS
+        ===================================================== */
+
+        if (loanIds.length > 0) {
+          /*
+           * Most loan child records use loanId referencing
+           * the loan _id.
+           *
+           * We delete by the collected loan IDs.
+           */
+
+          await db
+            .collection(
+              "loanRepayments",
+            )
+            .deleteMany(
+              {
+                loanId: {
+                  $in:
+                    loanIds,
+                },
+              },
+              {
+                session,
+              },
+            );
+
+          await db
+            .collection(
+              "loanFines",
+            )
+            .deleteMany(
+              {
+                loanId: {
+                  $in:
+                    loanIds,
+                },
+              },
+              {
+                session,
+              },
+            );
+
+          await db
+            .collection(
+              "loanWaivers",
+            )
+            .deleteMany(
+              {
+                loanId: {
+                  $in:
+                    loanIds,
+                },
+              },
+              {
+                session,
+              },
+            );
+
+          await db
+            .collection(
+              "loanAssessments",
+            )
+            .deleteMany(
+              {
+                loanId: {
+                  $in:
+                    loanIds,
+                },
+              },
+              {
+                session,
+              },
+            );
+
+          await db
+            .collection(
+              "loanAudit",
+            )
+            .deleteMany(
+              {
+                loanId: {
+                  $in:
+                    loanIds,
+                },
+              },
+              {
+                session,
+              },
+            );
+        }
+
+        /* =====================================================
+           DELETE MEMBER LOANS
+        ===================================================== */
+
+        await db
+          .collection(
+            "loans",
+          )
+          .deleteMany(
+            {
+              memberId: {
+                $in:
+                  memberIdValues,
+              },
+            },
+            {
+              session,
+            },
+          );
+
+        /* =====================================================
+           DELETE SAVINGS TRANSACTIONS
+        ===================================================== */
+
+        await db
+          .collection(
+            "savings_transactions",
+          )
+          .deleteMany(
+            {
+              memberId: {
+                $in:
+                  memberIdValues,
+              },
+            },
+            {
+              session,
+            },
+          );
+
+        /* =====================================================
+           DELETE SAVINGS ACCOUNT
+        ===================================================== */
+
+        await db
+          .collection(
+            "savingsAccounts",
+          )
+          .deleteMany(
+            {
+              memberId: {
+                $in:
+                  memberIdValues,
+              },
+            },
+            {
+              session,
+            },
+          );
+
+        /* =====================================================
+           DELETE MEMBER
+        ===================================================== */
+
+        const result =
+          await db
+            .collection(
+              MEMBERS_COLLECTION,
+            )
+            .deleteOne(
+              {
+                _id:
+                  memberId,
+              },
+              {
+                session,
+              },
+            );
+
+        if (
+          result.deletedCount !== 1
+        ) {
+          throw new Error(
+            "Member could not be deleted.",
+          );
+        }
       },
-
-      {
-        $set: {
-          status:
-            "inactive",
-
-          updatedAt:
-            now,
-
-          updatedBy:
-            actor,
-        },
-      },
     );
 
-  if (
-    result.matchedCount === 0
-  ) {
-    throw new Error(
-      "Member could not be deactivated.",
-    );
+    return true;
+  } finally {
+    await session.endSession();
   }
-
-  const updated =
-    await members.findOne({
-      _id:
-        memberId,
-    });
-
-  if (!updated) {
-    throw new Error(
-      "Member was deactivated but could not be retrieved.",
-    );
-  }
-
-  /**
-   * DO NOT deactivate/delete the savings account here.
-   *
-   * Member lifecycle and financial-account lifecycle
-   * are deliberately separate.
-   */
-  return toMember(
-    updated,
-  );
 }
 
-/* =========================================================
-   DELETE MEMBER - COMPATIBILITY ALIAS
-========================================================= */
 
-/**
- * There is NO permanent member deletion.
- *
- * This function exists because an older API route may
- * still import deleteMember().
- *
- * Instead of deleting the MongoDB document, it performs
- * a safe deactivation.
- *
- * Therefore:
- *
- * deleteMember(id)
- *
- * actually means:
- *
- * deactivateMember(id)
- */
-export async function deleteMember(
-  id: string,
-  updatedBy?: string,
-): Promise<boolean> {
-  await deactivateMember(
-    id,
-    updatedBy,
-  );
-
-  return true;
-}
 
 /* =========================================================
    REACTIVATE MEMBER

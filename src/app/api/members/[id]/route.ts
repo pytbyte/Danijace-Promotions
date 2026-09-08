@@ -1,229 +1,67 @@
 import { NextRequest, NextResponse } from "next/server";
+
+import { auth } from "@/auth";
+
 import {
   deleteMember,
-  getMemberById,
-  updateMember,
 } from "@/lib/members/service";
 
-type RouteContext = {
-  params: Promise<{
-    id: string;
-  }>;
-};
-
 /* =========================================================
-   GET /api/members/:id
-
-   Get one member by MongoDB ID.
+   DELETE /api/members/[id]
 ========================================================= */
 
-export async function GET(
-  _request: NextRequest,
-  context: RouteContext
-) {
-  try {
-    const { id } = await context.params;
-
-    if (!id) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Member ID is required.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    const member = await getMemberById(id);
-
-    if (!member) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Member not found.",
-        },
-        {
-          status: 404,
-        }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        success: true,
-        data: member,
-      },
-      {
-        status: 200,
-      }
-    );
-  } catch (error) {
-    console.error(
-      "GET /api/members/[id] error:",
-      error
-    );
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Failed to retrieve member.",
-      },
-      {
-        status: 500,
-      }
-    );
-  }
-}
-
-/* =========================================================
-   PATCH /api/members/:id
-
-   Update an existing member.
-========================================================= */
-
-export async function PATCH(
-  request: NextRequest,
-  context: RouteContext
-) {
-  try {
-    const { id } = await context.params;
-
-    if (!id) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Member ID is required.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    /* ---------------------------------------------
-       READ REQUEST BODY
-    --------------------------------------------- */
-
-    let body: unknown;
-
-    try {
-      body = await request.json();
-    } catch {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid JSON request body.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    /* ---------------------------------------------
-       VALIDATE BODY
-    --------------------------------------------- */
-
-    if (
-      !body ||
-      typeof body !== "object" ||
-      Array.isArray(body)
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid member data.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    /* ---------------------------------------------
-       UPDATE MEMBER
-    --------------------------------------------- */
-
-    const member = await updateMember(
-      id,
-      body as Record<string, unknown>
-    );
-
-    return NextResponse.json(
-      {
-        success: true,
-        data: member,
-        message: "Member updated successfully.",
-      },
-      {
-        status: 200,
-      }
-    );
-  } catch (error) {
-    console.error(
-      "PATCH /api/members/[id] error:",
-      error
-    );
-
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Failed to update member.";
-
-    /* ---------------------------------------------
-       MEMBER NOT FOUND
-    --------------------------------------------- */
-
-    if (message === "Member not found.") {
-      return NextResponse.json(
-        {
-          success: false,
-          error: message,
-        },
-        {
-          status: 404,
-        }
-      );
-    }
-
-    /* ---------------------------------------------
-       INVALID / DUPLICATE DATA
-    --------------------------------------------- */
-
-    const knownError =
-      message.includes("already exists") ||
-      message.includes("already uses") ||
-      message.includes("required") ||
-      message.includes("Invalid");
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: message,
-      },
-      {
-        status: knownError ? 400 : 500,
-      }
-    );
-  }
-}
-
-/* =========================================================
-   DELETE /api/members/:id
-
-   Permanently removes a member.
-========================================================= */
-
+/**
+ * Permanently deletes a member and all member-owned
+ * financial records.
+ *
+ * AUTHENTICATION
+ * ---------------------------------------------------------
+ * A valid authenticated session is required.
+ *
+ * There is no administrator email whitelist here.
+ *
+ * If a user has an active authenticated session,
+ * the deletion is allowed.
+ */
 export async function DELETE(
-  _request: NextRequest,
-  context: RouteContext
+  request: NextRequest,
+  context: {
+    params: Promise<{
+      id: string;
+    }>;
+  },
 ) {
   try {
+    /* =====================================================
+       1. AUTHENTICATE USER
+    ===================================================== */
+
+    const session = await auth();
+
+    if (!session?.user) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Authentication required.",
+        },
+        {
+          status: 401,
+        },
+      );
+    }
+
+    /* =====================================================
+       2. GET MEMBER ID
+    ===================================================== */
+
     const { id } = await context.params;
 
-    if (!id) {
+    const memberId =
+      typeof id === "string"
+        ? id.trim()
+        : "";
+
+    if (!memberId) {
       return NextResponse.json(
         {
           success: false,
@@ -231,64 +69,71 @@ export async function DELETE(
         },
         {
           status: 400,
-        }
-      );
-    }
-
-    const deleted = await deleteMember(id);
-
-    if (!deleted) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Member not found.",
         },
-        {
-          status: 404,
-        }
       );
     }
+
+    /* =====================================================
+       3. PERFORM COMPLETE HARD DELETE
+    ===================================================== */
+
+    await deleteMember(memberId);
+
+    /* =====================================================
+       4. SUCCESS
+    ===================================================== */
 
     return NextResponse.json(
       {
         success: true,
-        message: "Member deleted successfully.",
+        message:
+          "Member and all associated records were permanently deleted.",
       },
       {
         status: 200,
-      }
+      },
     );
   } catch (error) {
+    /* =====================================================
+       SERVER LOGGING
+    ===================================================== */
+
     console.error(
       "DELETE /api/members/[id] error:",
-      error
+      error,
     );
+
+    /* =====================================================
+       ERROR RESPONSE
+    ===================================================== */
 
     const message =
       error instanceof Error
         ? error.message
         : "Failed to delete member.";
 
-    if (message === "Invalid member ID") {
-      return NextResponse.json(
-        {
-          success: false,
-          error: message,
-        },
-        {
-          status: 400,
-        }
+    const knownError =
+      message === "Member not found." ||
+      message === "Invalid member ID." ||
+      message.includes(
+        "could not be permanently deleted",
+      ) ||
+      message.includes(
+        "deletion verification failed",
       );
-    }
 
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to delete member.",
+        error: knownError
+          ? message
+          : "Failed to permanently delete member.",
       },
       {
-        status: 500,
-      }
+        status: knownError
+          ? 400
+          : 500,
+      },
     );
   }
 }

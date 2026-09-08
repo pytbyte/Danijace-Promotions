@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 
 import {
+  deleteLoan,
   getLoanById,
   updateLoan,
 } from "@/lib/loans/service";
@@ -614,6 +615,116 @@ export async function PATCH(
       knownError
         ? 400
         : 500,
+    );
+  }
+}
+
+/* =========================================================
+   DELETE /api/loans/[id]
+========================================================= */
+
+export async function DELETE(
+  _request: NextRequest,
+  context: {
+    params: Promise<{ id: string }>;
+  },
+) {
+  try {
+    /* -------------------------------------------------------
+       AUTHENTICATION
+    ------------------------------------------------------- */
+
+    const session =
+      (await auth()) as AuthenticatedSession | null;
+
+    if (!session?.user) {
+      return errorResponse(
+        "Authentication required.",
+        401,
+      );
+    }
+
+    /* -------------------------------------------------------
+       LOAN ID
+    ------------------------------------------------------- */
+
+    const id =
+      await getLoanId(context);
+
+    if (!id) {
+      return errorResponse(
+        "Loan ID is required.",
+        400,
+      );
+    }
+
+    /* -------------------------------------------------------
+       DELETE LOAN
+    ------------------------------------------------------- */
+
+    await deleteLoan(
+      id,
+    );
+
+    /* -------------------------------------------------------
+       SUCCESS RESPONSE
+    ------------------------------------------------------- */
+
+    return successResponse(
+      {
+        message:
+          "Loan deleted successfully.",
+      },
+      200,
+    );
+  } catch (error) {
+    console.error(
+      "DELETE /api/loans/[id] error:",
+      error,
+    );
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to delete loan.";
+
+    /* -------------------------------------------------------
+       KNOWN ERRORS
+    ------------------------------------------------------- */
+
+    if (
+      message ===
+      "Invalid loan ID."
+    ) {
+      return errorResponse(
+        message,
+        400,
+      );
+    }
+
+    if (
+      message ===
+      "Loan not found."
+    ) {
+      return errorResponse(
+        message,
+        404,
+      );
+    }
+
+    if (
+      message ===
+      "Failed to delete loan."
+    ) {
+      return errorResponse(
+        message,
+        500,
+      );
+    }
+
+    return errorResponse(
+      message,
+      500,
     );
   }
 }

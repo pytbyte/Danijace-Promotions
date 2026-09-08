@@ -2,10 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/auth";
 
+
 import {
+  accrueAllLoanFines,
   createLoan,
   getLoans,
 } from "@/lib/loans/service";
+
+
 
 import type {
   CreateLoanInput,
@@ -335,6 +339,12 @@ export async function GET(
       type =
         typeParam as LoanType;
     }
+
+    /* -------------------------------------------------------
+       PREPARE LOAN FINES
+    ------------------------------------------------------- */
+
+    await accrueAllLoanFines();
 
     /* -------------------------------------------------------
        GET LOANS

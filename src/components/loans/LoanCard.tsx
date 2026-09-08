@@ -9,6 +9,7 @@ import {
   CreditCard,
   Pencil,
   ShieldAlert,
+  Trash2,
   UserRound,
 } from "lucide-react";
 
@@ -22,6 +23,8 @@ interface LoanCardProps {
   onEdit?: () => void;
 
   onRepay?: () => void;
+
+  onDelete?: () => void;
 }
 
 /* =========================================================
@@ -38,7 +41,9 @@ function formatKES(value: number): string {
   }).format(amount);
 }
 
-function formatDate(value: Date | string | number): string {
+function formatDate(
+  value: Date | string | number,
+): string {
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
@@ -56,18 +61,26 @@ function formatDate(value: Date | string | number): string {
    HELPERS
 ========================================================= */
 
-function calculateProgress(loan: Loan): number {
-  const paid = Number.isFinite(loan.amountPaid)
+function calculateProgress(
+  loan: Loan,
+): number {
+  const paid = Number.isFinite(
+    loan.amountPaid,
+  )
     ? Math.max(0, loan.amountPaid)
     : 0;
 
   const outstanding = Number.isFinite(
     loan.outstandingBalance,
   )
-    ? Math.max(0, loan.outstandingBalance)
+    ? Math.max(
+        0,
+        loan.outstandingBalance,
+      )
     : 0;
 
-  const liability = paid + outstanding;
+  const liability =
+    paid + outstanding;
 
   if (liability <= 0) {
     return 0;
@@ -75,11 +88,16 @@ function calculateProgress(loan: Loan): number {
 
   return Math.min(
     100,
-    Math.max(0, (paid / liability) * 100),
+    Math.max(
+      0,
+      (paid / liability) * 100,
+    ),
   );
 }
 
-function getStatusLabel(loan: Loan): string {
+function getStatusLabel(
+  loan: Loan,
+): string {
   switch (loan.status) {
     case "active":
       return "Active";
@@ -98,7 +116,9 @@ function getStatusLabel(loan: Loan): string {
   }
 }
 
-function getStatusClasses(loan: Loan): string {
+function getStatusClasses(
+  loan: Loan,
+): string {
   switch (loan.status) {
     case "active":
       return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
@@ -117,7 +137,9 @@ function getStatusClasses(loan: Loan): string {
   }
 }
 
-function getInitials(name: string): string {
+function getInitials(
+  name: string,
+): string {
   const parts = name
     .trim()
     .split(/\s+/)
@@ -128,7 +150,9 @@ function getInitials(name: string): string {
   }
 
   if (parts.length === 1) {
-    return parts[0].slice(0, 2).toUpperCase();
+    return parts[0]
+      .slice(0, 2)
+      .toUpperCase();
   }
 
   return (
@@ -141,8 +165,13 @@ function getInitials(name: string): string {
    FINE HELPERS
 ========================================================= */
 
-function formatFineRate(rate: number): string {
-  if (!Number.isFinite(rate) || rate < 0) {
+function formatFineRate(
+  rate: number,
+): string {
+  if (
+    !Number.isFinite(rate) ||
+    rate < 0
+  ) {
     return "0%";
   }
 
@@ -151,12 +180,19 @@ function formatFineRate(rate: number): string {
     .replace(/\.00$/, "")}%`;
 }
 
-function formatCycleDays(days: number): string {
-  if (!Number.isInteger(days) || days <= 0) {
+function formatCycleDays(
+  days: number,
+): string {
+  if (
+    !Number.isInteger(days) ||
+    days <= 0
+  ) {
     return "7 days";
   }
 
-  return `${days} ${days === 1 ? "day" : "days"}`;
+  return `${days} ${
+    days === 1 ? "day" : "days"
+  }`;
 }
 
 /* =========================================================
@@ -168,34 +204,133 @@ export default function LoanCard({
   onView,
   onEdit,
   onRepay,
+  onDelete,
 }: LoanCardProps) {
-  const progress = calculateProgress(loan);
+  const progress =
+    calculateProgress(loan);
 
-  const outstanding = Number.isFinite(
-    loan.outstandingBalance,
-  )
-    ? Math.max(0, loan.outstandingBalance)
-    : 0;
+  const outstanding =
+    Number.isFinite(
+      loan.outstandingBalance,
+    )
+      ? Math.max(
+          0,
+          loan.outstandingBalance,
+        )
+      : 0;
 
-  const amountPaid = Number.isFinite(loan.amountPaid)
-    ? Math.max(0, loan.amountPaid)
-    : 0;
+  const amountPaid =
+    Number.isFinite(
+      loan.amountPaid,
+    )
+      ? Math.max(
+          0,
+          loan.amountPaid,
+        )
+      : 0;
 
-  const totalFines = Number.isFinite(loan.totalFines)
-    ? Math.max(0, loan.totalFines)
-    : 0;
+  const totalFines =
+    Number.isFinite(
+      loan.totalFines,
+    )
+      ? Math.max(
+          0,
+          loan.totalFines,
+        )
+      : 0;
 
-  const fineRate = formatFineRate(loan.fineRate);
+  const fineRate =
+    formatFineRate(
+      loan.fineRate,
+    );
 
-  const repaymentCycle = formatCycleDays(
-    loan.repaymentCycleDays,
-  );
+  const repaymentCycle =
+    formatCycleDays(
+      loan.repaymentCycleDays,
+    );
 
   const isRepayable =
     loan.status === "active" &&
     outstanding > 0;
 
-  const isCompleted = loan.status === "completed";
+  const isCompleted =
+    loan.status === "completed";
+
+  /* =======================================================
+     DELETE
+  ======================================================= */
+
+  async function handleDelete() {
+    if (!onDelete) {
+      return;
+    }
+
+    const confirmed =
+      window.confirm(
+        `Delete loan ${loan.loanNumber} for ${loan.memberName}?\n\n` +
+          `This will permanently delete the loan and its associated repayments, fines, waivers, assessments, and audit records.\n\n` +
+          `This action cannot be undone.`,
+      );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response =
+        await fetch(
+          `/api/loans/${encodeURIComponent(
+            loan.id,
+          )}`,
+          {
+            method: "DELETE",
+            headers: {
+              Accept:
+                "application/json",
+            },
+            cache: "no-store",
+          },
+        );
+
+      let result: {
+        success?: boolean;
+        data?: {
+          message?: string;
+        };
+        error?: string;
+      } | null = null;
+
+      try {
+        result =
+          await response.json();
+      } catch {
+        result = null;
+      }
+
+      if (
+        !response.ok ||
+        !result?.success
+      ) {
+        throw new Error(
+          result?.error ||
+            `Failed to delete loan. HTTP ${response.status}.`,
+        );
+      }
+
+      onDelete();
+    } catch (error) {
+      console.error(
+        "Loan deletion error:",
+        error,
+      );
+
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to delete loan. Please try again.",
+      );
+    }
+  }
 
   return (
     <article
@@ -247,7 +382,9 @@ export default function LoanCard({
                 dark:text-sky-400
               "
             >
-              {getInitials(loan.memberName)}
+              {getInitials(
+                loan.memberName,
+              )}
             </div>
 
             <div className="min-w-0">
@@ -308,7 +445,9 @@ export default function LoanCard({
             <CreditCard className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
 
             <span>
-              {Number.isFinite(loan.interestRate)
+              {Number.isFinite(
+                loan.interestRate,
+              )
                 ? `${loan.interestRate}%`
                 : "—"}{" "}
               interest
@@ -349,7 +488,9 @@ export default function LoanCard({
                   dark:text-sky-100
                 "
               >
-                {formatKES(outstanding)}
+                {formatKES(
+                  outstanding,
+                )}
               </p>
             </div>
 
@@ -380,7 +521,10 @@ export default function LoanCard({
               </span>
 
               <span className="font-semibold text-sky-700 dark:text-sky-300">
-                {Math.round(progress)}%
+                {Math.round(
+                  progress,
+                )}
+                %
               </span>
             </div>
 
@@ -431,7 +575,9 @@ export default function LoanCard({
           </p>
 
           <p className="mt-1 text-sm font-semibold text-foreground">
-            {formatKES(loan.principal)}
+            {formatKES(
+              loan.principal,
+            )}
           </p>
         </div>
 
@@ -452,7 +598,9 @@ export default function LoanCard({
           </p>
 
           <p className="mt-1 text-sm font-semibold text-foreground">
-            {formatKES(amountPaid)}
+            {formatKES(
+              amountPaid,
+            )}
           </p>
         </div>
 
@@ -473,7 +621,9 @@ export default function LoanCard({
           </p>
 
           <p className="mt-1 text-sm font-semibold text-foreground">
-            {formatKES(loan.interestAmount)}
+            {formatKES(
+              loan.interestAmount,
+            )}
           </p>
         </div>
 
@@ -494,7 +644,9 @@ export default function LoanCard({
           </p>
 
           <p className="mt-1 text-sm font-semibold text-foreground">
-            {formatKES(loan.totalDue)}
+            {formatKES(
+              loan.totalDue,
+            )}
           </p>
         </div>
       </div>
@@ -526,7 +678,9 @@ export default function LoanCard({
                 </p>
 
                 <p className="mt-0.5 truncate text-xs font-medium text-foreground">
-                  {formatDate(loan.disbursementDate)}
+                  {formatDate(
+                    loan.disbursementDate,
+                  )}
                 </p>
               </div>
             </div>
@@ -540,7 +694,9 @@ export default function LoanCard({
                 </p>
 
                 <p className="mt-0.5 truncate text-xs font-medium text-foreground">
-                  {formatDate(loan.firstDueDate)}
+                  {formatDate(
+                    loan.firstDueDate,
+                  )}
                 </p>
               </div>
             </div>
@@ -575,7 +731,8 @@ export default function LoanCard({
                   </p>
 
                   <p className="text-[11px] text-muted-foreground">
-                    {loan.fineStatus === "stopped"
+                    {loan.fineStatus ===
+                    "stopped"
                       ? `Future fines stopped · ${fineRate} per ${repaymentCycle} cycle`
                       : `${fineRate} per completed ${repaymentCycle} cycle`}
                   </p>
@@ -583,7 +740,9 @@ export default function LoanCard({
               </div>
 
               <span className="shrink-0 text-sm font-semibold text-amber-700 dark:text-amber-400">
-                {formatKES(totalFines)}
+                {formatKES(
+                  totalFines,
+                )}
               </span>
             </div>
           </div>
@@ -624,7 +783,8 @@ export default function LoanCard({
               </span>{" "}
               repayment cycle.
 
-              {loan.fineStatus === "stopped" &&
+              {loan.fineStatus ===
+                "stopped" &&
                 " Future fines are stopped."}
             </p>
           </div>
@@ -668,7 +828,8 @@ export default function LoanCard({
             </p>
 
             <p className="truncate text-xs font-semibold text-foreground">
-              {loan.guarantor?.name || "Not provided"}
+              {loan.guarantor?.name ||
+                "Not provided"}
             </p>
           </div>
 
@@ -684,7 +845,16 @@ export default function LoanCard({
           ACTIONS
       ====================================================== */}
 
-      <div className="grid grid-cols-3 gap-2.5 px-5 pb-5 pt-1">
+      <div
+        className="
+          grid
+          grid-cols-2
+          gap-2.5
+          px-5
+          pb-5
+          pt-1
+        "
+      >
         {/* VIEW */}
 
         <button
@@ -755,7 +925,10 @@ export default function LoanCard({
         <button
           type="button"
           onClick={onRepay}
-          disabled={!isRepayable || isCompleted}
+          disabled={
+            !isRepayable ||
+            isCompleted
+          }
           className="
             inline-flex
             h-11
@@ -783,7 +956,44 @@ export default function LoanCard({
             <Banknote className="h-4 w-4" />
           )}
 
-          {isCompleted ? "Done" : "Repay"}
+          {isCompleted
+            ? "Done"
+            : "Repay"}
+        </button>
+
+        {/* DELETE */}
+
+        <button
+          type="button"
+          onClick={handleDelete}
+          className="
+            inline-flex
+            h-11
+            items-center
+            justify-center
+            gap-1.5
+            rounded-2xl
+            border
+            border-red-200
+            bg-red-50/70
+            px-3
+            text-sm
+            font-semibold
+            text-red-600
+            transition
+            hover:bg-red-100
+            active:scale-[0.98]
+            disabled:cursor-not-allowed
+            disabled:opacity-40
+            dark:border-red-900/40
+            dark:bg-red-950/30
+            dark:text-red-400
+            dark:hover:bg-red-950/50
+          "
+        >
+          <Trash2 className="h-4 w-4" />
+
+          Delete
         </button>
       </div>
     </article>
