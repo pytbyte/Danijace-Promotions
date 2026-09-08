@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     const limit =
       limitParam
         ? Number(limitParam)
-        : 2500;
+        : 1000;
 
     if (
       !Number.isInteger(page) ||
@@ -70,13 +70,13 @@ export async function GET(request: NextRequest) {
     if (
       !Number.isInteger(limit) ||
       limit < 1 ||
-      limit > 100
+      limit > 1000
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "Limit must be an integer between 1 and 100.",
+            "Limit must be an integer between 1 and 1000.",
         },
         {
           status: 400,

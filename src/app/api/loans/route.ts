@@ -266,7 +266,7 @@ export async function GET(
     const limit =
       limitParam === null ||
       limitParam.trim() === ""
-        ? 2500
+        ? 1000
         : Number(limitParam);
 
     if (
@@ -282,10 +282,10 @@ export async function GET(
     if (
       !Number.isInteger(limit) ||
       limit < 1 ||
-      limit > 100
+      limit > 1000
     ) {
       return errorResponse(
-        "Limit must be an integer between 1 and 100.",
+        "Limit must be an integer between 1 and 1000.",
         400,
       );
     }
