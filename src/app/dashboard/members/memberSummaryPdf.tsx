@@ -11,6 +11,13 @@ import {
   pdf,
 } from "@react-pdf/renderer";
 
+import { Capacitor } from "@capacitor/core";
+import {
+  Directory,
+  Filesystem,
+} from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
+
 import type {
   Member,
   MemberWithFinancialSummary,
@@ -1825,6 +1832,130 @@ async function getMemberPhoto(
   } catch {
     return null;
   }
+}
+
+/* =========================================================
+   ANDROID PDF HELPERS
+========================================================= */
+
+/**
+ * Convert the generated browser Blob into a base64
+ * string suitable for Capacitor Filesystem.writeFile().
+ *
+ * This helper does NOT alter the PDF itself.
+ */
+async function blobToBase64(
+  blob: Blob,
+): Promise<string> {
+  return await new Promise(
+    (
+      resolve,
+      reject,
+    ) => {
+      const reader =
+        new FileReader();
+
+      reader.onloadend =
+        () => {
+          const result =
+            reader.result;
+
+          if (
+            typeof result !==
+            "string"
+          ) {
+            reject(
+              new Error(
+                "Unable to convert PDF to base64.",
+              ),
+            );
+
+            return;
+          }
+
+          const commaIndex =
+            result.indexOf(",");
+
+          resolve(
+            commaIndex >= 0
+              ? result.slice(
+                  commaIndex + 1,
+                )
+              : result,
+          );
+        };
+
+      reader.onerror =
+        () => {
+          reject(
+            new Error(
+              "Unable to read generated PDF.",
+            ),
+          );
+        };
+
+      reader.readAsDataURL(
+        blob,
+      );
+    },
+  );
+}
+
+/**
+ * Android-native PDF delivery.
+ *
+ * The PDF is temporarily written into the app's
+ * native cache directory and then handed to Android's
+ * native share/save system.
+ *
+ * This avoids relying on:
+ *
+ *   URL.createObjectURL()
+ *   <a download>
+ *   anchor.click()
+ *
+ * which is unreliable inside a Capacitor Android WebView.
+ */
+async function savePdfOnAndroid(
+  blob: Blob,
+  fileName: string,
+): Promise<void> {
+  const base64 =
+    await blobToBase64(
+      blob,
+    );
+
+  await Filesystem.writeFile({
+    path: fileName,
+    data: base64,
+    directory:
+      Directory.Cache,
+  });
+
+  const { uri } =
+    await Filesystem.getUri({
+      path: fileName,
+      directory:
+        Directory.Cache,
+    });
+
+  if (!uri) {
+    throw new Error(
+      "Unable to obtain the native PDF file URI.",
+    );
+  }
+
+  await Share.share({
+    title: fileName,
+
+    text:
+      "GEO-SHUA account statement",
+
+    url: uri,
+
+    dialogTitle:
+      "Save or share statement",
+  });
 }
 
 /* =========================================================
@@ -4204,6 +4335,31 @@ export async function downloadMemberSummaryPdf(
     );
   }
 
+  const fileName =
+    buildFileName(
+      member,
+    );
+
+  /* =======================================================
+     ANDROID CAPACITOR
+  ======================================================= */
+
+  if (
+    Capacitor.getPlatform() ===
+    "android"
+  ) {
+    await savePdfOnAndroid(
+      blob,
+      fileName,
+    );
+
+    return;
+  }
+
+  /* =======================================================
+     WEB / PWA
+  ======================================================= */
+
   const objectUrl =
     URL.createObjectURL(
       blob,
@@ -4224,9 +4380,7 @@ export async function downloadMemberSummaryPdf(
       objectUrl;
 
     anchor.download =
-      buildFileName(
-        member,
-      );
+      fileName;
 
     anchor.style.display =
       "none";
