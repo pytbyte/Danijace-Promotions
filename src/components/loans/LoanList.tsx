@@ -12,6 +12,7 @@ interface LoanListProps {
   onView?: (loan: Loan) => void;
   onEdit?: (loan: Loan) => void;
   onRepay?: (loan: Loan) => void;
+  onDelete?: (loan: Loan) => void;
 }
 
 /* =========================================================
@@ -151,7 +152,8 @@ export default function LoanList({
   onView,
   onEdit,
   onRepay,
-}: LoanListProps) {
+  onDelete,
+}: LoanListProps){
   if (loading) {
     return (
       <div className="w-full lg:hidden">
@@ -211,7 +213,7 @@ export default function LoanList({
               sm:px-6
             "
           >
-            <LoanCard
+           <LoanCard
               loan={loan}
               onView={() => {
                 onView?.(loan);
@@ -221,6 +223,9 @@ export default function LoanList({
               }}
               onRepay={() => {
                 onRepay?.(loan);
+              }}
+              onDelete={() => {
+                onDelete?.(loan);
               }}
             />
           </div>

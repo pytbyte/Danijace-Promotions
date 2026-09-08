@@ -266,7 +266,7 @@ export async function GET(
     const limit =
       limitParam === null ||
       limitParam.trim() === ""
-        ? 25
+        ? 2500
         : Number(limitParam);
 
     if (

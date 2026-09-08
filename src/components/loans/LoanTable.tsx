@@ -23,6 +23,7 @@ type LoanTableProps = {
   loans: Loan[];
   loading?: boolean;
   onSelectLoan?: (loan: Loan) => void;
+  onDelete?: (loan: Loan) => void;
 };
 
 type LoanTransaction = {
@@ -745,6 +746,7 @@ export default function LoanTable({
   loans,
   loading = false,
   onSelectLoan,
+  onDelete,
 }: LoanTableProps) {
   const safeLoans = Array.isArray(loans)
     ? loans
@@ -1021,12 +1023,9 @@ export default function LoanTable({
                 >
                   <LoanCard
                     loan={loan}
-                    onView={() =>
-                      handleViewHistory(loan)
-                    }
-                    onRepay={() =>
-                      onSelectLoan?.(loan)
-                    }
+                    onView={() => handleViewHistory(loan)}
+                    onRepay={() => onSelectLoan?.(loan)}
+                    onDelete={() => onDelete?.(loan)}
                   />
 
                   <div className="mt-3 grid grid-cols-2 gap-2">
