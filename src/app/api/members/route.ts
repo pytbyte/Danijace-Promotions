@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     const limit =
       limitParam
         ? Number(limitParam)
-        : 25;
+        : 2500;
 
     if (
       !Number.isInteger(page) ||

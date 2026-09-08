@@ -430,6 +430,36 @@ function getCalendarDate(
     void loadLoans(true);
   }, [loadLoans]);
 
+/* =======================================================
+   DELETE LOAN
+======================================================= */
+
+const handleDeleteLoan = useCallback(
+  (loanId: string) => {
+    setLoans((currentLoans) =>
+      currentLoans.filter(
+        (loan) => loan.id !== loanId,
+      ),
+    );
+
+    // Clear any stale selected loan references.
+    setSelectedLoan((currentLoan) =>
+      currentLoan?.id === loanId
+        ? null
+        : currentLoan,
+    );
+
+    setRepaymentLoan((currentLoan) =>
+      currentLoan?.id === loanId
+        ? null
+        : currentLoan,
+    );
+
+    setError("");
+  },
+  [],
+);
+
   /* =======================================================
      SETTINGS
   ======================================================= */
@@ -1069,17 +1099,20 @@ function getCalendarDate(
                                 "
                               >
                                 <LoanCard
-                                loan={loan}
-                                onEdit={() =>
-                                  handleEditLoan(loan)
-                                }
-                                onView={() =>
-                                  handleViewLoanHistory(loan)
-                                }
-                                onRepay={() =>
-                                  handleOpenRepayment(loan)
-                                }
-                              />
+                                  loan={loan}
+                                  onEdit={() =>
+                                    handleEditLoan(loan)
+                                  }
+                                  onView={() =>
+                                    handleViewLoanHistory(loan)
+                                  }
+                                  onRepay={() =>
+                                    handleOpenRepayment(loan)
+                                  }
+                                  onDelete={() =>
+                                    handleDeleteLoan(loan.id)
+                                  }
+                                />
                               </div>
                             ),
                           )}

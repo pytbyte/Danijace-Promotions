@@ -7,24 +7,22 @@ import {
   CheckCircle2,
   Clock3,
   CreditCard,
+  Loader2,
   Pencil,
   ShieldAlert,
   Trash2,
   UserRound,
 } from "lucide-react";
+import { useState } from "react";
 
 import type { Loan } from "@/lib/loans/types";
 
 interface LoanCardProps {
   loan: Loan;
-
   onView?: () => void;
-
   onEdit?: () => void;
-
   onRepay?: () => void;
-
-  onDelete?: () => void;
+  onDelete: () => void;
 }
 
 /* =========================================================
@@ -206,6 +204,14 @@ export default function LoanCard({
   onRepay,
   onDelete,
 }: LoanCardProps) {
+  const [
+    isDeleteModalOpen,
+    setIsDeleteModalOpen,
+  ] = useState(false);
+
+  const [isDeleting, setIsDeleting] =
+    useState(false);
+
   const progress =
     calculateProgress(loan);
 
@@ -261,20 +267,11 @@ export default function LoanCard({
   ======================================================= */
 
   async function handleDelete() {
-    if (!onDelete) {
+    if (isDeleting) {
       return;
     }
 
-    const confirmed =
-      window.confirm(
-        `Delete loan ${loan.loanNumber} for ${loan.memberName}?\n\n` +
-          `This will permanently delete the loan and its associated repayments, fines, waivers, assessments, and audit records.\n\n` +
-          `This action cannot be undone.`,
-      );
-
-    if (!confirmed) {
-      return;
-    }
+    setIsDeleting(true);
 
     try {
       const response =
@@ -307,15 +304,25 @@ export default function LoanCard({
         result = null;
       }
 
-      if (
-        !response.ok ||
-        !result?.success
-      ) {
+      if (!response.ok) {
         throw new Error(
           result?.error ||
             `Failed to delete loan. HTTP ${response.status}.`,
         );
       }
+
+      if (!result?.success) {
+        throw new Error(
+          result?.error ||
+            "Loan deletion failed.",
+        );
+      }
+
+      /*
+       * The API has successfully deleted
+       * the loan and its associated records.
+       */
+      setIsDeleteModalOpen(false);
 
       onDelete();
     } catch (error) {
@@ -329,6 +336,8 @@ export default function LoanCard({
           ? error.message
           : "Failed to delete loan. Please try again.",
       );
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -860,6 +869,7 @@ export default function LoanCard({
         <button
           type="button"
           onClick={onView}
+          disabled={isDeleting}
           className="
             inline-flex
             h-11
@@ -877,13 +887,14 @@ export default function LoanCard({
             transition
             hover:bg-white
             active:scale-[0.98]
+            disabled:cursor-not-allowed
+            disabled:opacity-40
             dark:border-sky-900/40
             dark:bg-slate-900/70
             dark:hover:bg-slate-900
           "
         >
           <ArrowUpRight className="h-4 w-4 text-sky-600 dark:text-sky-400" />
-
           View
         </button>
 
@@ -892,6 +903,7 @@ export default function LoanCard({
         <button
           type="button"
           onClick={onEdit}
+          disabled={isDeleting}
           className="
             inline-flex
             h-11
@@ -909,6 +921,8 @@ export default function LoanCard({
             transition
             hover:bg-amber-100
             active:scale-[0.98]
+            disabled:cursor-not-allowed
+            disabled:opacity-40
             dark:border-amber-900/40
             dark:bg-amber-950/30
             dark:text-amber-400
@@ -916,7 +930,6 @@ export default function LoanCard({
           "
         >
           <Pencil className="h-4 w-4" />
-
           Edit
         </button>
 
@@ -927,7 +940,8 @@ export default function LoanCard({
           onClick={onRepay}
           disabled={
             !isRepayable ||
-            isCompleted
+            isCompleted ||
+            isDeleting
           }
           className="
             inline-flex
@@ -965,7 +979,10 @@ export default function LoanCard({
 
         <button
           type="button"
-          onClick={handleDelete}
+          onClick={() =>
+            setIsDeleteModalOpen(true)
+          }
+          disabled={isDeleting}
           className="
             inline-flex
             h-11
@@ -992,10 +1009,340 @@ export default function LoanCard({
           "
         >
           <Trash2 className="h-4 w-4" />
-
           Delete
         </button>
       </div>
+
+      {/* =====================================================
+          DELETE CONFIRMATION MODAL
+      ====================================================== */}
+
+      {isDeleteModalOpen && (
+        <div
+          className="
+            fixed
+            inset-0
+            z-[100]
+            flex
+            items-center
+            justify-center
+            bg-slate-950/60
+            p-4
+            backdrop-blur-sm
+          "
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={`delete-loan-title-${loan.id}`}
+          aria-describedby={`delete-loan-description-${loan.id}`}
+          onMouseDown={(event) => {
+            if (
+              event.target ===
+                event.currentTarget &&
+              !isDeleting
+            ) {
+              setIsDeleteModalOpen(
+                false,
+              );
+            }
+          }}
+        >
+          <div
+            className="
+              w-full
+              max-w-md
+              overflow-hidden
+              rounded-[28px]
+              border
+              border-sky-200/70
+              bg-white
+              shadow-[0_25px_80px_rgba(15,23,42,0.25)]
+              dark:border-sky-900/40
+              dark:bg-slate-950
+              dark:shadow-[0_25px_80px_rgba(0,0,0,0.55)]
+            "
+          >
+            {/* Modal Header */}
+
+            <div className="px-6 pb-5 pt-6">
+              <div className="flex items-start gap-4">
+                <div
+                  className="
+                    flex
+                    h-12
+                    w-12
+                    shrink-0
+                    items-center
+                    justify-center
+                    rounded-2xl
+                    bg-red-500/10
+                    text-red-600
+                    ring-1
+                    ring-red-500/10
+                    dark:bg-red-500/10
+                    dark:text-red-400
+                  "
+                >
+                  <Trash2 className="h-5 w-5" />
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <h2
+                    id={`delete-loan-title-${loan.id}`}
+                    className="
+                      text-base
+                      font-bold
+                      tracking-tight
+                      text-slate-950
+                      dark:text-slate-100
+                    "
+                  >
+                    Delete loan?
+                  </h2>
+
+                  <p
+                    id={`delete-loan-description-${loan.id}`}
+                    className="
+                      mt-1
+                      text-sm
+                      leading-5
+                      text-muted-foreground
+                    "
+                  >
+                    This action permanently
+                    removes this loan and its
+                    associated records.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Loan Summary */}
+
+            <div className="px-6">
+              <div
+                className="
+                  rounded-[22px]
+                  border
+                  border-sky-200/60
+                  bg-sky-50/70
+                  p-4
+                  dark:border-sky-900/30
+                  dark:bg-sky-950/30
+                "
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className="
+                      flex
+                      h-10
+                      w-10
+                      shrink-0
+                      items-center
+                      justify-center
+                      rounded-xl
+                      bg-sky-500/10
+                      text-xs
+                      font-bold
+                      text-sky-700
+                      dark:text-sky-300
+                    "
+                  >
+                    {getInitials(
+                      loan.memberName,
+                    )}
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className="
+                        truncate
+                        text-sm
+                        font-semibold
+                        text-foreground
+                      "
+                    >
+                      {loan.memberName}
+                    </p>
+
+                    <p
+                      className="
+                        mt-0.5
+                        truncate
+                        text-xs
+                        text-muted-foreground
+                      "
+                    >
+                      {loan.loanNumber}
+                    </p>
+                  </div>
+
+                  <div className="shrink-0 text-right">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
+                      Outstanding
+                    </p>
+
+                    <p className="mt-0.5 text-sm font-bold text-sky-700 dark:text-sky-300">
+                      {formatKES(
+                        outstanding,
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Warning */}
+
+            <div className="px-6 py-5">
+              <div
+                className="
+                  rounded-2xl
+                  border
+                  border-red-200/80
+                  bg-red-50/70
+                  px-4
+                  py-3.5
+                  dark:border-red-900/40
+                  dark:bg-red-950/20
+                "
+              >
+                <div className="flex items-start gap-3">
+                  <ShieldAlert
+                    className="
+                      mt-0.5
+                      h-4
+                      w-4
+                      shrink-0
+                      text-red-600
+                      dark:text-red-400
+                    "
+                  />
+
+                  <div>
+                    <p
+                      className="
+                        text-xs
+                        font-semibold
+                        text-red-700
+                        dark:text-red-300
+                      "
+                    >
+                      Permanent deletion
+                    </p>
+
+                    <p
+                      className="
+                        mt-1
+                        text-[11px]
+                        leading-5
+                        text-red-600/80
+                        dark:text-red-400/80
+                      "
+                    >
+                      The loan, repayments, fines,
+                      waivers, assessments, and
+                      audit records will be
+                      permanently deleted. This
+                      cannot be undone.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+
+            <div
+              className="
+                flex
+                flex-col-reverse
+                gap-2.5
+                border-t
+                border-sky-200/60
+                bg-sky-50/30
+                px-6
+                py-4
+                sm:flex-row
+                sm:justify-end
+                dark:border-sky-900/30
+                dark:bg-slate-900/30
+              "
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  setIsDeleteModalOpen(
+                    false,
+                  )
+                }
+                disabled={isDeleting}
+                className="
+                  inline-flex
+                  h-11
+                  items-center
+                  justify-center
+                  rounded-2xl
+                  border
+                  border-sky-200
+                  bg-white
+                  px-5
+                  text-sm
+                  font-semibold
+                  text-foreground
+                  transition
+                  hover:bg-sky-50
+                  active:scale-[0.98]
+                  disabled:cursor-not-allowed
+                  disabled:opacity-40
+                  dark:border-sky-900/40
+                  dark:bg-slate-900
+                  dark:hover:bg-slate-800
+                "
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="
+                  inline-flex
+                  h-11
+                  items-center
+                  justify-center
+                  gap-2
+                  rounded-2xl
+                  bg-red-600
+                  px-5
+                  text-sm
+                  font-semibold
+                  text-white
+                  shadow-sm
+                  shadow-red-500/20
+                  transition
+                  hover:bg-red-700
+                  active:scale-[0.98]
+                  disabled:cursor-not-allowed
+                  disabled:opacity-60
+                "
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Delete Loan
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </article>
   );
 }
