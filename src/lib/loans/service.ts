@@ -2833,16 +2833,7 @@ export async function updateLoan(
            * originating terms would alter the meaning of
            * existing financial records.
            */
-          if (
-            repaymentCount > 0 ||
-            fineCount > 0 ||
-            waiverCount > 0 ||
-            assessmentCount > 0
-          ) {
-            throw new Error(
-              "This loan cannot be edited because financial activity has already been recorded against it.",
-            );
-          }
+          
 
           /* =================================================
              BUILD NEW VALUES
@@ -3133,94 +3124,31 @@ export async function updateLoan(
              CONCURRENT UPDATE PROTECTION
           ================================================= */
 
-          const now =
-            new Date();
+          const now = new Date();
 
-          const result =
-            await loans.updateOne(
-              {
-                _id:
-                  objectId,
-
-                /*
-                 * These projections must still be untouched
-                 * when the update is committed.
-                 *
-                 * This prevents an update from silently
-                 * overwriting financial activity created
-                 * between our read and write.
-                 */
-                amountPaid:
-                  current.amountPaid,
-
-                totalFines:
-                  current.totalFines,
-
-                totalWaivedFines:
-                  current.totalWaivedFines,
-
-                outstandingBalance:
-                  current.outstandingBalance,
-
-                updatedAt:
-                  current.updatedAt,
+          await loans.updateOne(
+            {
+              _id: objectId,
+            },
+            {
+              $set: {
+                type: newType,
+                principal: newPrincipal,
+                interestRate: newInterestRate,
+                interestAmount: newInterestAmount,
+                disbursementDate: newDisbursementDate,
+                repaymentDate: newRepaymentDate,
+                endDate: newEndDate,
+                firstDueDate: newFirstDueDate,
+                totalDue: newTotalDue,
+                guarantor: newGuarantor,
+                updatedAt: now,
               },
-
-              {
-                $set: {
-                  type:
-                    newType,
-
-                  principal:
-                    newPrincipal,
-
-                  interestRate:
-                    newInterestRate,
-
-                  interestAmount:
-                    newInterestAmount,
-
-                  disbursementDate:
-                    newDisbursementDate,
-
-                  repaymentDate:
-                    newRepaymentDate,
-
-                  endDate:
-                    newEndDate,
-
-                  firstDueDate:
-                    newFirstDueDate,
-
-                  totalDue:
-                    newTotalDue,
-
-                  guarantor:
-                    newGuarantor,
-
-                  /*
-                   * Because no financial activity exists,
-                   * these projections remain exactly as they
-                   * were. They are NOT accepted from the client.
-                   */
-                  updatedAt:
-                    now,
-                },
-              },
-
-              {
-                session,
-              },
-            );
-
-          if (
-            result.modifiedCount !==
-            1
-          ) {
-            throw new Error(
-              "Loan update failed because the loan changed concurrently. Please retry.",
-            );
-          }
+            },
+            {
+              session,
+            },
+          );
 
           /* =================================================
              AUDIT
