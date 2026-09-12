@@ -5247,12 +5247,11 @@ export async function createLoanRepayment(
   /* =======================================================
      FINANCIAL TRANSACTION DATE
 
-     Financial dates are stored and compared as
-     canonical CalendarDate strings:
+     Financial dates use the canonical CalendarDate format:
 
        YYYY-MM-DD
 
-     Do NOT convert transactionDate into a JavaScript Date.
+     Do NOT convert transactionDate to JavaScript Date.
   ======================================================= */
 
   const transactionDate =
@@ -5266,11 +5265,10 @@ export async function createLoanRepayment(
   /* =======================================================
      FUTURE TRANSACTION PROTECTION
 
-     CalendarDate strings sort chronologically because they
-     use the YYYY-MM-DD format.
+     CalendarDate strings sort chronologically when stored
+     in YYYY-MM-DD format.
 
-     The current Kenyan calendar date is the authoritative
-     boundary for financial transaction dates.
+     The current Kenyan calendar date is the boundary.
   ======================================================= */
 
   const today =
@@ -5290,6 +5288,7 @@ export async function createLoanRepayment(
 
   const {
     client,
+    loans,
     repayments,
   } =
     await getCollections();
@@ -5452,20 +5451,19 @@ export async function createLoanRepayment(
           /* =================================================
              SMS TEMPORAL PROTECTION
 
-             A bank SMS cannot represent a repayment that
-             occurred before the loan was disbursed.
+             SMS repayments cannot have a transaction date
+             before the loan disbursement date.
 
              Same-day repayment IS allowed.
 
-             Example:
+               transactionDate < disbursementDate
+                 -> rejected
 
-               disbursementDate = 2026-09-12
-               transactionDate   = 2026-09-12
-               RESULT            = allowed
+               transactionDate === disbursementDate
+                 -> allowed
 
-               disbursementDate = 2026-09-12
-               transactionDate   = 2026-09-11
-               RESULT            = rejected
+               transactionDate > disbursementDate
+                 -> allowed
           ================================================= */
 
           if (
@@ -5541,8 +5539,7 @@ export async function createLoanRepayment(
           /* =================================================
              REPAYMENT DOCUMENT
 
-             transactionDate is already a canonical
-             CalendarDate string and must remain a string.
+             transactionDate remains a CalendarDate string.
           ================================================= */
 
           const repaymentDocument:
@@ -5651,11 +5648,6 @@ export async function createLoanRepayment(
              another repayment cannot silently overwrite
              this transaction's financial state.
           ================================================= */
-
-          const {
-            loans,
-          } =
-            await getCollections();
 
           const updateResult =
             await loans.updateOne(
