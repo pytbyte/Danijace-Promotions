@@ -35,6 +35,9 @@ const COMPANY_SUBTITLE = "Member Financial Services";
 const TRANSACTIONS_ENDPOINT =
   "/api/savings/transactions";
 
+const LOANS_ENDPOINT =
+  "/api/loans";
+
 const PHOTO_ENDPOINT =
   "/api/members/photos";
 
@@ -324,26 +327,50 @@ function normalizeDate(
         value.getTime(),
       )
     ) {
-      return value.toISOString();
+      return value
+        .toISOString()
+        .slice(0, 10);
     }
+
+    return "";
   }
 
   if (
     typeof value === "string" &&
     value.trim()
   ) {
+    const trimmed =
+      value.trim();
+
+    /*
+     * Calendar dates are authoritative
+     * business dates in GEO-SHUA.
+     *
+     * Preserve YYYY-MM-DD exactly instead
+     * of converting it through local time.
+     */
+    if (
+      /^\d{4}-\d{2}-\d{2}$/.test(
+        trimmed,
+      )
+    ) {
+      return trimmed;
+    }
+
     const date =
-      new Date(value);
+      new Date(trimmed);
 
     if (
       !Number.isNaN(
         date.getTime(),
       )
     ) {
-      return date.toISOString();
+      return date
+        .toISOString()
+        .slice(0, 10);
     }
 
-    return value;
+    return "";
   }
 
   if (
@@ -358,7 +385,9 @@ function normalizeDate(
         date.getTime(),
       )
     ) {
-      return date.toISOString();
+      return date
+        .toISOString()
+        .slice(0, 10);
     }
   }
 
@@ -370,43 +399,33 @@ function normalizeDate(
       objectValue.$date;
 
     if (
-      typeof mongoDate === "string" &&
+      typeof mongoDate ===
+        "string" &&
       mongoDate.trim()
     ) {
-      const date =
-        new Date(mongoDate);
-
-      if (
-        !Number.isNaN(
-          date.getTime(),
-        )
-      ) {
-        return date.toISOString();
-      }
+      return normalizeDate(
+        mongoDate,
+      );
     }
 
     if (
-      typeof mongoDate === "number" &&
+      typeof mongoDate ===
+        "number" &&
       Number.isFinite(mongoDate)
     ) {
-      const date =
-        new Date(mongoDate);
-
-      if (
-        !Number.isNaN(
-          date.getTime(),
-        )
-      ) {
-        return date.toISOString();
-      }
+      return normalizeDate(
+        mongoDate,
+      );
     }
   }
 
-  return new Date(
-    0,
-  ).toISOString();
+  /*
+   * Never use Unix epoch as a fake
+   * business date. Missing dates remain
+   * empty and are rendered as Unknown date.
+   */
+  return "";
 }
-
 function isValidDateString(
   value: string,
 ): boolean {
@@ -1683,97 +1702,376 @@ function buildStatementSummary(
    LOAN
 ========================================================= */
 
+type LoanApiResponse = {
+  success?: boolean;
+
+  data?:
+    | unknown[]
+    | Record<string, unknown>
+    | null;
+
+  error?: unknown;
+
+  message?: unknown;
+};
+
+function getLoanListFromApiResponse(
+  payload: LoanApiResponse,
+): Record<string, unknown>[] {
+  const data =
+    payload.data;
+
+  if (
+    Array.isArray(data)
+  ) {
+    return data
+      .map(
+        (item) =>
+          asRecord(item),
+      )
+      .filter(
+        (
+          item,
+        ): item is Record<
+          string,
+          unknown
+        > =>
+          Boolean(item),
+      );
+  }
+
+  const dataRecord =
+    asRecord(data);
+
+  if (!dataRecord) {
+    return [];
+  }
+
+  const loans =
+    dataRecord.loans;
+
+  if (
+    !Array.isArray(loans)
+  ) {
+    return [];
+  }
+
+  return loans
+    .map(
+      (item) =>
+        asRecord(item),
+    )
+    .filter(
+      (
+        item,
+      ): item is Record<
+        string,
+        unknown
+      > =>
+        Boolean(item),
+    );
+}
+
+async function fetchMemberLoan(
+  memberId: string,
+  summaryLoanNumber?: string,
+): Promise<
+  Record<string, unknown> | null
+> {
+  const normalizedMemberId =
+    safeString(memberId);
+
+  if (!normalizedMemberId) {
+    return null;
+  }
+
+  try {
+    const params =
+      new URLSearchParams();
+
+    params.set(
+      "memberId",
+      normalizedMemberId,
+    );
+
+    params.set(
+      "page",
+      "1",
+    );
+
+    params.set(
+      "limit",
+      "1000",
+    );
+
+    const response =
+      await fetch(
+        `${LOANS_ENDPOINT}?${params.toString()}`,
+        {
+          method: "GET",
+          cache: "no-store",
+          credentials:
+            "same-origin",
+          headers: {
+            Accept:
+              "application/json",
+          },
+        },
+      );
+
+    const text =
+      await response.text();
+
+    if (
+      !response.ok ||
+      !text.trim()
+    ) {
+      return null;
+    }
+
+    let payload:
+      LoanApiResponse;
+
+    try {
+      payload =
+        JSON.parse(
+          text,
+        ) as LoanApiResponse;
+    } catch {
+      return null;
+    }
+
+    if (
+      payload.success === false
+    ) {
+      return null;
+    }
+
+    const loans =
+      getLoanListFromApiResponse(
+        payload,
+      );
+
+    if (
+      !loans.length
+    ) {
+      return null;
+    }
+
+    /*
+     * Prefer the exact loan already
+     * referenced by the member financial
+     * summary. This prevents accidentally
+     * attaching an older loan to the PDF.
+     */
+    const normalizedLoanNumber =
+      safeString(
+        summaryLoanNumber,
+      );
+
+    if (
+      normalizedLoanNumber
+    ) {
+      const exactLoan =
+        loans.find(
+          (loan) =>
+            safeString(
+              loan.loanNumber,
+            ) ===
+            normalizedLoanNumber,
+        );
+
+      if (exactLoan) {
+        return exactLoan;
+      }
+    }
+
+    /*
+     * If the summary did not provide a loan
+     * number, prefer an active loan, then a
+     * pending loan, then any returned loan.
+     */
+    return (
+      loans.find(
+        (loan) =>
+          safeString(
+            loan.status,
+          ).toLowerCase() ===
+          "active",
+      ) ??
+      loans.find(
+        (loan) =>
+          safeString(
+            loan.status,
+          ).toLowerCase() ===
+          "pending",
+      ) ??
+      loans[0] ??
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
 function getLoanFromMember(
   member: PdfMember,
+  authoritativeLoan:
+    | Record<string, unknown>
+    | null,
 ): LoanData | null {
-  if (
-    !hasFinancialSummary(
+  const summaryLoan =
+    hasFinancialSummary(
       member,
     )
+      ? asRecord(
+          member.financialSummary
+            .loan,
+        )
+      : null;
+
+  if (
+    !summaryLoan &&
+    !authoritativeLoan
   ) {
     return null;
   }
 
-  const loan =
-    member.financialSummary
-      .loan;
+  const source =
+    authoritativeLoan ??
+    summaryLoan;
 
-  if (!loan) {
+  if (!source) {
     return null;
   }
 
-  const loanWithOptionalFields =
-    loan as typeof loan & {
-      installmentAmount?: unknown;
-      endDate?: unknown;
-    };
+  const loanNumber =
+    safeString(
+      source.loanNumber,
+    ) ||
+    safeString(
+      summaryLoan?.loanNumber,
+      "N/A",
+    );
 
+  const installmentAmount =
+    safeNumber(
+      source.installmentAmount,
+    );
+
+  const endDate =
+    normalizeDate(
+      source.endDate ??
+        summaryLoan?.endDate,
+    );
+
+  /*
+   * Financial values come from the
+   * authoritative loan record whenever
+   * available. The member summary is used
+   * only as a fallback for projection values
+   * that are not returned by the loan list.
+   */
   return {
     loanNumber:
       safeString(
-        loan.loanNumber,
+        loanNumber,
         "N/A",
       ),
 
     status:
-      loan.status,
+      source.status ===
+        "pending" ||
+      source.status ===
+        "active" ||
+      source.status ===
+        "completed" ||
+      source.status ===
+        "cancelled"
+        ? source.status
+        : (
+            summaryLoan?.status ===
+              "pending" ||
+            summaryLoan?.status ===
+              "active" ||
+            summaryLoan?.status ===
+              "completed" ||
+            summaryLoan?.status ===
+              "cancelled"
+              ? summaryLoan.status
+              : "active"
+          ),
 
     principal:
       roundMoney(
         safeNumber(
-          loan.principal,
+          source.principal ??
+            summaryLoan?.principal,
         ),
       ),
 
     installmentAmount:
       roundMoney(
-        safeNumber(
-          loanWithOptionalFields
-            .installmentAmount,
-        ),
+        installmentAmount ||
+          safeNumber(
+            summaryLoan?.installmentAmount,
+          ),
       ),
 
     totalDue:
       roundMoney(
         safeNumber(
-          loan.totalDue,
+          source.totalDue ??
+            summaryLoan?.totalDue,
         ),
       ),
 
     amountPaid:
       roundMoney(
         safeNumber(
-          loan.amountPaid,
+          source.amountPaid ??
+            summaryLoan?.amountPaid,
         ),
       ),
 
     totalFines:
       roundMoney(
         safeNumber(
-          loan.totalFines,
+          source.totalFines ??
+            summaryLoan?.totalFines,
         ),
       ),
 
     outstandingBalance:
       roundMoney(
         safeNumber(
-          loan.outstandingBalance,
+          source.outstandingBalance ??
+            summaryLoan?.outstandingBalance,
         ),
       ),
 
     firstDueDate:
       normalizeDate(
-        loan.firstDueDate,
+        source.firstDueDate ??
+          summaryLoan?.firstDueDate,
       ),
 
-    endDate:
-      normalizeDate(
-        loanWithOptionalFields
-          .endDate,
-      ),
+    endDate,
 
     fineStatus:
-      loan.fineStatus,
+      source.fineStatus ===
+        "active" ||
+      source.fineStatus ===
+        "stopped"
+        ? source.fineStatus
+        : (
+            summaryLoan?.fineStatus ===
+              "active" ||
+            summaryLoan?.fineStatus ===
+              "stopped"
+              ? summaryLoan.fineStatus
+              : "active"
+          ),
   };
 }
 
@@ -4254,9 +4552,22 @@ export async function downloadMemberSummaryPdf(
     );
   }
 
+  const summaryLoanNumber =
+    hasFinancialSummary(
+      member,
+    )
+      ? safeString(
+          asRecord(
+            member.financialSummary
+              .loan,
+          )?.loanNumber,
+        )
+      : "";
+
   const [
     transactions,
     photoDataUrl,
+    authoritativeLoan,
   ] =
     await Promise.all([
       fetchMemberTransactions(
@@ -4265,6 +4576,11 @@ export async function downloadMemberSummaryPdf(
 
       getMemberPhoto(
         membershipNumber,
+      ),
+
+      fetchMemberLoan(
+        memberId,
+        summaryLoanNumber,
       ),
     ]);
 
@@ -4328,6 +4644,7 @@ export async function downloadMemberSummaryPdf(
   const loan =
     getLoanFromMember(
       member,
+      authoritativeLoan,
     );
 
   const statementDocument = (
