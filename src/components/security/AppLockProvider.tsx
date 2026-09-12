@@ -1,7 +1,3 @@
-// ============================================================
-// FILE: src/components/security/AppLockProvider.tsx
-// ============================================================
-
 "use client";
 
 import {
@@ -17,28 +13,72 @@ import {
 
 import { App } from "@capacitor/app";
 import { Preferences } from "@capacitor/preferences";
+import { registerPlugin } from "@capacitor/core";
 
-// ============================================================
-// CONFIGURATION
-// ============================================================
+/* ============================================================
+   NATIVE DEVICE SECURITY
+============================================================ */
 
-const DEFAULT_TIMEOUT_MINUTES = 3;
+type DeviceSecurityResult = {
+  success: boolean;
+  code?: string;
+  message?: string;
+};
 
-const MIN_TIMEOUT_MINUTES = 1;
-const MAX_TIMEOUT_MINUTES = 60;
+interface DeviceSecurityPlugin {
+  authenticate(): Promise<DeviceSecurityResult>;
+  isAvailable?(): Promise<{
+    available: boolean;
+    code?: string;
+    message?: string;
+  }>;
+}
 
-const DEFAULT_TIMEOUT_MS =
-  DEFAULT_TIMEOUT_MINUTES * 60 * 1000;
+const DeviceSecurity =
+  registerPlugin<DeviceSecurityPlugin>("DeviceSecurity");
+
+/* ============================================================
+   APP LOCK CONFIGURATION
+============================================================ */
+
+/*
+ * Foreground:
+ * Lock after 2 minutes of inactivity by default.
+ *
+ * This remains configurable through Settings.
+ */
+const DEFAULT_FOREGROUND_TIMEOUT_MINUTES = 2;
+
+const MIN_FOREGROUND_TIMEOUT_MINUTES = 1;
+const MAX_FOREGROUND_TIMEOUT_MINUTES = 60;
+
+/*
+ * Background:
+ *
+ * Hard limit of 1 minute.
+ *
+ * This is intentionally NOT configurable because the requirement
+ * is that once the app goes into the background it should lock
+ * within 1 minute at most.
+ */
+const BACKGROUND_TIMEOUT_MS = 60 * 1000;
+
+const DEFAULT_FOREGROUND_TIMEOUT_MS =
+  DEFAULT_FOREGROUND_TIMEOUT_MINUTES * 60 * 1000;
+
+/* ============================================================
+   STORAGE KEYS
+============================================================ */
 
 const PREF_KEYS = {
-  timeoutMs: "geoshua.app_lock_timeout_ms",
+  foregroundTimeoutMs: "geoshua.app_lock_timeout_ms",
   lastActivity: "geoshua.app_lock_last_activity",
   backgroundedAt: "geoshua.app_lock_backgrounded_at",
 };
 
-// ============================================================
-// TYPES
-// ============================================================
+/* ============================================================
+   CONTEXT
+============================================================ */
 
 interface AppLockContextValue {
   locked: boolean;
@@ -47,635 +87,771 @@ interface AppLockContextValue {
   timeoutMs: number;
   timeoutMinutes: number;
 
-  lock: () => Promise<void>;
-
-  setTimeoutMinutes: (
-    minutes: number,
-  ) => Promise<void>;
-
+  lock: () => void;
+  setTimeoutMinutes: (minutes: number) => Promise<void>;
   recordActivity: () => void;
 }
-
-interface AppLockProviderProps {
-  children: ReactNode;
-}
-
-// ============================================================
-// CONTEXT
-// ============================================================
 
 const AppLockContext =
   createContext<AppLockContextValue | null>(null);
 
-// ============================================================
-// HELPERS
-// ============================================================
+/* ============================================================
+   HELPERS
+============================================================ */
 
-function clampTimeoutMinutes(
-  minutes: number,
-): number {
-  if (!Number.isFinite(minutes)) {
-    return DEFAULT_TIMEOUT_MINUTES;
+function clampTimeoutMinutes(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_FOREGROUND_TIMEOUT_MINUTES;
   }
 
   return Math.min(
-    MAX_TIMEOUT_MINUTES,
-    Math.max(
-      MIN_TIMEOUT_MINUTES,
-      Math.round(minutes),
-    ),
+    MAX_FOREGROUND_TIMEOUT_MINUTES,
+    Math.max(MIN_FOREGROUND_TIMEOUT_MINUTES, value),
   );
 }
 
-function minutesToMilliseconds(
-  minutes: number,
-): number {
-  return (
-    clampTimeoutMinutes(minutes) *
-    60 *
-    1000
-  );
+function isNativeDeviceSecurityUnavailable(
+  result: DeviceSecurityResult,
+): boolean {
+  const code = String(result.code ?? "").toUpperCase();
+
+  /*
+   * These mean Android cannot provide a usable native
+   * authentication mechanism.
+   *
+   * Only in these cases do we expose the GEO-SHUA PIN.
+   */
+  return [
+    "NO_HARDWARE",
+    "NONE_ENROLLED",
+    "NO_DEVICE_CREDENTIAL",
+    "UNSUPPORTED",
+    "SECURITY_UPDATE_REQUIRED",
+    "UNAVAILABLE",
+    "NATIVE_ERROR",
+  ].includes(code);
 }
 
-async function getStoredNumber(
-  key: string,
-): Promise<number | null> {
+/* ============================================================
+   NATIVE AUTHENTICATION
+============================================================ */
+
+async function authenticateWithNativeSecurity(): Promise<DeviceSecurityResult> {
+  /*
+   * On web/desktop the custom native plugin does not exist.
+   *
+   * The exception is deliberately converted into an unavailable
+   * result so that the normal GEO-SHUA PIN fallback is used.
+   */
   try {
-    const result = await Preferences.get({
-      key,
-    });
+    const result = await DeviceSecurity.authenticate();
 
-    if (
-      result.value === null ||
-      result.value === undefined ||
-      result.value === ""
-    ) {
-      return null;
-    }
+    return {
+      success: Boolean(result?.success),
+      code: result?.code,
+      message: result?.message,
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Native device security is unavailable.";
 
-    const value = Number(result.value);
-
-    return Number.isFinite(value)
-      ? value
-      : null;
-  } catch {
-    return null;
+    return {
+      success: false,
+      code: "NATIVE_ERROR",
+      message,
+    };
   }
 }
 
-async function setStoredNumber(
-  key: string,
-  value: number,
-): Promise<void> {
-  try {
-    await Preferences.set({
-      key,
-      value: String(value),
-    });
-  } catch {
-    /*
-     * Do not allow storage failures to crash
-     * the dashboard.
-     */
-  }
-}
-
-async function removeStoredValue(
-  key: string,
-): Promise<void> {
-  try {
-    await Preferences.remove({
-      key,
-    });
-  } catch {
-    /*
-     * Non-fatal.
-     */
-  }
-}
-
-// ============================================================
-// PROVIDER
-// ============================================================
+/* ============================================================
+   APP LOCK PROVIDER
+============================================================ */
 
 export function AppLockProvider({
   children,
-}: AppLockProviderProps) {
-  const [ready, setReady] =
+}: {
+  children: ReactNode;
+}) {
+  /* ----------------------------------------------------------
+     STATE
+  ---------------------------------------------------------- */
+
+  const [ready, setReady] = useState(false);
+
+  const [locked, setLocked] = useState(false);
+
+  const [timeoutMs, setTimeoutMsState] = useState(
+    DEFAULT_FOREGROUND_TIMEOUT_MS,
+  );
+
+  /*
+   * Whether the native authentication mechanism is unavailable
+   * and therefore the GEO-SHUA PIN should be shown.
+   */
+  const [showPinFallback, setShowPinFallback] =
     useState(false);
 
-  const [locked, setLocked] =
-    useState(false);
+  const [authMessage, setAuthMessage] = useState("");
 
-  const [timeoutMs, setTimeoutMs] =
-    useState(DEFAULT_TIMEOUT_MS);
+  const [pin, setPin] = useState("");
 
-  const timeoutRef =
-    useRef(DEFAULT_TIMEOUT_MS);
+  const [pinLoading, setPinLoading] = useState(false);
 
-  const lastActivityRef =
-    useRef<number>(Date.now());
+  const [pinError, setPinError] = useState("");
 
-  const backgroundedAtRef =
-    useRef<number | null>(null);
+  /* ----------------------------------------------------------
+     REFS
+  ---------------------------------------------------------- */
 
-  const lockedRef =
-    useRef(false);
+  const timeoutRef = useRef(
+    DEFAULT_FOREGROUND_TIMEOUT_MS,
+  );
 
-  const activityWriteTimerRef =
-    useRef<ReturnType<typeof setTimeout> | null>(
-      null,
-    );
+  const lastActivityRef = useRef<number>(Date.now());
 
-  const lockTimerRef =
-    useRef<ReturnType<typeof setTimeout> | null>(
-      null,
-    );
+  const backgroundedAtRef = useRef<number | null>(null);
 
-  // ==========================================================
-  // LOCK
-  // ==========================================================
+  const foregroundTimerRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const lock = useCallback(
-    async () => {
-      if (lockedRef.current) {
-        return;
-      }
+  const nativeAuthRunningRef = useRef(false);
 
-      lockedRef.current = true;
+  const nativeAuthAttemptedRef = useRef(false);
 
-      setLocked(true);
+  const mountedRef = useRef(true);
 
-      /*
-       * Keep the original lastActivity timestamp.
-       *
-       * This is intentional. If Android destroys the
-       * WebView while the app is locked, reopening it
-       * should still require verification.
-       */
-      if (
-        activityWriteTimerRef.current
-      ) {
-        clearTimeout(
-          activityWriteTimerRef.current,
-        );
+  /* ==========================================================
+     CLEAR FOREGROUND TIMER
+  ========================================================== */
 
-        activityWriteTimerRef.current = null;
-      }
+  const clearForegroundTimer = useCallback(() => {
+    if (foregroundTimerRef.current !== null) {
+      clearTimeout(foregroundTimerRef.current);
+      foregroundTimerRef.current = null;
+    }
+  }, []);
 
-      if (lockTimerRef.current) {
-        clearTimeout(
-          lockTimerRef.current,
-        );
+  /* ==========================================================
+     SAVE LAST ACTIVITY
+  ========================================================== */
 
-        lockTimerRef.current = null;
+  const persistLastActivity = useCallback(
+    async (timestamp: number) => {
+      try {
+        await Preferences.set({
+          key: PREF_KEYS.lastActivity,
+          value: String(timestamp),
+        });
+      } catch {
+        /*
+         * Local persistence failure should not break the lock
+         * mechanism. The in-memory timestamp still works.
+         */
       }
     },
     [],
   );
 
-  // ==========================================================
-  // SCHEDULE IDLE LOCK
-  // ==========================================================
+  /* ==========================================================
+     COMPLETE UNLOCK
+  ========================================================== */
 
-  const scheduleLock = useCallback(
-    (
-      activityTimestamp: number,
-    ) => {
-      if (lockTimerRef.current) {
-        clearTimeout(
-          lockTimerRef.current,
+  const completeUnlock = useCallback(async () => {
+    if (!mountedRef.current) {
+      return;
+    }
+
+    const now = Date.now();
+
+    lastActivityRef.current = now;
+
+    backgroundedAtRef.current = null;
+
+    nativeAuthRunningRef.current = false;
+
+    nativeAuthAttemptedRef.current = false;
+
+    setLocked(false);
+
+    setShowPinFallback(false);
+
+    setAuthMessage("");
+
+    setPin("");
+
+    setPinError("");
+
+    clearForegroundTimer();
+
+    try {
+      await Preferences.set({
+        key: PREF_KEYS.lastActivity,
+        value: String(now),
+      });
+
+      await Preferences.remove({
+        key: PREF_KEYS.backgroundedAt,
+      });
+    } catch {
+      /*
+       * Unlock must still succeed if Preferences happens to fail.
+       */
+    }
+  }, [clearForegroundTimer]);
+
+  /* ==========================================================
+     NATIVE AUTHENTICATION
+  ========================================================== */
+
+  const runNativeAuthentication = useCallback(async () => {
+    if (!mountedRef.current) {
+      return;
+    }
+
+    if (!locked) {
+      return;
+    }
+
+    /*
+     * Prevent multiple native prompts from being opened at
+     * the same time.
+     */
+    if (nativeAuthRunningRef.current) {
+      return;
+    }
+
+    nativeAuthRunningRef.current = true;
+
+    setAuthMessage("Verifying your device…");
+    setShowPinFallback(false);
+    setPinError("");
+
+    const result =
+      await authenticateWithNativeSecurity();
+
+    if (!mountedRef.current) {
+      nativeAuthRunningRef.current = false;
+      return;
+    }
+
+    nativeAuthRunningRef.current = false;
+
+    if (result.success) {
+      await completeUnlock();
+      return;
+    }
+
+    /*
+     * IMPORTANT:
+     *
+     * A cancelled biometric prompt, failed fingerprint,
+     * failed face verification, timeout, or lockout does NOT
+     * mean native security is unavailable.
+     *
+     * Therefore we do NOT fall back to the weaker GEO-SHUA PIN
+     * in those cases.
+     */
+    if (!isNativeDeviceSecurityUnavailable(result)) {
+      setAuthMessage(
+        result.message ||
+          "Use your Android device security to continue.",
+      );
+
+      /*
+       * Do not automatically loop native prompts forever.
+       *
+       * Android's native prompt has already appeared and the
+       * user can interact with it normally.
+       */
+      return;
+    }
+
+    /*
+     * No usable native device security exists.
+     *
+     * Only now is the GEO-SHUA PIN allowed.
+     */
+    setShowPinFallback(true);
+
+    setAuthMessage(
+      "Android device security is unavailable. Use your GEO-SHUA PIN.",
+    );
+  }, [completeUnlock, locked]);
+
+  /* ==========================================================
+     LOCK
+  ========================================================== */
+
+  const lock = useCallback(() => {
+    if (!mountedRef.current) {
+      return;
+    }
+
+    clearForegroundTimer();
+
+    nativeAuthAttemptedRef.current = false;
+
+    nativeAuthRunningRef.current = false;
+
+    setPin("");
+
+    setPinError("");
+
+    setAuthMessage("");
+
+    setShowPinFallback(false);
+
+    setLocked(true);
+  }, [clearForegroundTimer]);
+
+  /* ==========================================================
+     SCHEDULE FOREGROUND LOCK
+  ========================================================== */
+
+  const scheduleForegroundLock = useCallback(() => {
+    clearForegroundTimer();
+
+    const now = Date.now();
+
+    const elapsed =
+      now - lastActivityRef.current;
+
+    const remaining =
+      timeoutRef.current - elapsed;
+
+    if (remaining <= 0) {
+      lock();
+      return;
+    }
+
+    foregroundTimerRef.current =
+      setTimeout(() => {
+        const currentNow = Date.now();
+
+        const currentElapsed =
+          currentNow - lastActivityRef.current;
+
+        if (
+          currentElapsed >=
+          timeoutRef.current
+        ) {
+          lock();
+          return;
+        }
+
+        scheduleForegroundLock();
+      }, Math.max(1000, remaining));
+  }, [clearForegroundTimer, lock]);
+
+  /* ==========================================================
+     RECORD ACTIVITY
+  ========================================================== */
+
+  const recordActivity = useCallback(() => {
+    /*
+     * Never reset activity while the app is locked.
+     */
+    if (locked) {
+      return;
+    }
+
+    /*
+     * Never reset foreground activity while the native app is
+     * in the background.
+     */
+    if (backgroundedAtRef.current !== null) {
+      return;
+    }
+
+    const now = Date.now();
+
+    lastActivityRef.current = now;
+
+    void persistLastActivity(now);
+
+    scheduleForegroundLock();
+  }, [
+    locked,
+    persistLastActivity,
+    scheduleForegroundLock,
+  ]);
+
+  /* ==========================================================
+     SET FOREGROUND TIMEOUT
+  ========================================================== */
+
+  const setTimeoutMinutes = useCallback(
+    async (minutes: number) => {
+      const safeMinutes =
+        clampTimeoutMinutes(minutes);
+
+      const nextTimeoutMs =
+        safeMinutes * 60 * 1000;
+
+      timeoutRef.current = nextTimeoutMs;
+
+      setTimeoutMsState(nextTimeoutMs);
+
+      try {
+        await Preferences.set({
+          key: PREF_KEYS.foregroundTimeoutMs,
+          value: String(nextTimeoutMs),
+        });
+      } catch {
+        /*
+         * Keep the in-memory setting even if persistence fails.
+         */
+      }
+
+      if (!locked) {
+        lastActivityRef.current = Date.now();
+
+        await persistLastActivity(
+          lastActivityRef.current,
         );
+
+        scheduleForegroundLock();
       }
-
-      const elapsed =
-        Date.now() -
-        activityTimestamp;
-
-      const remaining =
-        timeoutRef.current -
-        elapsed;
-
-      if (remaining <= 0) {
-        void lock();
-        return;
-      }
-
-      lockTimerRef.current =
-        setTimeout(() => {
-          const currentElapsed =
-            Date.now() -
-            lastActivityRef.current;
-
-          if (
-            currentElapsed >=
-            timeoutRef.current
-          ) {
-            void lock();
-          } else {
-            scheduleLock(
-              lastActivityRef.current,
-            );
-          }
-        }, remaining + 250);
     },
-    [lock],
+    [
+      locked,
+      persistLastActivity,
+      scheduleForegroundLock,
+    ],
   );
 
-  // ==========================================================
-  // RECORD ACTIVITY
-  // ==========================================================
-
-  const recordActivity =
-    useCallback(() => {
-      if (
-        !ready ||
-        lockedRef.current
-      ) {
-        return;
-      }
-
-      const now = Date.now();
-
-      lastActivityRef.current =
-        now;
-
-      /*
-       * We intentionally debounce writes.
-       *
-       * Activity remains accurate in memory,
-       * while native storage is not written on
-       * every mouse movement/touch event.
-       */
-      if (
-        !activityWriteTimerRef.current
-      ) {
-        activityWriteTimerRef.current =
-          setTimeout(async () => {
-            activityWriteTimerRef.current =
-              null;
-
-            if (
-              lockedRef.current
-            ) {
-              return;
-            }
-
-            await setStoredNumber(
-              PREF_KEYS.lastActivity,
-              lastActivityRef.current,
-            );
-          }, 10_000);
-      }
-
-      scheduleLock(now);
-    }, [
-      ready,
-      scheduleLock,
-    ]);
-
-  // ==========================================================
-  // COMPLETE UNLOCK
-  // ==========================================================
-
-  const completeUnlock =
-    useCallback(async () => {
-      const now = Date.now();
-
-      lockedRef.current =
-        false;
-
-      setLocked(false);
-
-      lastActivityRef.current =
-        now;
-
-      backgroundedAtRef.current =
-        null;
-
-      await setStoredNumber(
-        PREF_KEYS.lastActivity,
-        now,
-      );
-
-      await removeStoredValue(
-        PREF_KEYS.backgroundedAt,
-      );
-
-      scheduleLock(now);
-    }, [scheduleLock]);
-
-  // ==========================================================
-  // INITIALISE
-  // ==========================================================
+  /* ==========================================================
+     INITIALISE
+  ========================================================== */
 
   useEffect(() => {
+    mountedRef.current = true;
+
     let cancelled = false;
 
-    async function initialise() {
-      const storedTimeout =
-        await getStoredNumber(
-          PREF_KEYS.timeoutMs,
-        );
+    const initialise = async () => {
+      let storedTimeoutMs =
+        DEFAULT_FOREGROUND_TIMEOUT_MS;
 
-      let resolvedTimeout =
-        DEFAULT_TIMEOUT_MS;
+      let storedLastActivity = Date.now();
 
-      if (
-        storedTimeout !== null &&
-        Number.isFinite(storedTimeout)
-      ) {
-        const minutes =
-          clampTimeoutMinutes(
-            storedTimeout / 60 / 1000,
-          );
+      let storedBackgroundedAt: number | null =
+        null;
 
-        resolvedTimeout =
-          minutesToMilliseconds(
-            minutes,
-          );
+      try {
+        const timeoutPreference =
+          await Preferences.get({
+            key: PREF_KEYS.foregroundTimeoutMs,
+          });
+
+        if (timeoutPreference.value) {
+          const parsed =
+            Number(timeoutPreference.value);
+
+          if (
+            Number.isFinite(parsed) &&
+            parsed > 0
+          ) {
+            storedTimeoutMs =
+              clampTimeoutMinutes(
+                parsed / 60_000,
+              ) * 60_000;
+          }
+        }
+
+        const activityPreference =
+          await Preferences.get({
+            key: PREF_KEYS.lastActivity,
+          });
+
+        if (activityPreference.value) {
+          const parsed =
+            Number(activityPreference.value);
+
+          if (
+            Number.isFinite(parsed) &&
+            parsed > 0
+          ) {
+            storedLastActivity = parsed;
+          }
+        }
+
+        const backgroundPreference =
+          await Preferences.get({
+            key: PREF_KEYS.backgroundedAt,
+          });
+
+        if (backgroundPreference.value) {
+          const parsed =
+            Number(backgroundPreference.value);
+
+          if (
+            Number.isFinite(parsed) &&
+            parsed > 0
+          ) {
+            storedBackgroundedAt = parsed;
+          }
+        }
+      } catch {
+        /*
+         * Defaults remain valid.
+         */
       }
 
-      if (cancelled) {
-        return;
-      }
-
-      timeoutRef.current =
-        resolvedTimeout;
-
-      setTimeoutMs(
-        resolvedTimeout,
-      );
-
-      const storedActivity =
-        await getStoredNumber(
-          PREF_KEYS.lastActivity,
-        );
-
-      const storedBackground =
-        await getStoredNumber(
-          PREF_KEYS.backgroundedAt,
-        );
-
-      if (cancelled) {
+      if (cancelled || !mountedRef.current) {
         return;
       }
 
       const now = Date.now();
 
-      /*
-       * First installation / first run.
-       *
-       * Do not immediately lock an existing user
-       * just because the app-lock feature was added.
-       */
-      if (storedActivity === null) {
-        lastActivityRef.current =
-          now;
-
-        await setStoredNumber(
-          PREF_KEYS.lastActivity,
-          now,
-        );
-
-        await removeStoredValue(
-          PREF_KEYS.backgroundedAt,
-        );
-
-        if (!cancelled) {
-          setReady(true);
-          scheduleLock(now);
-        }
-
-        return;
-      }
+      timeoutRef.current = storedTimeoutMs;
 
       lastActivityRef.current =
-        storedActivity;
+        storedLastActivity;
 
-      if (storedBackground !== null) {
+      backgroundedAtRef.current =
+        storedBackgroundedAt;
+
+      setTimeoutMsState(storedTimeoutMs);
+
+      /*
+       * If the app was previously backgrounded, enforce the
+       * hard 1-minute background timeout.
+       */
+      if (
+        storedBackgroundedAt !== null &&
+        now - storedBackgroundedAt >=
+          BACKGROUND_TIMEOUT_MS
+      ) {
+        setLocked(true);
+
         backgroundedAtRef.current =
-          storedBackground;
-      }
+          storedBackgroundedAt;
 
-      const idleElapsed =
-        now -
-        storedActivity;
-
-      const backgroundElapsed =
-        storedBackground !== null
-          ? now - storedBackground
-          : 0;
-
-      const shouldLock =
-        idleElapsed >=
-          resolvedTimeout ||
-        backgroundElapsed >=
-          resolvedTimeout;
-
-      if (shouldLock) {
-        lockedRef.current =
-          true;
-
-        if (!cancelled) {
-          setLocked(true);
-          setReady(true);
-        }
+        setReady(true);
 
         return;
       }
 
       /*
-       * The app was away from the foreground,
-       * but not long enough to require a lock.
+       * If foreground inactivity already exceeded the configured
+       * timeout, lock immediately.
        */
-      await setStoredNumber(
-        PREF_KEYS.lastActivity,
-        now,
-      );
+      if (
+        now - storedLastActivity >=
+        storedTimeoutMs
+      ) {
+        setLocked(true);
 
-      await removeStoredValue(
-        PREF_KEYS.backgroundedAt,
-      );
-
-      lastActivityRef.current =
-        now;
-
-      if (!cancelled) {
         setReady(true);
-        scheduleLock(now);
+
+        return;
       }
-    }
+
+      /*
+       * Otherwise the app can continue normally.
+       */
+      setReady(true);
+
+      scheduleForegroundLock();
+    };
 
     void initialise();
 
     return () => {
       cancelled = true;
 
-      if (
-        activityWriteTimerRef.current
-      ) {
-        clearTimeout(
-          activityWriteTimerRef.current,
-        );
-      }
+      mountedRef.current = false;
 
-      if (lockTimerRef.current) {
-        clearTimeout(
-          lockTimerRef.current,
-        );
-      }
+      clearForegroundTimer();
     };
-  }, [scheduleLock]);
+  }, [
+    clearForegroundTimer,
+    scheduleForegroundLock,
+  ]);
 
-  // ==========================================================
-  // APP FOREGROUND / BACKGROUND
-  // ==========================================================
+  /* ==========================================================
+     AUTOMATIC NATIVE AUTH WHEN LOCKED
+  ========================================================== */
+
+  useEffect(() => {
+    if (!ready || !locked) {
+      return;
+    }
+
+    /*
+     * The authentication flow is automatic.
+     *
+     * There is deliberately no "Unlock" button.
+     */
+    if (nativeAuthAttemptedRef.current) {
+      return;
+    }
+
+    nativeAuthAttemptedRef.current = true;
+
+    /*
+     * Give React one tick to render the lock screen before
+     * opening the native Android authentication prompt.
+     */
+    const timer = setTimeout(() => {
+      void runNativeAuthentication();
+    }, 150);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [
+    ready,
+    locked,
+    runNativeAuthentication,
+  ]);
+
+  /* ==========================================================
+     APP STATE
+  ========================================================== */
 
   useEffect(() => {
     if (!ready) {
       return;
     }
 
-    let listener:
-      | {
-          remove: () => Promise<void>;
-        }
-      | null = null;
+    let mounted = true;
 
-    async function handleAppState(
-      isActive: boolean,
-    ) {
-      const now = Date.now();
+    const listenerPromise =
+      App.addListener(
+        "appStateChange",
+        ({ isActive }) => {
+          if (!mounted || !mountedRef.current) {
+            return;
+          }
 
-      if (!isActive) {
-        /*
-         * App entered Android Recent Apps/background.
-         */
-        backgroundedAtRef.current =
-          now;
+          const now = Date.now();
 
-        await setStoredNumber(
-          PREF_KEYS.backgroundedAt,
-          now,
-        );
+          /*
+           * ----------------------------------------------------
+           * APP GOES TO BACKGROUND
+           * ----------------------------------------------------
+           */
 
-        /*
-         * Also persist current activity before
-         * Android potentially suspends/kills WebView.
-         */
-        await setStoredNumber(
-          PREF_KEYS.lastActivity,
-          lastActivityRef.current,
-        );
+          if (!isActive) {
+            backgroundedAtRef.current = now;
 
-        return;
-      }
+            void Preferences.set({
+              key: PREF_KEYS.backgroundedAt,
+              value: String(now),
+            });
 
-      /*
-       * App returned to foreground.
-       */
-      const backgroundedAt =
-        backgroundedAtRef.current ??
-        (await getStoredNumber(
-          PREF_KEYS.backgroundedAt,
-        ));
+            clearForegroundTimer();
 
-      const storedActivity =
-        await getStoredNumber(
-          PREF_KEYS.lastActivity,
-        );
+            return;
+          }
 
-      const effectiveActivity =
-        storedActivity ??
-        lastActivityRef.current;
+          /*
+           * ----------------------------------------------------
+           * APP RETURNS TO FOREGROUND
+           * ----------------------------------------------------
+           */
 
-      const idleElapsed =
-        now -
-        effectiveActivity;
+          const backgroundedAt =
+            backgroundedAtRef.current;
 
-      const backgroundElapsed =
-        backgroundedAt !== null
-          ? now - backgroundedAt
-          : 0;
+          /*
+           * The background timestamp is deliberately checked
+           * before anything else.
+           */
+          if (
+            backgroundedAt !== null &&
+            now - backgroundedAt >=
+              BACKGROUND_TIMEOUT_MS
+          ) {
+            clearForegroundTimer();
 
-      if (
-        lockedRef.current ||
-        idleElapsed >=
-          timeoutRef.current ||
-        backgroundElapsed >=
-          timeoutRef.current
-      ) {
-        await lock();
-        return;
-      }
+            setLocked(true);
 
-      /*
-       * User came back before the timeout.
-       */
-      lastActivityRef.current =
-        now;
+            nativeAuthAttemptedRef.current =
+              false;
 
-      backgroundedAtRef.current =
-        null;
+            return;
+          }
 
-      await setStoredNumber(
-        PREF_KEYS.lastActivity,
-        now,
+          /*
+           * App returned before the 1-minute background limit.
+           *
+           * Treat the return as fresh foreground activity.
+           */
+          backgroundedAtRef.current = null;
+
+          void Preferences.remove({
+            key: PREF_KEYS.backgroundedAt,
+          });
+
+          if (!locked) {
+            lastActivityRef.current = now;
+
+            void persistLastActivity(now);
+
+            scheduleForegroundLock();
+          }
+        },
       );
-
-      await removeStoredValue(
-        PREF_KEYS.backgroundedAt,
-      );
-
-      scheduleLock(now);
-    }
-
-    async function setupListener() {
-      listener =
-        await App.addListener(
-          "appStateChange",
-          ({ isActive }) => {
-            void handleAppState(
-              isActive,
-            );
-          },
-        );
-    }
-
-    void setupListener();
 
     return () => {
-      if (listener) {
-        void listener.remove();
-      }
+      mounted = false;
+
+      void listenerPromise.then((listener) => {
+        listener.remove();
+      });
+
+      clearForegroundTimer();
     };
   }, [
     ready,
-    lock,
-    scheduleLock,
+    locked,
+    clearForegroundTimer,
+    persistLastActivity,
+    scheduleForegroundLock,
   ]);
 
-  // ==========================================================
-  // USER ACTIVITY EVENTS
-  // ==========================================================
+  /* ==========================================================
+     WEB ACTIVITY LISTENERS
+  ========================================================== */
 
   useEffect(() => {
     if (!ready || locked) {
       return;
     }
 
-    const events: Array<
-      keyof WindowEventMap
-    > = [
+    const events = [
       "pointerdown",
       "keydown",
       "touchstart",
       "scroll",
-    ];
+    ] as const;
+
+    let activityScheduled = false;
 
     const handleActivity = () => {
-      recordActivity();
+      if (activityScheduled) {
+        return;
+      }
+
+      activityScheduled = true;
+
+      /*
+       * Avoid writing Preferences on every touch/scroll event.
+       */
+      window.setTimeout(() => {
+        activityScheduled = false;
+
+        if (!mountedRef.current || locked) {
+          return;
+        }
+
+        recordActivity();
+      }, 250);
     };
 
     for (const event of events) {
@@ -702,227 +878,34 @@ export function AppLockProvider({
     recordActivity,
   ]);
 
-  // ==========================================================
-  // TIMEOUT UPDATE
-  // ==========================================================
+  /* ==========================================================
+     GEO-SHUA PIN FALLBACK
+  ========================================================== */
 
-  const setTimeoutMinutes =
-    useCallback(
-      async (minutes: number) => {
-        const safeMinutes =
-          clampTimeoutMinutes(
-            minutes,
-          );
+  const verifyPin = useCallback(
+    async (event?: React.FormEvent) => {
+      event?.preventDefault();
 
-        const newTimeoutMs =
-          minutesToMilliseconds(
-            safeMinutes,
-          );
+      if (pinLoading) {
+        return;
+      }
 
-        timeoutRef.current =
-          newTimeoutMs;
+      const cleanPin = pin.trim();
 
-        setTimeoutMs(
-          newTimeoutMs,
+      if (!/^\d{4,6}$/.test(cleanPin)) {
+        setPinError(
+          "Enter your 4–6 digit GEO-SHUA PIN.",
         );
 
-        await setStoredNumber(
-          PREF_KEYS.timeoutMs,
-          newTimeoutMs,
-        );
+        return;
+      }
 
-        if (lockedRef.current) {
-          return;
-        }
+      setPinLoading(true);
 
-        const elapsed =
-          Date.now() -
-          lastActivityRef.current;
+      setPinError("");
 
-        if (
-          elapsed >=
-          newTimeoutMs
-        ) {
-          await lock();
-          return;
-        }
-
-        scheduleLock(
-          lastActivityRef.current,
-        );
-      },
-      [lock, scheduleLock],
-    );
-
-  // ==========================================================
-  // CONTEXT VALUE
-  // ==========================================================
-
-  const contextValue =
-    useMemo<AppLockContextValue>(
-      () => ({
-        locked,
-        ready,
-        timeoutMs,
-        timeoutMinutes:
-          Math.round(
-            timeoutMs /
-              60 /
-              1000,
-          ),
-        lock,
-        setTimeoutMinutes,
-        recordActivity,
-      }),
-      [
-        locked,
-        ready,
-        timeoutMs,
-        lock,
-        setTimeoutMinutes,
-        recordActivity,
-      ],
-    );
-
-  // ==========================================================
-  // INITIAL LOADING
-  // ==========================================================
-
-  if (!ready) {
-    return (
-      <div className="min-h-screen bg-slate-950" />
-    );
-  }
-
-  // ==========================================================
-  // RENDER
-  // ==========================================================
-
-  return (
-    <AppLockContext.Provider
-      value={contextValue}
-    >
-      <div
-        className={
-          locked
-            ? "invisible h-full"
-            : "h-full"
-        }
-        aria-hidden={locked}
-      >
-        {children}
-      </div>
-
-      {locked && (
-        <AppLockScreen
-          timeoutMinutes={
-            Math.round(
-              timeoutMs /
-                60 /
-                1000,
-            )
-          }
-          onUnlocked={
-            completeUnlock
-          }
-        />
-      )}
-    </AppLockContext.Provider>
-  );
-}
-
-// ============================================================
-// LOCK SCREEN
-// ============================================================
-
-interface AppLockScreenProps {
-  timeoutMinutes: number;
-  onUnlocked: () => Promise<void>;
-}
-
-function AppLockScreen({
-  timeoutMinutes,
-  onUnlocked,
-}: AppLockScreenProps) {
-  const [pin, setPin] =
-    useState("");
-
-  const [error, setError] =
-    useState("");
-
-  const [loading, setLoading] =
-    useState(false);
-
-  const [retryAfter, setRetryAfter] =
-    useState(0);
-
-  const inputRef =
-    useRef<HTMLInputElement | null>(
-      null,
-    );
-
-  // ==========================================================
-  // AUTO FOCUS
-  // ==========================================================
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  // ==========================================================
-  // RETRY COUNTDOWN
-  // ==========================================================
-
-  useEffect(() => {
-    if (retryAfter <= 0) {
-      return;
-    }
-
-    const timer =
-      setInterval(() => {
-        setRetryAfter(
-          (current) =>
-            Math.max(
-              0,
-              current - 1,
-            ),
-        );
-      }, 1000);
-
-    return () => {
-      clearInterval(timer);
-    };
-  }, [retryAfter]);
-
-  // ==========================================================
-  // VERIFY PIN
-  // ==========================================================
-
-  async function verifyPin() {
-    const cleanPin =
-      pin.replace(/\D/g, "");
-
-    if (
-      cleanPin.length < 4 ||
-      cleanPin.length > 6
-    ) {
-      setError(
-        "Enter your 4–6 digit PIN.",
-      );
-
-      return;
-    }
-
-    if (retryAfter > 0) {
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-
-    try {
-      const response =
-        await fetch(
+      try {
+        const response = await fetch(
           "/api/auth/security/verify",
           {
             method: "POST",
@@ -930,6 +913,7 @@ function AppLockScreen({
               "Content-Type":
                 "application/json",
             },
+            credentials: "include",
             body: JSON.stringify({
               method: "pin",
               pin: cleanPin,
@@ -937,183 +921,252 @@ function AppLockScreen({
           },
         );
 
-      const data =
-        await response
+        const data = await response
           .json()
           .catch(() => null);
 
-      if (!response.ok) {
-        const retry =
-          Number(
-            data?.retryAfterSeconds ??
-              data?.retryAfter ??
-              0,
-          );
-
-        if (
-          Number.isFinite(retry) &&
-          retry > 0
-        ) {
-          setRetryAfter(
-            Math.ceil(retry),
+        if (!response.ok || !data?.success) {
+          throw new Error(
+            data?.message ||
+              "Incorrect GEO-SHUA PIN.",
           );
         }
 
-        setError(
-          data?.error ||
-            "Incorrect PIN.",
+        await completeUnlock();
+      } catch (error) {
+        if (!mountedRef.current) {
+          return;
+        }
+
+        setPinError(
+          error instanceof Error
+            ? error.message
+            : "Unable to verify your PIN.",
         );
 
         setPin("");
-
-        inputRef.current?.focus();
-
-        return;
+      } finally {
+        if (mountedRef.current) {
+          setPinLoading(false);
+        }
       }
+    },
+    [
+      pin,
+      pinLoading,
+      completeUnlock,
+    ],
+  );
 
-      await onUnlocked();
+  /* ==========================================================
+     CONTEXT VALUE
+  ========================================================== */
 
-      setPin("");
-      setError("");
-    } catch {
-      setError(
-        "Unable to verify your PIN. Check your connection and try again.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+  const contextValue = useMemo<AppLockContextValue>(
+    () => ({
+      locked,
+      ready,
 
-  // ==========================================================
-  // KEYBOARD SUBMIT
-  // ==========================================================
+      timeoutMs,
 
-  function handleKeyDown(
-    event: React.KeyboardEvent<HTMLInputElement>,
-  ) {
-    if (
-      event.key === "Enter"
-    ) {
-      event.preventDefault();
+      timeoutMinutes: Math.round(
+        timeoutMs / 60_000,
+      ),
 
-      void verifyPin();
-    }
-  }
+      lock,
 
-  // ==========================================================
-  // RENDER
-  // ==========================================================
+      setTimeoutMinutes,
 
-  return (
-    <div className="fixed inset-0 z-[99999] flex min-h-screen items-center justify-center bg-slate-950 px-5 text-white">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-sky-500/10 ring-1 ring-sky-400/20">
-            <div className="text-xl font-black tracking-tight text-sky-400">
-              GS
-            </div>
-          </div>
+      recordActivity,
+    }),
+    [
+      locked,
+      ready,
+      timeoutMs,
+      lock,
+      setTimeoutMinutes,
+      recordActivity,
+    ],
+  );
 
-          <h1 className="text-2xl font-bold tracking-tight">
-            GEO-SHUA Locked
-          </h1>
+  /* ==========================================================
+     INITIAL LOADING
+  ========================================================== */
 
-          <p className="mt-2 text-sm leading-6 text-slate-400">
-            For your security, GEO-SHUA
-            locked after{" "}
-            {timeoutMinutes}{" "}
-            {timeoutMinutes === 1
-              ? "minute"
-              : "minutes"}{" "}
-            of inactivity.
+  if (!ready) {
+    return (
+      <div className="min-h-screen bg-white text-black flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-9 w-9 rounded-full border-2 border-slate-200 border-t-[#1683ff] animate-spin" />
+
+          <p className="text-sm text-slate-500">
+            Securing GEO-SHUA…
           </p>
         </div>
+      </div>
+    );
+  }
 
-        <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 shadow-2xl backdrop-blur-xl">
-          <label
-            htmlFor="geoshua-app-lock-pin"
-            className="mb-2 block text-sm font-medium text-slate-300"
-          >
-            Enter your PIN
-          </label>
+  /* ==========================================================
+     LOCK SCREEN
+  ========================================================== */
 
-          <input
-            ref={inputRef}
-            id="geoshua-app-lock-pin"
-            type="password"
-            inputMode="numeric"
-            autoComplete="off"
-            maxLength={6}
-            value={pin}
-            disabled={
-              loading ||
-              retryAfter > 0
-            }
-            onChange={(event) => {
-              const value =
-                event.target.value
-                  .replace(/\D/g, "")
-                  .slice(0, 6);
-
-              setPin(value);
-              setError("");
-            }}
-            onKeyDown={
-              handleKeyDown
-            }
-            className="h-14 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-center text-2xl tracking-[0.45em] text-white outline-none transition focus:border-sky-400/60 focus:ring-2 focus:ring-sky-400/10 disabled:opacity-50"
-            placeholder="••••"
-            aria-label="GEO-SHUA PIN"
-          />
-
-          {error && (
-            <p className="mt-3 text-center text-sm text-red-400">
-              {error}
-            </p>
-          )}
-
-          {retryAfter > 0 && (
-            <p className="mt-3 text-center text-xs text-slate-500">
-              Try again in{" "}
-              {retryAfter}s.
-            </p>
-          )}
-
-          <button
-            type="button"
-            disabled={
-              loading ||
-              retryAfter > 0 ||
-              pin.length < 4
-            }
-            onClick={() =>
-              void verifyPin()
-            }
-            className="mt-5 h-12 w-full rounded-2xl bg-sky-500 font-semibold text-white transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {loading
-              ? "Verifying…"
-              : "Unlock GEO-SHUA"}
-          </button>
+  return (
+    <AppLockContext.Provider value={contextValue}>
+      <div
+        className={
+          locked
+            ? "min-h-screen bg-white text-black"
+            : undefined
+        }
+      >
+        <div
+          style={
+            locked
+              ? {
+                  visibility: "hidden",
+                  pointerEvents: "none",
+                  position: "fixed",
+                  inset: 0,
+                  overflow: "hidden",
+                }
+              : undefined
+          }
+          aria-hidden={locked}
+        >
+          {children}
         </div>
 
-        <p className="mt-5 text-center text-xs text-slate-600">
-          Your Google session remains active.
-        </p>
+        {locked && (
+          <div className="fixed inset-0 z-[99999] bg-white text-black flex items-center justify-center px-6">
+            <div className="w-full max-w-sm">
+              {/* ------------------------------------------------
+                 BRAND
+              ------------------------------------------------ */}
+
+              <div className="flex flex-col items-center text-center">
+                <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#1683ff] text-white shadow-sm">
+                  <span className="text-xl font-black tracking-tight">
+                    GS
+                  </span>
+                </div>
+
+                <h1 className="text-2xl font-bold tracking-tight">
+                  GEO-SHUA Locked
+                </h1>
+
+                <p className="mt-2 max-w-xs text-sm leading-6 text-slate-500">
+                  Verify your identity to continue.
+                </p>
+              </div>
+
+              {/* ------------------------------------------------
+                 NATIVE AUTH STATE
+              ------------------------------------------------ */}
+
+              {!showPinFallback && (
+                <div className="mt-10 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-6 text-center">
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm">
+                    <div className="h-6 w-6 rounded-full border-2 border-[#1683ff] border-t-transparent animate-spin" />
+                  </div>
+
+                  <p className="text-sm font-medium text-slate-900">
+                    {authMessage ||
+                      "Waiting for device security…"}
+                  </p>
+
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    Use your fingerprint, face, or
+                    Android device PIN, pattern, or
+                    password.
+                  </p>
+                </div>
+              )}
+
+              {/* ------------------------------------------------
+                 GEO-SHUA PIN FALLBACK
+              ------------------------------------------------ */}
+
+              {showPinFallback && (
+                <form
+                  onSubmit={verifyPin}
+                  className="mt-10"
+                >
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                    <p className="text-sm font-medium text-slate-900">
+                      Device security unavailable
+                    </p>
+
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Use your GEO-SHUA security PIN
+                      to continue.
+                    </p>
+
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      autoComplete="current-password"
+                      maxLength={6}
+                      value={pin}
+                      onChange={(event) => {
+                        const value =
+                          event.target.value.replace(
+                            /\D/g,
+                            "",
+                          );
+
+                        setPin(value);
+                        setPinError("");
+                      }}
+                      autoFocus
+                      placeholder="Enter PIN"
+                      className="mt-5 h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-center text-lg tracking-[0.35em] text-black outline-none transition focus:border-[#1683ff] focus:ring-2 focus:ring-[#1683ff]/20"
+                      disabled={pinLoading}
+                    />
+
+                    {pinError && (
+                      <p className="mt-3 text-center text-xs font-medium text-red-600">
+                        {pinError}
+                      </p>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={
+                        pinLoading ||
+                        pin.length < 4
+                      }
+                      className="mt-4 h-12 w-full rounded-xl bg-[#1683ff] px-4 text-sm font-semibold text-white transition hover:bg-[#0f75e8] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {pinLoading
+                        ? "Verifying…"
+                        : "Unlock GEO-SHUA"}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* ------------------------------------------------
+                 SESSION NOTE
+              ------------------------------------------------ */}
+
+              <p className="mt-6 text-center text-xs text-slate-400">
+                Your Google session remains active.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
-    </div>
+    </AppLockContext.Provider>
   );
 }
 
-// ============================================================
-// HOOK
-// ============================================================
+/* ============================================================
+   HOOK
+============================================================ */
 
 export function useAppLock(): AppLockContextValue {
-  const context =
-    useContext(
-      AppLockContext,
-    );
+  const context = useContext(AppLockContext);
 
   if (!context) {
     throw new Error(
