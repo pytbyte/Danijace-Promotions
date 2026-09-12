@@ -22,7 +22,7 @@ import { Preferences } from "@capacitor/preferences";
 // CONFIGURATION
 // ============================================================
 
-const DEFAULT_TIMEOUT_MINUTES = 5;
+const DEFAULT_TIMEOUT_MINUTES = 3;
 
 const MIN_TIMEOUT_MINUTES = 1;
 const MAX_TIMEOUT_MINUTES = 60;
