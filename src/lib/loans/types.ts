@@ -2,21 +2,156 @@
  * GEO-SHUA
  * Loan Domain Types
  *
- * Financial rules:
+ * =========================================================
+ * DATE ARCHITECTURE
+ * =========================================================
+ *
+ * BUSINESS / CALENDAR DATES
+ * -------------------------
+ *
+ * All loan dates that represent a calendar day are stored
+ * and transported as:
+ *
+ *   "YYYY-MM-DD"
+ *
+ * Example:
+ *
+ *   "2026-09-11"
+ *
+ * These values MUST NOT be converted to JavaScript Date
+ * objects during normal loan processing.
+ *
+ * This applies to:
+ *
+ * - disbursementDate
+ * - repaymentDate
+ * - firstDueDate
+ * - endDate
+ * - fineDate
+ * - periodStart
+ * - periodEnd
+ * - assessmentDate
+ *
+ * The value selected by the user should be the value stored
+ * in MongoDB.
+ *
+ * Example:
+ *
+ * User enters:
+ *
+ *   2026-09-11
+ *
+ * Database stores:
+ *
+ *   "2026-09-11"
+ *
+ * NOT:
+ *
+ *   2026-09-11T00:00:00.000Z
+ *
+ * and NOT:
+ *
+ *   new Date(...)
+ *
+ *
+ * TIMESTAMPS
+ * ----------
+ *
+ * Actual moments in time remain JavaScript Date values.
+ *
+ * These include:
+ *
+ * - createdAt
+ * - updatedAt
+ * - authorizedAt
+ * - transactionDate
+ *
+ * A timestamp represents an actual point in time.
+ * A calendar date represents a business day.
+ *
+ * =========================================================
+ * FINANCIAL RULES
+ * =========================================================
+ *
  * - No daily fines.
  * - Fines are percentage-based.
  * - A fine may be assessed once per completed repayment cycle.
  * - Repayment cycles default to 7 days.
- * - Fines are calculated from core outstanding balance only.
+ * - Each loan has a contractual installment amount for each
+ *   repayment cycle.
+ * - The default repayment cycle is weekly (7 days).
+ * - A fine is calculated ONLY from the unpaid portion of the
+ *   expected installment for that completed cycle.
+ * - The entire outstanding loan balance is NOT fined simply
+ *   because it remains outstanding.
  * - Existing fines never compound.
+ * - Fines are calculated independently for each repayment cycle.
  * - Financial records are append-only.
  * - Repayments, fines, waivers, assessments and audits
  *   must never be permanently deleted.
+ *
+ * =========================================================
+ * CORE REPAYMENT CALCULATION
+ * =========================================================
+ *
+ * expectedInstallment = loan.installmentAmount
+ *
+ * installmentShortfall =
+ *   max(
+ *     0,
+ *     expectedInstallment - paymentsDuringPeriod
+ *   )
+ *
+ * fineAmount =
+ *   installmentShortfall * fineRate
+ *
+ * Example:
+ *
+ * installmentAmount = 5,000
+ * paymentsDuringPeriod = 3,000
+ * fineRate = 0.10
+ *
+ * installmentShortfall = 2,000
+ * fineAmount = 200
+ *
+ * The remaining loan balance is NOT used to calculate
+ * this periodic fine.
  */
+
+/* =========================================================
+   CALENDAR DATE
+========================================================= */
+
+/**
+ * A business/calendar date.
+ *
+ * Format:
+ *
+ *   YYYY-MM-DD
+ *
+ * Example:
+ *
+ *   "2026-09-11"
+ *
+ * IMPORTANT:
+ *
+ * This is intentionally a string.
+ *
+ * Do not change this to Date.
+ */
+export type CalendarDate = string;
+
+/* =========================================================
+   LOAN TYPE
+========================================================= */
 
 export type LoanType =
   | "emergency"
   | "regular";
+
+/* =========================================================
+   LOAN STATUS
+========================================================= */
 
 export type LoanStatus =
   | "pending"
@@ -24,23 +159,43 @@ export type LoanStatus =
   | "completed"
   | "cancelled";
 
+/* =========================================================
+   REPAYMENT STATUS
+========================================================= */
+
 export type LoanRepaymentStatus =
   | "current"
   | "defaulted"
   | "completed";
 
+/* =========================================================
+   FINE STATUS
+========================================================= */
+
 export type FineStatus =
   | "active"
   | "stopped";
+
+/* =========================================================
+   TRANSACTION SOURCE
+========================================================= */
 
 export type TransactionSource =
   | "manual"
   | "sms"
   | "system";
 
+/* =========================================================
+   FINE SOURCE
+========================================================= */
+
 export type FineSource =
   | "system"
   | "manual";
+
+/* =========================================================
+   ASSESSMENT STATUS
+========================================================= */
 
 export type LoanAssessmentStatus =
   | "assessed"
@@ -82,20 +237,28 @@ export interface LoanSettings {
    * Retained for compatibility with existing settings
    * documents and consumers.
    *
-   * The authoritative repayment timing for the new
-   * periodic-fine model is repaymentCycleDays.
+   * This field is NOT authoritative for the new
+   * periodic-fine calculation.
+   *
+   * Repayment timing is controlled by repaymentCycleDays.
    */
   repaymentGraceDays: number;
 
   /**
    * Number of days in one repayment assessment cycle.
    *
-   * Default: 7 days.
+   * Default:
+   * 7 days.
+   *
+   * When this is 7, the installment is effectively
+   * a weekly installment.
    */
   repaymentCycleDays: number;
 
   /**
-   * Fine percentage expressed as a decimal.
+   * Percentage used when calculating a fine.
+   *
+   * Stored as a decimal.
    *
    * Example:
    * 0.10 = 10%
@@ -126,78 +289,148 @@ export interface Loan {
 
   type: LoanType;
 
+  /**
+   * Original principal amount disbursed.
+   */
   principal: number;
 
+  /**
+   * Interest rate applied to the loan.
+   *
+   * Example:
+   * 0.30 = 30%
+   */
   interestRate: number;
+
+  /**
+   * Monetary interest amount.
+   */
   interestAmount: number;
 
   /**
-   * Percentage fine applied once per completed
-   * repayment cycle when applicable.
+   * Percentage fine applied to the unpaid portion
+   * of the expected installment for a completed
+   * repayment cycle.
+   *
+   * Example:
+   * 0.10 = 10%
    */
   fineRate: number;
 
   /**
-   * Number of days in each repayment assessment cycle.
+   * Number of days in one repayment assessment cycle.
+   *
+   * Default:
+   * 7 days.
    */
   repaymentCycleDays: number;
 
-  disbursementDate: Date;
+  /**
+   * Contractual amount expected from the member
+   * during each repayment cycle.
+   *
+   * With repaymentCycleDays = 7, this is the
+   * member's weekly installment.
+   *
+   * This amount is entered when the loan is created
+   * and may be updated only when allowed by the
+   * loan update rules.
+   */
+  installmentAmount: number;
+
+  /**
+   * Calendar date on which the loan was disbursed.
+   *
+   * Stored as:
+   *
+   *   YYYY-MM-DD
+   */
+  disbursementDate: CalendarDate;
 
   /**
    * Scheduled repayment date.
+   *
+   * Stored as a calendar date:
+   *
+   *   YYYY-MM-DD
+   *
+   * Retained for compatibility with existing
+   * application code and UI.
    */
-  repaymentDate: Date;
+  repaymentDate: CalendarDate;
 
   /**
    * Final contractual loan end date.
+   *
+   * Stored as:
+   *
+   *   YYYY-MM-DD
    */
-  endDate: Date;
+  endDate: CalendarDate;
 
   /**
    * First scheduled assessment/due date.
    *
-   * Kept because existing application code may consume it.
-   * It is derived from:
+   * Normally derived from:
    *
-   * disbursementDate + repaymentCycleDays
+   *   disbursementDate + repaymentCycleDays
+   *
+   * Stored as:
+   *
+   *   YYYY-MM-DD
    */
-  firstDueDate: Date;
+  firstDueDate: CalendarDate;
 
   /**
    * Principal + interest.
    *
-   * Does not include fines.
+   * Does NOT include fines.
    */
   totalDue: number;
 
   /**
-   * Authoritative projection of total repayments recorded.
+   * Authoritative projection of all repayments
+   * recorded against this loan.
    */
   amountPaid: number;
 
   /**
    * Authoritative projection of all assessed fines.
+   *
+   * Existing fines are never included when calculating
+   * a new fine.
    */
   totalFines: number;
 
   /**
-   * Authoritative projection of all approved fine waivers.
+   * Authoritative projection of all approved
+   * fine waivers.
    */
   totalWaivedFines: number;
 
   /**
-   * Cached final outstanding balance:
+   * Cached final outstanding balance.
+   *
+   * Formula:
    *
    * totalDue
    * + totalFines
    * - totalWaivedFines
    * - amountPaid
+   *
+   * Minimum:
+   * 0
    */
   outstandingBalance: number;
 
+  /**
+   * Controls whether new fines may be assessed.
+   */
   fineStatus: FineStatus;
 
+  /**
+   * Current repayment state of the loan.
+   */
   repaymentStatus: LoanRepaymentStatus;
 
   guarantor: LoanGuarantor;
@@ -208,10 +441,19 @@ export interface Loan {
 
   authorizedBy: LoanActor;
 
+  /**
+   * Actual timestamp at which the loan was authorized.
+   */
   authorizedAt: Date;
 
+  /**
+   * Actual timestamp at which the loan record was created.
+   */
   createdAt: Date;
 
+  /**
+   * Actual timestamp at which the loan record was last updated.
+   */
   updatedAt: Date;
 }
 
@@ -231,16 +473,70 @@ export interface CreateLoanInput {
   /**
    * Percentage-based fine.
    *
+   * Applied ONLY to the unpaid portion of the
+   * expected installment for a completed cycle.
+   *
    * Example:
    * 0.10 = 10%
+   *
+   * When omitted, the authoritative loan settings
+   * fineRate should be used.
    */
   fineRate?: number;
 
-  repaymentDate?: Date;
+  /**
+   * Expected repayment amount for each repayment cycle.
+   *
+   * With the default repaymentCycleDays = 7,
+   * this represents the member's weekly installment.
+   *
+   * This may be entered manually.
+   */
+  installmentAmount: number;
 
-  endDate?: Date;
+  /**
+   * Number of days in each repayment assessment cycle.
+   *
+   * Default:
+   * 7 days.
+   *
+   * When omitted, the authoritative loan settings
+   * repaymentCycleDays should be used.
+   */
+  repaymentCycleDays?: number;
 
-  disbursementDate?: Date;
+  /**
+   * Scheduled repayment calendar date.
+   *
+   * Expected format:
+   *
+   *   YYYY-MM-DD
+   *
+   * If omitted, the service may derive it from
+   * the loan's repayment-cycle configuration.
+   */
+  repaymentDate?: CalendarDate;
+
+  /**
+   * Final contractual loan end calendar date.
+   *
+   * Expected format:
+   *
+   *   YYYY-MM-DD
+   */
+  endDate?: CalendarDate;
+
+  /**
+   * Loan disbursement calendar date.
+   *
+   * Expected format:
+   *
+   *   YYYY-MM-DD
+   *
+   * If omitted, the service should use the current
+   * calendar date.
+   */
+  disbursementDate?: CalendarDate;
 }
 
 /* =========================================================
@@ -258,25 +554,45 @@ export interface LoanRepayment {
 
   memberNumber: string;
 
+  /**
+   * Payment amount recorded.
+   */
   amount: number;
 
   /**
    * Immutable bank/payment transaction reference.
    *
    * Must be globally unique.
+   *
+   * Used as the idempotency key to prevent
+   * duplicate repayment records.
    */
   transactionReference: string;
 
+  /**
+   * Actual date/time the payment occurred.
+   *
+   * This is a timestamp because an actual payment
+   * transaction may have a precise time.
+   */
   transactionDate: Date;
 
   source: TransactionSource;
 
+  /**
+   * Original SMS/bank message when the payment
+   * originated from SMS processing.
+   */
   rawMessage?: string;
 
   recordedBy?: LoanActor;
 
   createdAt: Date;
 }
+
+/* =========================================================
+   CREATE REPAYMENT
+========================================================= */
 
 export interface CreateLoanRepaymentInput {
   /**
@@ -288,16 +604,27 @@ export interface CreateLoanRepaymentInput {
   /**
    * Can be used when the system must safely resolve
    * the member's only open loan.
+   *
+   * The service must never blindly select an arbitrary
+   * loan when multiple open loans exist.
    */
   memberId?: string;
 
+  /**
+   * Amount being repaid.
+   */
   amount: number;
 
   /**
-   * Immutable idempotency key.
+   * Immutable payment transaction reference.
+   *
+   * Used as the idempotency key.
    */
   transactionReference: string;
 
+  /**
+   * Actual date/time the payment occurred.
+   */
   transactionDate: Date;
 
   source: TransactionSource;
@@ -322,16 +649,25 @@ export interface LoanFine {
 
   /**
    * Fine amount actually assessed.
+   *
+   * Formula:
+   *
+   * installmentShortfall * fineRate
    */
   amount: number;
 
   /**
-   * Date the fine became assessable/was recorded.
+   * Calendar date on which the fine became
+   * assessable/was recorded.
+   *
+   * Stored as:
+   *
+   *   YYYY-MM-DD
    */
-  fineDate: Date;
+  fineDate: CalendarDate;
 
   /**
-   * Percentage used to calculate the fine.
+   * Percentage used to calculate this fine.
    *
    * Example:
    * 0.10 = 10%
@@ -342,22 +678,77 @@ export interface LoanFine {
    * Fixed repayment assessment cycle number.
    *
    * Cycle 1:
-   * disbursement -> +7 days
+   * disbursement -> firstDueDate
    *
    * Cycle 2:
-   * +7 days -> +14 days
+   * firstDueDate -> next cycle date
+   *
+   * Cycle N:
+   * previous cycle end -> current cycle end
    */
   periodNumber: number;
 
-  periodStart: Date;
-
-  periodEnd: Date;
+  /**
+   * Beginning of the repayment assessment period.
+   *
+   * Stored as a calendar date:
+   *
+   *   YYYY-MM-DD
+   */
+  periodStart: CalendarDate;
 
   /**
-   * Core outstanding balance used to calculate
-   * this particular fine.
+   * End of the repayment assessment period.
    *
-   * Existing fines are excluded.
+   * Stored as a calendar date:
+   *
+   *   YYYY-MM-DD
+   */
+  periodEnd: CalendarDate;
+
+  /**
+   * Amount the member was expected to repay
+   * during this specific period.
+   *
+   * Normally equals:
+   *
+   * loan.installmentAmount
+   */
+  expectedInstallment: number;
+
+  /**
+   * Total repayments recorded during this
+   * specific repayment period.
+   */
+  paymentsDuringPeriod: number;
+
+  /**
+   * Unpaid portion of the expected installment.
+   *
+   * Formula:
+   *
+   * max(
+   *   0,
+   *   expectedInstallment - paymentsDuringPeriod
+   * )
+   *
+   * This is the amount to which the fine rate
+   * is applied.
+   */
+  installmentShortfall: number;
+
+  /**
+   * Amount used as the basis for this fine.
+   *
+   * For the periodic-installment model this equals
+   * installmentShortfall.
+   *
+   * It is retained under this name for compatibility
+   * with existing application code.
+   *
+   * IMPORTANT:
+   * This must NEVER be the entire loan outstanding
+   * balance when calculating the periodic fine.
    */
   assessedCoreBalance: number;
 
@@ -368,6 +759,9 @@ export interface LoanFine {
 
   createdBy?: LoanActor;
 
+  /**
+   * Actual timestamp when the fine record was created.
+   */
   createdAt: Date;
 }
 
@@ -377,6 +771,7 @@ export interface LoanFine {
 
 export interface StopLoanFineInput {
   reason: string;
+
   stoppedBy: LoanActor;
 }
 
@@ -387,6 +782,9 @@ export interface StopLoanFineInput {
 export interface LoanWaiver {
   id: string;
 
+  /**
+   * Immutable waiver idempotency/reference key.
+   */
   waiverReference: string;
 
   loanId: string;
@@ -395,6 +793,9 @@ export interface LoanWaiver {
 
   memberId: string;
 
+  /**
+   * Amount of fine being waived.
+   */
   amount: number;
 
   reason: string;
@@ -404,12 +805,16 @@ export interface LoanWaiver {
   createdAt: Date;
 }
 
+/* =========================================================
+   CREATE FINE WAIVER
+========================================================= */
+
 export interface CreateLoanWaiverInput {
   /**
    * Immutable idempotency key supplied by the client.
    *
-   * Used to prevent duplicate waiver records when a request
-   * is retried after an uncertain network failure.
+   * Used to prevent duplicate waiver records when a
+   * request is retried after an uncertain network failure.
    */
   waiverReference: string;
 
@@ -442,36 +847,116 @@ export interface LoanAssessment {
    */
   periodNumber: number;
 
-  periodStart: Date;
-
-  periodEnd: Date;
-
-  assessmentDate: Date;
+  /**
+   * Beginning of this repayment cycle.
+   *
+   * Stored as:
+   *
+   *   YYYY-MM-DD
+   */
+  periodStart: CalendarDate;
 
   /**
-   * Core balance at the beginning of the period.
+   * End of this repayment cycle.
+   *
+   * Stored as:
+   *
+   *   YYYY-MM-DD
+   *
+   * A fine can only be assessed after this period
+   * has been completed.
+   */
+  periodEnd: CalendarDate;
+
+  /**
+   * Calendar date on which the assessment was created.
+   *
+   * Stored as:
+   *
+   *   YYYY-MM-DD
+   */
+  assessmentDate: CalendarDate;
+
+  /**
+   * Core loan balance at the beginning of the period.
+   *
+   * This is useful for the audit trail and loan
+   * accounting, but it is NOT the basis for the
+   * periodic fine.
    */
   openingCoreBalance: number;
 
   /**
-   * Repayments recorded during this period.
+   * Amount the member was contractually expected
+   * to repay during this period.
+   *
+   * Normally equals:
+   *
+   * loan.installmentAmount
+   */
+  expectedInstallment: number;
+
+  /**
+   * Total repayments recorded during this period.
    */
   paymentsDuringPeriod: number;
 
   /**
-   * Core balance used when determining the fine.
+   * Amount of the expected installment that remained
+   * unpaid at the end of this period.
    *
-   * This must represent the balance applicable to the
-   * completed period, not a future balance.
+   * Formula:
+   *
+   * max(
+   *   0,
+   *   expectedInstallment - paymentsDuringPeriod
+   * )
+   */
+  installmentShortfall: number;
+
+  /**
+   * Kept for compatibility with existing application
+   * code.
+   *
+   * Under the new installment-based fine model,
+   * this equals installmentShortfall.
+   *
+   * It must NOT contain the entire loan outstanding
+   * balance for purposes of calculating the fine.
    */
   balanceBeforeFine: number;
 
+  /**
+   * True when the member made at least one repayment
+   * during this period.
+   *
+   * This does NOT necessarily mean the installment
+   * was fully satisfied.
+   */
   paymentMade: boolean;
 
+  /**
+   * True when the member failed to cover the full
+   * expected installment for this period.
+   *
+   * Equivalent to:
+   *
+   * installmentShortfall > 0
+   */
   defaulted: boolean;
 
+  /**
+   * Fine percentage applicable to this period.
+   */
   fineRate: number;
 
+  /**
+   * Fine calculated for this specific period.
+   *
+   * Formula:
+   *
+   * installmentShortfall * fineRate
+   */
   fineAmount: number;
 
   /**
@@ -510,6 +995,13 @@ export interface LoanAuditEntry {
 
   actor: LoanActor;
 
+  /**
+   * Structured audit information.
+   *
+   * This may contain previous/new values,
+   * calculation details, references, reasons,
+   * or other immutable audit information.
+   */
   details: Record<string, unknown>;
 
   createdAt: Date;
@@ -532,9 +1024,23 @@ export interface LoanListOptions {
 
   memberId?: string;
 
-  repaymentDate?: Date | string;
+  /**
+   * Calendar date filter.
+   *
+   * Expected format:
+   *
+   *   YYYY-MM-DD
+   */
+  repaymentDate?: CalendarDate;
 
-  endDate?: Date | string;
+  /**
+   * Calendar date filter.
+   *
+   * Expected format:
+   *
+   *   YYYY-MM-DD
+   */
+  endDate?: CalendarDate;
 
   search?: string;
 }
@@ -585,11 +1091,43 @@ export interface LoanSummary {
   totalOutstanding: number;
 }
 
+/* =========================================================
+   UPDATE LOAN
+========================================================= */
+
 export type UpdateLoanInput = {
   type?: LoanType;
+
   principal?: number;
+
+  installmentAmount?: number;
+
+  /**
+   * Calendar date.
+   *
+   * Expected format:
+   *
+   *   YYYY-MM-DD
+   */
+  disbursementDate?: CalendarDate;
+
+  /**
+   * Calendar date.
+   *
+   * Expected format:
+   *
+   *   YYYY-MM-DD
+   */
+  repaymentDate?: CalendarDate;
+
+  /**
+   * Calendar date.
+   *
+   * Expected format:
+   *
+   *   YYYY-MM-DD
+   */
+  endDate?: CalendarDate;
+
   guarantor?: LoanGuarantor;
-  disbursementDate?: Date;
-  repaymentDate?: Date;
-  endDate?: Date;
 };

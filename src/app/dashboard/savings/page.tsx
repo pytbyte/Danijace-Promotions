@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -628,7 +627,7 @@ function formatKES(
 }
 
 /* =========================================================
-   CLONED DASHBOARD OVERVIEW CARD
+   SAVINGS OVERVIEW CARD
 ========================================================= */
 
 function OverviewCard({
@@ -658,23 +657,23 @@ function OverviewCard({
   }[];
 }) {
   return (
-    <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] p-5">
+    <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <p className="text-xs uppercase tracking-[0.18em] text-white/25">
+          <p className="text-xs uppercase tracking-[0.18em] text-black/40">
             {eyebrow}
           </p>
 
-          <p className="mt-3 truncate text-3xl font-semibold tracking-tight text-white">
+          <p className="mt-3 truncate text-3xl font-semibold tracking-tight text-black">
             {value}
           </p>
 
-          <p className="mt-1 text-xs text-white/30">
+          <p className="mt-1 text-xs text-black/50">
             {description}
           </p>
         </div>
 
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-yellow-400">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-yellow-50 text-yellow-600">
           {icon}
         </div>
       </div>
@@ -683,16 +682,16 @@ function OverviewCard({
         undefined && (
         <div className="mt-5">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="truncate text-[10px] text-white/25">
+            <span className="truncate text-[10px] text-black/40">
               {progressLabel}
             </span>
 
-            <span className="shrink-0 text-[10px] text-white/40">
+            <span className="shrink-0 text-[10px] text-black/55">
               {progressValue}
             </span>
           </div>
 
-          <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+          <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
             <div
               className="h-full rounded-full bg-yellow-500 transition-all"
               style={{
@@ -722,13 +721,13 @@ function OverviewCard({
                   }
                   className="min-w-0"
                 >
-                  <p className="truncate text-[9px] uppercase tracking-[0.12em] text-white/20">
+                  <p className="truncate text-[9px] uppercase tracking-[0.12em] text-black/35">
                     {
                       metric.label
                     }
                   </p>
 
-                  <p className="mt-1 truncate text-xs font-medium text-white/55">
+                  <p className="mt-1 truncate text-xs font-medium text-black/65">
                     {
                       metric.value
                     }
@@ -746,7 +745,7 @@ function OverviewCard({
             footerHref,
           )
         }
-        className="mt-5 flex items-center gap-2 text-xs font-medium text-yellow-400 transition hover:text-yellow-300"
+        className="mt-5 flex items-center gap-2 text-xs font-medium text-yellow-600 transition hover:text-yellow-700"
       >
         <span>
           {footerLabel}
@@ -852,7 +851,7 @@ function SavingsActionModal({
         flex
         items-center
         justify-center
-        bg-black/60
+        bg-black/40
         p-4
         backdrop-blur-sm
       "
@@ -864,8 +863,8 @@ function SavingsActionModal({
           overflow-hidden
           rounded-2xl
           border
-          border-white/[0.08]
-          bg-[#0b0b0b]
+          border-slate-200
+          bg-white
           shadow-2xl
         "
       >
@@ -876,19 +875,19 @@ function SavingsActionModal({
             justify-between
             gap-4
             border-b
-            border-white/[0.08]
+            border-slate-200
             px-5
             py-4
           "
         >
           <div>
-            <h2 className="text-lg font-semibold text-white">
+            <h2 className="text-lg font-semibold text-black">
               {isAdjustment
                 ? "Record savings withdrawal"
                 : "Reverse savings transaction"}
             </h2>
 
-            <p className="mt-1 text-sm text-white/40">
+            <p className="mt-1 text-sm text-black/50">
               {isAdjustment
                 ? "Create a new withdrawal entry. The original transaction remains unchanged."
                 : "Create a new reversal entry. The original transaction remains unchanged."}
@@ -906,10 +905,10 @@ function SavingsActionModal({
             className="
               rounded-lg
               p-2
-              text-white/40
+              text-black/40
               transition
-              hover:bg-white/[0.06]
-              hover:text-white
+              hover:bg-slate-100
+              hover:text-black
               disabled:cursor-not-allowed
               disabled:opacity-50
             "
@@ -920,14 +919,14 @@ function SavingsActionModal({
         </div>
 
         <div className="space-y-5 px-5 py-5">
-          <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-4">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-black/40">
                   Member
                 </p>
 
-                <p className="mt-1 truncate font-medium text-white">
+                <p className="mt-1 truncate font-medium text-black">
                   {
                     transaction.memberName
                   }
@@ -935,11 +934,11 @@ function SavingsActionModal({
               </div>
 
               <div className="shrink-0 text-right">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/30">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-black/40">
                   Original amount
                 </p>
 
-                <p className="mt-1 font-semibold text-white">
+                <p className="mt-1 font-semibold text-black">
                   {formatKES(
                     Math.abs(
                       transaction.amount,
@@ -954,7 +953,7 @@ function SavingsActionModal({
             <div>
               <label
                 htmlFor="adjustment-amount"
-                className="mb-2 block text-sm font-medium text-white/70"
+                className="mb-2 block text-sm font-medium text-black/75"
               >
                 Withdrawal amount
               </label>
@@ -982,16 +981,16 @@ function SavingsActionModal({
                   w-full
                   rounded-xl
                   border
-                  border-white/[0.08]
-                  bg-white/[0.03]
+                  border-slate-200
+                  bg-white
                   px-4
                   text-sm
-                  text-white
+                  text-black
                   outline-none
                   transition
-                  placeholder:text-white/20
-                  focus:border-yellow-500/30
-                  focus:bg-white/[0.04]
+                  placeholder:text-black/30
+                  focus:border-yellow-500
+                  focus:bg-white
                   focus:ring-2
                   focus:ring-yellow-500/10
                   disabled:cursor-not-allowed
@@ -999,7 +998,7 @@ function SavingsActionModal({
                 "
               />
 
-              <p className="mt-2 text-xs text-white/30">
+              <p className="mt-2 text-xs text-black/45">
                 Enter the withdrawal amount
                 as a positive value. The
                 ledger records withdrawals
@@ -1011,7 +1010,7 @@ function SavingsActionModal({
           <div>
             <label
               htmlFor="savings-action-reason"
-              className="mb-2 block text-sm font-medium text-white/70"
+              className="mb-2 block text-sm font-medium text-black/75"
             >
               {isAdjustment
                 ? "Withdrawal reason"
@@ -1042,17 +1041,17 @@ function SavingsActionModal({
                 resize-none
                 rounded-xl
                 border
-                border-white/[0.08]
-                bg-white/[0.03]
+                border-slate-200
+                bg-white
                 px-4
                 py-3
                 text-sm
-                text-white
+                text-black
                 outline-none
                 transition
-                placeholder:text-white/20
-                focus:border-yellow-500/30
-                focus:bg-white/[0.04]
+                placeholder:text-black/30
+                focus:border-yellow-500
+                focus:bg-white
                 focus:ring-2
                 focus:ring-yellow-500/10
                 disabled:cursor-not-allowed
@@ -1062,8 +1061,8 @@ function SavingsActionModal({
           </div>
 
           {error && (
-            <div className="flex gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300">
-              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div className="flex gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
 
               <span>
                 {error}
@@ -1072,7 +1071,7 @@ function SavingsActionModal({
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-white/[0.08] px-5 py-4">
+        <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-5 py-4">
           <button
             type="button"
             onClick={
@@ -1087,10 +1086,10 @@ function SavingsActionModal({
               py-2.5
               text-sm
               font-medium
-              text-white/50
+              text-black/55
               transition
-              hover:bg-white/[0.05]
-              hover:text-white
+              hover:bg-slate-100
+              hover:text-black
               disabled:cursor-not-allowed
               disabled:opacity-50
             "
@@ -2232,23 +2231,24 @@ export default function SavingsPage() {
   ======================================================= */
 
   return (
-    <div className="min-h-screen bg-[#050505] text-white">
+    <div className="min-h-screen bg-white text-black">
       <TopBar />
 
-       <main className="
-    mx-auto
-    w-full
-    max-w-[1600px]
-    overflow-x-hidden
-    px-4
-    pb-24
-    pt-20
-    sm:px-6
-    lg:px-8
-    lg:pb-8
-    lg:pt-20
-  "
->
+      <main
+        className="
+          mx-auto
+          w-full
+          max-w-[1600px]
+          overflow-x-hidden
+          px-4
+          pb-24
+          pt-20
+          sm:px-6
+          lg:px-8
+          lg:pb-8
+          lg:pt-20
+        "
+      >
         {/* HEADER */}
 
         <SavingsHeader
@@ -2260,16 +2260,16 @@ export default function SavingsPage() {
         {/* ERROR */}
 
         {hasDataError && (
-          <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex gap-3">
-              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-400" />
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
 
               <div>
-                <p className="font-medium text-red-300">
+                <p className="font-medium text-red-700">
                   Unable to load some savings data
                 </p>
 
-                <p className="mt-1 text-sm text-red-300/70">
+                <p className="mt-1 text-sm text-red-600/70">
                   {summaryError ||
                     transactionsError}
                 </p>
@@ -2292,15 +2292,15 @@ export default function SavingsPage() {
                 gap-2
                 rounded-xl
                 border
-                border-red-500/20
-                bg-black/20
+                border-red-200
+                bg-red-50
                 px-4
                 py-2
                 text-sm
                 font-medium
-                text-red-300
+                text-red-700
                 transition
-                hover:bg-red-500/10
+                hover:bg-red-100
                 disabled:cursor-not-allowed
                 disabled:opacity-50
               "
@@ -2314,7 +2314,6 @@ export default function SavingsPage() {
               />
 
               Retry
-            
             </button>
           </div>
         )}
@@ -2322,22 +2321,22 @@ export default function SavingsPage() {
         {/* DESKTOP SUMMARY */}
 
         <section className="mt-6 hidden grid-cols-5 gap-4 lg:grid">
-          <div className="rounded-2xl border border-white/[0.08] bg-[#0b0b0b] p-5">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
-              <div className="rounded-xl bg-blue-500/10 p-2.5 text-blue-400">
+              <div className="rounded-xl bg-blue-50 p-2.5 text-blue-600">
                 <Wallet className="h-5 w-5" />
               </div>
 
-              <span className="text-xs font-medium text-white/25">
+              <span className="text-xs font-medium text-black/40">
                 BALANCE
               </span>
             </div>
 
-            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-white/35">
+            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-black/50">
               Total Savings
             </p>
 
-            <p className="mt-1 text-2xl font-bold tracking-tight text-white">
+            <p className="mt-1 text-2xl font-bold tracking-tight text-black">
               {isSummaryLoading
                 ? "—"
                 : formatKES(
@@ -2345,28 +2344,28 @@ export default function SavingsPage() {
                   )}
             </p>
 
-            <p className="mt-2 text-xs text-white/25">
+            <p className="mt-2 text-xs text-black/40">
               Deposits − Withdrawals −
               Reversals
             </p>
           </div>
 
-          <div className="rounded-2xl border border-white/[0.08] bg-[#0b0b0b] p-5">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
-              <div className="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-400">
+              <div className="rounded-xl bg-emerald-50 p-2.5 text-emerald-600">
                 <ArrowDownLeft className="h-5 w-5" />
               </div>
 
-              <span className="text-xs font-medium text-white/25">
+              <span className="text-xs font-medium text-black/40">
                 DEPOSITS
               </span>
             </div>
 
-            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-white/35">
+            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-black/50">
               Total Deposits
             </p>
 
-            <p className="mt-1 text-2xl font-bold tracking-tight text-white">
+            <p className="mt-1 text-2xl font-bold tracking-tight text-black">
               {isSummaryLoading
                 ? "—"
                 : formatKES(
@@ -2375,22 +2374,22 @@ export default function SavingsPage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-white/[0.08] bg-[#0b0b0b] p-5">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
-              <div className="rounded-xl bg-yellow-500/10 p-2.5 text-yellow-400">
+              <div className="rounded-xl bg-yellow-50 p-2.5 text-yellow-600">
                 <FileEdit className="h-5 w-5" />
               </div>
 
-              <span className="text-xs font-medium text-white/25">
+              <span className="text-xs font-medium text-black/40">
                 WITHDRAWALS
               </span>
             </div>
 
-            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-white/35">
+            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-black/50">
               Total Withdrawals
             </p>
 
-            <p className="mt-1 text-2xl font-bold tracking-tight text-white">
+            <p className="mt-1 text-2xl font-bold tracking-tight text-black">
               {isSummaryLoading
                 ? "—"
                 : formatKES(
@@ -2399,22 +2398,22 @@ export default function SavingsPage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-white/[0.08] bg-[#0b0b0b] p-5">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
-              <div className="rounded-xl bg-red-500/10 p-2.5 text-red-400">
+              <div className="rounded-xl bg-red-50 p-2.5 text-red-600">
                 <RotateCcw className="h-5 w-5" />
               </div>
 
-              <span className="text-xs font-medium text-white/25">
+              <span className="text-xs font-medium text-black/40">
                 REVERSALS
               </span>
             </div>
 
-            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-white/35">
+            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-black/50">
               Total Reversals
             </p>
 
-            <p className="mt-1 text-2xl font-bold tracking-tight text-white">
+            <p className="mt-1 text-2xl font-bold tracking-tight text-black">
               {isSummaryLoading
                 ? "—"
                 : formatKES(
@@ -2423,22 +2422,22 @@ export default function SavingsPage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-white/[0.08] bg-[#0b0b0b] p-5">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
-              <div className="rounded-xl bg-purple-500/10 p-2.5 text-purple-400">
+              <div className="rounded-xl bg-purple-50 p-2.5 text-purple-600">
                 <Users className="h-5 w-5" />
               </div>
 
-              <span className="text-xs font-medium text-white/25">
+              <span className="text-xs font-medium text-black/40">
                 MEMBERS
               </span>
             </div>
 
-            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-white/35">
+            <p className="mt-5 text-xs font-medium uppercase tracking-wide text-black/50">
               Members with Savings
             </p>
 
-            <p className="mt-1 text-2xl font-bold tracking-tight text-white">
+            <p className="mt-1 text-2xl font-bold tracking-tight text-black">
               {isSummaryLoading
                 ? "—"
                 : summary.memberCount.toLocaleString(
@@ -2549,17 +2548,17 @@ export default function SavingsPage() {
           <div className="lg:hidden">
             <div className="mb-3 flex items-end justify-between px-1">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/30">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-black/45">
                   Transactions
                 </p>
 
-                <p className="mt-1 text-[10px] text-white/20">
+                <p className="mt-1 text-[10px] text-black/30">
                   Swipe left or right
                   for more
                 </p>
               </div>
 
-              <span className="text-[9px] text-[#4da3ff]/70">
+              <span className="text-[9px] text-blue-600/70">
                 {filteredTransactions.length.toLocaleString(
                   "en-KE",
                 )}
@@ -2573,38 +2572,39 @@ export default function SavingsPage() {
                   overflow-hidden
                   rounded-[20px]
                   border
-                  border-white/[0.07]
-                  bg-white/[0.025]
+                  border-slate-200
+                  bg-white
                   p-4
+                  shadow-sm
                 "
               >
                 <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-xl bg-white/[0.06]" />
+                  <div className="h-9 w-9 rounded-xl bg-slate-100" />
 
                   <div className="min-w-0 flex-1">
-                    <div className="h-2.5 w-28 rounded bg-white/[0.06]" />
+                    <div className="h-2.5 w-28 rounded bg-slate-100" />
 
-                    <div className="mt-2 h-2 w-36 rounded bg-white/[0.04]" />
+                    <div className="mt-2 h-2 w-36 rounded bg-slate-100" />
                   </div>
 
-                  <div className="h-2 w-10 rounded bg-white/[0.04]" />
+                  <div className="h-2 w-10 rounded bg-slate-100" />
                 </div>
 
                 <div className="mt-4 flex items-end justify-between gap-4">
-                  <div className="h-2 w-32 rounded bg-white/[0.04]" />
+                  <div className="h-2 w-32 rounded bg-slate-100" />
 
-                  <div className="h-4 w-24 rounded bg-white/[0.06]" />
+                  <div className="h-4 w-24 rounded bg-slate-100" />
                 </div>
               </div>
             ) : transactionsError ? (
-              <div className="rounded-[20px] border border-red-500/20 bg-red-500/10 p-5 text-center">
-                <AlertCircle className="mx-auto h-7 w-7 text-red-400" />
+              <div className="rounded-[20px] border border-red-200 bg-red-50 p-5 text-center">
+                <AlertCircle className="mx-auto h-7 w-7 text-red-600" />
 
-                <p className="mt-3 font-medium text-red-300">
+                <p className="mt-3 font-medium text-red-700">
                   Failed to load transactions
                 </p>
 
-                <p className="mt-1 text-sm text-red-300/60">
+                <p className="mt-1 text-sm text-red-600/70">
                   {transactionsError}
                 </p>
 
@@ -2626,31 +2626,21 @@ export default function SavingsPage() {
               </div>
             ) : filteredTransactions.length ===
               0 ? (
-              <div className="rounded-[20px] border border-white/[0.08] bg-white/[0.025] p-8 text-center">
-                <Wallet className="mx-auto h-8 w-8 text-white/20" />
+              <div className="rounded-[20px] border border-slate-200 bg-white p-8 text-center shadow-sm">
+                <Wallet className="mx-auto h-8 w-8 text-black/20" />
 
-                <p className="mt-3 font-medium text-white/70">
+                <p className="mt-3 font-medium text-black/70">
                   No savings transactions
                   found
                 </p>
 
-                <p className="mt-1 text-sm text-white/30">
+                <p className="mt-1 text-sm text-black/40">
                   Try changing your search or
                   filters.
                 </p>
               </div>
             ) : (
               <>
-                {/* =================================================
-                    ONE CARD PER VIEWPORT
-
-                    Native horizontal scrolling gives us:
-                    - one card visible at a time
-                    - swipe left/right
-                    - snap-to-card
-                    - smooth Android touch interaction
-                ================================================= */}
-
                 <div
                   className="
                     -mx-4
@@ -2703,12 +2693,10 @@ export default function SavingsPage() {
                   </div>
                 </div>
 
-                {/* SWIPE HINT */}
-
                 {filteredTransactions.length >
                   1 && (
                   <div className="mt-3 flex items-center justify-center gap-1.5">
-                    <span className="text-[9px] text-white/20">
+                    <span className="text-[9px] text-black/25">
                       ←
                     </span>
 
@@ -2736,8 +2724,8 @@ export default function SavingsPage() {
                                 ${
                                   index ===
                                   0
-                                    ? "w-4 bg-[#4da3ff]"
-                                    : "w-1.5 bg-white/15"
+                                    ? "w-4 bg-blue-500"
+                                    : "w-1.5 bg-slate-300"
                                 }
                               `}
                             />
@@ -2745,7 +2733,7 @@ export default function SavingsPage() {
                         )}
                     </div>
 
-                    <span className="text-[9px] text-white/20">
+                    <span className="text-[9px] text-black/25">
                       →
                     </span>
                   </div>
@@ -2756,7 +2744,7 @@ export default function SavingsPage() {
 
           {/* COUNT */}
 
-          <div className="mt-4 flex items-center justify-between text-xs text-white/25">
+          <div className="mt-4 flex items-center justify-between text-xs text-black/40">
             <span>
               Showing{" "}
               {
@@ -2837,4 +2825,3 @@ export default function SavingsPage() {
     </div>
   );
 }
-

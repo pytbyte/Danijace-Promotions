@@ -29,19 +29,19 @@ interface StatCardProps {
 
 function StatCard({ label, value, icon }: StatCardProps) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+    <div className="rounded-2xl border border-slate-300 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-white/50">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             {label}
           </p>
 
-          <p className="mt-2 text-xl font-semibold text-white">
+          <p className="mt-2 text-xl font-bold text-slate-950">
             {value}
           </p>
         </div>
 
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-white">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-100 text-sky-700">
           {icon}
         </div>
       </div>
@@ -97,7 +97,10 @@ export default function LoanDashboard({
     recoveryBase > 0
       ? Math.min(
           100,
-          Math.max(0, (Math.max(0, totalPaid) / recoveryBase) * 100),
+          Math.max(
+            0,
+            (Math.max(0, totalPaid) / recoveryBase) * 100,
+          ),
         )
       : 0;
 
@@ -108,26 +111,26 @@ export default function LoanDashboard({
           Single rich portfolio card
       ====================================================== */}
       <div className="lg:hidden">
-        <article className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+        <article className="relative overflow-hidden rounded-3xl border border-slate-300 bg-white p-5 shadow-sm">
           {/* Decorative glow */}
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-sky-400/10 blur-3xl"
+            className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-sky-200/50 blur-3xl"
           />
 
           {/* Header */}
           <div className="relative flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-400/10 text-sky-300">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-100 text-sky-700">
                 <Banknote size={19} />
               </div>
 
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/40">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                   Loan Portfolio
                 </p>
 
-                <p className="mt-0.5 text-xs text-white/30">
+                <p className="mt-0.5 text-xs text-slate-500">
                   {totalLoans.toLocaleString("en-KE")} total loans
                 </p>
               </div>
@@ -135,17 +138,17 @@ export default function LoanDashboard({
 
             <TrendingUp
               size={17}
-              className="text-sky-300/60"
+              className="text-sky-600"
             />
           </div>
 
           {/* Outstanding */}
           <div className="relative mt-6">
-            <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/40">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
               Outstanding Balance
             </p>
 
-            <p className="mt-1 text-[30px] font-bold leading-tight tracking-tight text-white">
+            <p className="mt-1 text-[30px] font-bold leading-tight tracking-tight text-slate-950">
               {formatCompactMoney(totalOutstanding)}
             </p>
           </div>
@@ -153,18 +156,18 @@ export default function LoanDashboard({
           {/* Recovery progress */}
           <div className="relative mt-5">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-[10px] text-white/35">
+              <span className="text-[10px] font-medium text-slate-500">
                 Portfolio recovery
               </span>
 
-              <span className="text-xs font-semibold text-sky-300">
+              <span className="text-xs font-bold text-sky-700">
                 {recoveryPercentage.toFixed(0)}%
               </span>
             </div>
 
-            <div className="h-2 overflow-hidden rounded-full bg-white/10">
+            <div className="h-2 overflow-hidden rounded-full bg-slate-200">
               <div
-                className="h-full rounded-full bg-sky-400 transition-all"
+                className="h-full rounded-full bg-sky-500 transition-all"
                 style={{
                   width: `${recoveryPercentage}%`,
                 }}
@@ -173,33 +176,33 @@ export default function LoanDashboard({
           </div>
 
           {/* Loan status */}
-          <div className="relative mt-6 grid grid-cols-3 divide-x divide-white/10 rounded-2xl border border-white/10 bg-black/10 py-3">
+          <div className="relative mt-6 grid grid-cols-3 divide-x divide-slate-200 rounded-2xl border border-slate-200 bg-slate-50 py-3">
             <div className="px-3">
-              <p className="text-[9px] uppercase tracking-wide text-white/30">
+              <p className="text-[9px] font-medium uppercase tracking-wide text-slate-500">
                 Active
               </p>
 
-              <p className="mt-1 text-base font-semibold text-white">
+              <p className="mt-1 text-base font-bold text-slate-950">
                 {activeLoans.toLocaleString("en-KE")}
               </p>
             </div>
 
             <div className="px-3">
-              <p className="text-[9px] uppercase tracking-wide text-white/30">
+              <p className="text-[9px] font-medium uppercase tracking-wide text-slate-500">
                 Pending
               </p>
 
-              <p className="mt-1 text-base font-semibold text-white">
+              <p className="mt-1 text-base font-bold text-slate-950">
                 {pendingLoans.toLocaleString("en-KE")}
               </p>
             </div>
 
             <div className="px-3">
-              <p className="text-[9px] uppercase tracking-wide text-white/30">
+              <p className="text-[9px] font-medium uppercase tracking-wide text-slate-500">
                 Completed
               </p>
 
-              <p className="mt-1 text-base font-semibold text-white">
+              <p className="mt-1 text-base font-bold text-slate-950">
                 {completedLoans.toLocaleString("en-KE")}
               </p>
             </div>
@@ -211,15 +214,15 @@ export default function LoanDashboard({
               <div className="flex items-center gap-2">
                 <CircleDollarSign
                   size={14}
-                  className="text-white/30"
+                  className="text-slate-400"
                 />
 
-                <span className="text-xs text-white/45">
+                <span className="text-xs font-medium text-slate-600">
                   Principal issued
                 </span>
               </div>
 
-              <span className="text-xs font-medium text-white/80">
+              <span className="text-xs font-semibold text-slate-900">
                 {formatMoney(totalPrincipal)}
               </span>
             </div>
@@ -228,15 +231,15 @@ export default function LoanDashboard({
               <div className="flex items-center gap-2">
                 <Banknote
                   size={14}
-                  className="text-white/30"
+                  className="text-slate-400"
                 />
 
-                <span className="text-xs text-white/45">
+                <span className="text-xs font-medium text-slate-600">
                   Total paid
                 </span>
               </div>
 
-              <span className="text-xs font-medium text-white/80">
+              <span className="text-xs font-semibold text-slate-900">
                 {formatMoney(totalPaid)}
               </span>
             </div>
@@ -245,15 +248,15 @@ export default function LoanDashboard({
               <div className="flex items-center gap-2">
                 <TriangleAlert
                   size={14}
-                  className="text-white/30"
+                  className="text-slate-400"
                 />
 
-                <span className="text-xs text-white/45">
+                <span className="text-xs font-medium text-slate-600">
                   Total fines
                 </span>
               </div>
 
-              <span className="text-xs font-medium text-white/80">
+              <span className="text-xs font-semibold text-slate-900">
                 {formatMoney(totalFines)}
               </span>
             </div>

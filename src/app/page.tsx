@@ -42,12 +42,6 @@ function decodeGoogleIdToken(
   }
 
   try {
-    /*
-     * JWT uses base64url rather than normal base64.
-     *
-     * Convert it into a format that atob()
-     * understands.
-     */
     const base64 =
       payloadPart
         .replace(/-/g, "+")
@@ -90,12 +84,6 @@ function decodeGoogleIdToken(
         ? payload.picture.trim()
         : "";
 
-    /*
-     * We need an email because the email
-     * will eventually determine whether this
-     * is an administrator or registered
-     * GEO-SHUA member.
-     */
     if (!email) {
       throw new Error(
         "Google authentication succeeded, but no email address was returned.",
@@ -154,12 +142,6 @@ export default function Home() {
         if (
           Capacitor.isNativePlatform()
         ) {
-          /*
-           * Native Android Google authentication.
-           *
-           * This opens the Google account selector
-           * and returns the authenticated Google account.
-           */
           const result =
             await loginWithAndroidGoogle();
 
@@ -188,16 +170,6 @@ export default function Home() {
              DECODE PROFILE FOR UI ONLY
           ----------------------------------------------- */
 
-          /*
-           * This decoding is ONLY for displaying the
-           * Google user's basic information.
-           *
-           * It is NOT used for authorization.
-           *
-           * The server will independently verify the
-           * Google ID token through the NextAuth
-           * Credentials provider.
-           */
           const googleUser =
             decodeGoogleIdToken(
               idToken,
@@ -217,24 +189,6 @@ export default function Home() {
              CREATE REAL NEXTAUTH SESSION
           ----------------------------------------------- */
 
-          /*
-           * THIS IS THE IMPORTANT CHANGE.
-           *
-           * Previously Android only saved the Google
-           * account to localStorage.
-           *
-           * That meant:
-           *
-           *     auth()
-           *
-           * on the server could not see the user.
-           *
-           * We now pass the Google ID token to the
-           * NextAuth Android Credentials provider.
-           *
-           * NextAuth will verify the token server-side
-           * and create the normal NextAuth JWT session.
-           */
           const sessionResult =
             await signIn(
               "android-google",
@@ -248,10 +202,6 @@ export default function Home() {
             "ANDROID NEXTAUTH SESSION RESULT:",
             sessionResult,
           );
-
-          /* -----------------------------------------------
-             CHECK NEXTAUTH RESULT
-          ----------------------------------------------- */
 
           if (
             !sessionResult ||
@@ -267,12 +217,6 @@ export default function Home() {
              SAVE PROFILE FOR TOPBAR
           ----------------------------------------------- */
 
-          /*
-           * These values are ONLY used by the TopBar
-           * for immediate profile display.
-           *
-           * Financial APIs must NEVER trust these values.
-           */
           localStorage.setItem(
             "android_google_user",
             JSON.stringify(
@@ -289,10 +233,6 @@ export default function Home() {
              ALLOW SESSION COOKIE TO PERSIST
           ----------------------------------------------- */
 
-          /*
-           * Give the browser a short moment to persist
-           * the NextAuth session cookie before navigation.
-           */
           await new Promise<void>(
             (resolve) => {
               window.setTimeout(
@@ -317,13 +257,6 @@ export default function Home() {
            WEB BROWSER
         ================================================= */
 
-        /*
-         * Keep the existing web authentication exactly
-         * as it is.
-         *
-         * NextAuth handles Google login and redirects
-         * to /dashboard.
-         */
         await signIn("google", {
           callbackUrl:
             "/dashboard",
@@ -350,24 +283,18 @@ export default function Home() {
   ======================================================= */
 
   return (
-    <main className="relative min-h-[100dvh] overflow-hidden bg-[#050505] text-white">
+    <main className="relative min-h-[100dvh] overflow-hidden bg-[#eef7ff] text-black">
       {/* =================================================
-          AMBIENT BACKGROUND
+          SUBTLE LIGHT BACKGROUND
       ================================================= */}
 
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-[55%] rounded-full bg-yellow-500/[0.07] blur-[120px]" />
+     <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-[55%] rounded-full bg-sky-400/[0.08] blur-[120px]" />
 
-        <div className="absolute -left-32 -top-32 h-72 w-72 rounded-full bg-yellow-600/[0.04] blur-[100px]" />
+        <div className="absolute -left-32 -top-32 h-72 w-72 rounded-full bg-sky-300/[0.08] blur-[100px]" />
 
-        <div className="absolute -bottom-32 -right-32 h-72 w-72 rounded-full bg-yellow-500/[0.04] blur-[100px]" />
+        <div className="absolute -bottom-32 -right-32 h-72 w-72 rounded-full bg-sky-400/[0.08] blur-[100px]" />
       </div>
-
-      {/* =================================================
-          SUBTLE VIGNETTE
-      ================================================= */}
-
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.35)_100%)]" />
 
       {/* =================================================
           MAIN CONTENT
@@ -381,7 +308,7 @@ export default function Home() {
           ================================================= */}
 
           <div className="relative mb-8">
-            <div className="absolute inset-0 scale-75 rounded-full bg-yellow-500/10 blur-3xl" />
+            <div className="absolute inset-0 scale-75 rounded-full bg-yellow-400/[0.08] blur-3xl" />
 
             <img
               src="/logo.png"
@@ -391,7 +318,7 @@ export default function Home() {
                 h-auto
                 w-[210px]
                 object-contain
-                drop-shadow-[0_0_30px_rgba(234,179,8,0.15)]
+                drop-shadow-[0_8px_25px_rgba(0,0,0,0.08)]
                 sm:w-[240px]
               "
             />
@@ -402,11 +329,11 @@ export default function Home() {
           ================================================= */}
 
           <div className="mb-8">
-            <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+            <h1 className="text-2xl font-semibold tracking-tight text-black sm:text-3xl">
               Welcome
             </h1>
 
-            <p className="mt-2 text-sm leading-6 text-white/50 sm:text-base">
+            <p className="mt-2 text-sm leading-6 text-black/50 sm:text-base">
               Sign in to continue to your account
             </p>
           </div>
@@ -432,17 +359,18 @@ export default function Home() {
               gap-3
               rounded-xl
               border
-              border-white/10
+              border-black/10
               bg-white
               px-6
               text-[15px]
               font-semibold
-              text-[#171717]
-              shadow-[0_10px_40px_rgba(0,0,0,0.25)]
+              text-black
+              shadow-[0_8px_30px_rgba(0,0,0,0.08)]
               transition-all
               duration-200
               hover:-translate-y-0.5
-              hover:shadow-[0_14px_45px_rgba(0,0,0,0.35)]
+              hover:border-black/15
+              hover:shadow-[0_12px_35px_rgba(0,0,0,0.12)]
               active:translate-y-0
               disabled:cursor-not-allowed
               disabled:opacity-60
@@ -477,7 +405,7 @@ export default function Home() {
                 />
               </svg>
             ) : (
-              <span className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-800" />
+              <span className="h-5 w-5 animate-spin rounded-full border-2 border-black/20 border-t-black" />
             )}
 
             <span>
@@ -491,7 +419,7 @@ export default function Home() {
               SECURITY MESSAGE
           ================================================= */}
 
-          <div className="mt-6 flex items-center gap-2 text-xs text-white/30">
+          <div className="mt-6 flex items-center gap-2 text-xs text-black/40">
             <svg
               width="14"
               height="14"
@@ -520,7 +448,7 @@ export default function Home() {
               FOOTER
           ================================================= */}
 
-          <p className="mt-12 text-[11px] uppercase tracking-[0.25em] text-white/20">
+          <p className="mt-12 text-[11px] uppercase tracking-[0.25em] text-black/25">
             GEO-SHUA COMPANY
           </p>
         </div>

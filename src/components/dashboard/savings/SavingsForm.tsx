@@ -890,7 +890,7 @@ export default function SavingsForm({
         flex
         items-end
         justify-center
-        bg-black/70
+        bg-black/40
         p-0
         backdrop-blur-sm
         sm:items-center
@@ -909,8 +909,8 @@ export default function SavingsForm({
           overflow-hidden
           rounded-t-3xl
           border
-          border-white/[0.08]
-          bg-[#0b0b0b]
+          border-slate-200
+          bg-white
           shadow-2xl
           sm:max-w-lg
           sm:rounded-3xl
@@ -927,7 +927,7 @@ export default function SavingsForm({
             items-center
             justify-between
             border-b
-            border-white/[0.06]
+            border-slate-200
             px-5
             py-4
           "
@@ -949,8 +949,8 @@ export default function SavingsForm({
                 items-center
                 justify-center
                 rounded-xl
-                bg-yellow-500/10
-                text-yellow-400
+                bg-yellow-50
+                text-yellow-600
               "
             >
               <Wallet
@@ -965,7 +965,7 @@ export default function SavingsForm({
                 className="
                   text-sm
                   font-semibold
-                  text-white
+                  text-black
                 "
               >
                 Add Savings
@@ -975,7 +975,7 @@ export default function SavingsForm({
                 className="
                   mt-0.5
                   text-xs
-                  text-white/30
+                  text-black/45
                 "
               >
                 Record a manual savings deposit
@@ -999,10 +999,10 @@ export default function SavingsForm({
               items-center
               justify-center
               rounded-xl
-              text-white/35
+              text-black/40
               transition
-              hover:bg-white/[0.05]
-              hover:text-white
+              hover:bg-slate-100
+              hover:text-black
               disabled:cursor-not-allowed
               disabled:opacity-40
             "
@@ -1059,7 +1059,7 @@ export default function SavingsForm({
                     block
                     text-xs
                     font-medium
-                    text-white/55
+                    text-black/60
                   "
                 >
                   Savings Account
@@ -1075,10 +1075,10 @@ export default function SavingsForm({
                       gap-2
                       rounded-xl
                       border
-                      border-white/[0.08]
-                      bg-black
+                      border-slate-200
+                      bg-slate-50
                       text-xs
-                      text-white/30
+                      text-black/40
                     "
                   >
                     <Loader2
@@ -1095,8 +1095,8 @@ export default function SavingsForm({
                     className="
                       rounded-xl
                       border
-                      border-white/[0.08]
-                      bg-black
+                      border-slate-200
+                      bg-slate-50
                       px-4
                       py-3
                     "
@@ -1115,7 +1115,7 @@ export default function SavingsForm({
                             truncate
                             font-mono
                             text-xs
-                            text-white/45
+                            text-black/55
                           "
                         >
                           {
@@ -1127,7 +1127,7 @@ export default function SavingsForm({
                           className="
                             mt-1
                             text-[11px]
-                            text-white/25
+                            text-black/35
                           "
                         >
                           Fixed savings account
@@ -1139,7 +1139,7 @@ export default function SavingsForm({
                               mt-1
                               text-[10px]
                               font-medium
-                              text-red-400
+                              text-red-600
                             "
                           >
                             Inactive account
@@ -1159,7 +1159,7 @@ export default function SavingsForm({
                             font-semibold
                             uppercase
                             tracking-[0.15em]
-                            text-white/20
+                            text-black/30
                           "
                         >
                           Balance
@@ -1170,7 +1170,7 @@ export default function SavingsForm({
                             mt-1
                             text-sm
                             font-semibold
-                            text-yellow-400
+                            text-yellow-600
                           "
                         >
                           {formatKES(
@@ -1187,13 +1187,13 @@ export default function SavingsForm({
                     className="
                       rounded-xl
                       border
-                      border-yellow-500/10
-                      bg-yellow-500/[0.03]
+                      border-yellow-200
+                      bg-yellow-50
                       px-4
                       py-3
                       text-xs
                       leading-5
-                      text-yellow-400/70
+                      text-yellow-700
                     "
                   >
                     This member does not have
@@ -1215,7 +1215,7 @@ export default function SavingsForm({
                   block
                   text-xs
                   font-medium
-                  text-white/55
+                  text-black/60
                 "
               >
                 Amount
@@ -1231,7 +1231,7 @@ export default function SavingsForm({
                     -translate-y-1/2
                     text-xs
                     font-medium
-                    text-white/30
+                    text-black/35
                   "
                 >
                   KES
@@ -1264,18 +1264,21 @@ export default function SavingsForm({
                     w-full
                     rounded-xl
                     border
-                    border-white/[0.08]
-                    bg-black
+                    border-slate-200
+                    bg-white
                     pl-12
                     pr-3
                     text-lg
                     font-semibold
-                    text-white
+                    text-black
                     outline-none
-                    placeholder:text-white/15
-                    focus:border-yellow-500/40
+                    placeholder:text-black/20
+                    focus:border-yellow-400
+                    focus:ring-2
+                    focus:ring-yellow-500/10
                     disabled:cursor-not-allowed
-                    disabled:opacity-50
+                    disabled:bg-slate-50
+                    disabled:opacity-60
                   "
                 />
               </div>
@@ -1293,7 +1296,7 @@ export default function SavingsForm({
                   block
                   text-xs
                   font-medium
-                  text-white/55
+                  text-black/60
                 "
               >
                 Reference
@@ -1301,7 +1304,7 @@ export default function SavingsForm({
                 <span
                   className="
                     ml-1
-                    text-white/20
+                    text-black/25
                   "
                 >
                   optional
@@ -1330,18 +1333,21 @@ export default function SavingsForm({
                   w-full
                   rounded-xl
                   border
-                  border-white/[0.08]
-                  bg-black
+                  border-slate-200
+                  bg-white
                   px-3
                   font-mono
                   text-sm
-                  text-white
+                  text-black
                   outline-none
                   placeholder:font-sans
-                  placeholder:text-white/20
-                  focus:border-yellow-500/40
+                  placeholder:text-black/20
+                  focus:border-yellow-400
+                  focus:ring-2
+                  focus:ring-yellow-500/10
                   disabled:cursor-not-allowed
-                  disabled:opacity-50
+                  disabled:bg-slate-50
+                  disabled:opacity-60
                 "
               />
             </div>
@@ -1358,7 +1364,7 @@ export default function SavingsForm({
                   block
                   text-xs
                   font-medium
-                  text-white/55
+                  text-black/60
                 "
               >
                 Transaction Date
@@ -1385,15 +1391,18 @@ export default function SavingsForm({
                   w-full
                   rounded-xl
                   border
-                  border-white/[0.08]
-                  bg-black
+                  border-slate-200
+                  bg-white
                   px-3
                   text-sm
-                  text-white
+                  text-black
                   outline-none
-                  focus:border-yellow-500/40
+                  focus:border-yellow-400
+                  focus:ring-2
+                  focus:ring-yellow-500/10
                   disabled:cursor-not-allowed
-                  disabled:opacity-50
+                  disabled:bg-slate-50
+                  disabled:opacity-60
                 "
               />
             </div>
@@ -1408,13 +1417,13 @@ export default function SavingsForm({
                 className="
                   rounded-xl
                   border
-                  border-red-500/15
-                  bg-red-500/[0.06]
+                  border-red-200
+                  bg-red-50
                   px-3
                   py-3
                   text-xs
                   leading-5
-                  text-red-400
+                  text-red-700
                 "
               >
                 {error}
@@ -1434,8 +1443,8 @@ export default function SavingsForm({
               shrink-0
               gap-3
               border-t
-              border-white/[0.06]
-              bg-[#0b0b0b]
+              border-slate-200
+              bg-white
               p-4
             "
           >
@@ -1452,13 +1461,13 @@ export default function SavingsForm({
                 flex-1
                 rounded-xl
                 border
-                border-white/[0.08]
+                border-slate-200
                 text-sm
                 font-medium
-                text-white/50
+                text-black/55
                 transition
-                hover:bg-white/[0.04]
-                hover:text-white
+                hover:bg-slate-100
+                hover:text-black
                 disabled:cursor-not-allowed
                 disabled:opacity-40
               "

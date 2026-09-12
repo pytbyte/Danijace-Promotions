@@ -144,17 +144,17 @@ function statusClass(
   ) {
     case "confirmed":
     case "completed":
-      return "bg-emerald-500/10 text-emerald-400";
+      return "bg-emerald-50 text-emerald-700";
 
     case "pending":
-      return "bg-yellow-500/10 text-yellow-400";
+      return "bg-yellow-50 text-yellow-700";
 
     case "reversed":
     case "cancelled":
-      return "bg-red-500/10 text-red-400";
+      return "bg-red-50 text-red-700";
 
     default:
-      return "bg-white/[0.05] text-white/40";
+      return "bg-slate-100 text-black/70";
   }
 }
 
@@ -198,12 +198,13 @@ function LoadingRows() {
         (_, index) => (
           <tr
             key={index}
+            className="border-b border-slate-200 bg-white"
           >
             <td
               colSpan={7}
               className="px-4 py-4"
             >
-              <div className="h-10 animate-pulse rounded-xl bg-white/[0.04]" />
+              <div className="h-10 animate-pulse rounded-xl bg-slate-100" />
             </td>
           </tr>
         )
@@ -218,23 +219,23 @@ function LoadingRows() {
 
 function EmptyState() {
   return (
-    <tr>
+    <tr className="bg-white">
       <td
         colSpan={7}
         className="px-6 py-14 text-center"
       >
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow-500/10 text-yellow-400">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-yellow-200 bg-yellow-50 text-yellow-600">
           <ArrowDownLeft
             size={20}
             strokeWidth={1.8}
           />
         </div>
 
-        <p className="mt-4 text-sm font-medium text-white/60">
+        <p className="mt-4 text-sm font-medium text-black">
           No repayments found
         </p>
 
-        <p className="mt-1 text-xs text-white/25">
+        <p className="mt-1 text-xs text-black/50">
           Loan repayments will appear here
           after they are recorded.
         </p>
@@ -317,26 +318,27 @@ function RepaymentRow({
     <tr
       className="
         border-b
-        border-white/[0.04]
+        border-slate-200
+        bg-white
         transition
         last:border-b-0
-        hover:bg-white/[0.015]
+        hover:bg-slate-50
       "
     >
       {/* ===================================================
           LOAN
       =================================================== */}
 
-      <td className="px-4 py-4">
+      <td className="bg-white px-4 py-4">
         <div className="min-w-0">
-          <p className="truncate text-xs font-semibold text-white">
+          <p className="truncate text-xs font-semibold text-black">
             {repaymentRecord.loanNumber ||
               repaymentRecord.loanId ||
               "—"}
           </p>
 
           {repaymentRecord.id && (
-            <p className="mt-1 truncate font-mono text-[9px] text-white/20">
+            <p className="mt-1 truncate font-mono text-[9px] text-black/40">
               {repaymentRecord.id}
             </p>
           )}
@@ -347,14 +349,14 @@ function RepaymentRow({
           MEMBER
       =================================================== */}
 
-      <td className="max-w-[190px] px-4 py-4">
+      <td className="max-w-[190px] bg-white px-4 py-4">
         <div className="min-w-0">
-          <p className="truncate text-xs font-medium text-white/75">
+          <p className="truncate text-xs font-medium text-black">
             {repaymentRecord.memberName ||
               "Unknown member"}
           </p>
 
-          <p className="mt-0.5 truncate font-mono text-[10px] text-white/20">
+          <p className="mt-0.5 truncate font-mono text-[10px] text-black/40">
             {repaymentRecord.memberNumber ||
               repaymentRecord.memberId ||
               "—"}
@@ -366,16 +368,16 @@ function RepaymentRow({
           AMOUNT
       =================================================== */}
 
-      <td className="whitespace-nowrap px-4 py-4">
+      <td className="whitespace-nowrap bg-white px-4 py-4">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-600">
             <ArrowDownLeft
               size={14}
               strokeWidth={1.8}
             />
           </div>
 
-          <span className="text-xs font-semibold text-emerald-400">
+          <span className="text-xs font-semibold text-black">
             {formatKES(amount)}
           </span>
         </div>
@@ -385,8 +387,8 @@ function RepaymentRow({
           SOURCE
       =================================================== */}
 
-      <td className="px-4 py-4">
-        <div className="inline-flex items-center gap-1.5 text-xs text-white/50">
+      <td className="bg-white px-4 py-4">
+        <div className="inline-flex items-center gap-1.5 text-xs text-black/70">
           {getSourceIcon(source)}
 
           <span>
@@ -399,13 +401,13 @@ function RepaymentRow({
           REFERENCE
       =================================================== */}
 
-      <td className="max-w-[180px] px-4 py-4">
+      <td className="max-w-[180px] bg-white px-4 py-4">
         {reference ? (
-          <span className="block truncate font-mono text-[10px] text-white/45">
+          <span className="block truncate font-mono text-[10px] text-black/60">
             {reference}
           </span>
         ) : (
-          <span className="text-xs text-white/15">
+          <span className="text-xs text-black/30">
             —
           </span>
         )}
@@ -415,8 +417,8 @@ function RepaymentRow({
           DATE
       =================================================== */}
 
-      <td className="whitespace-nowrap px-4 py-4">
-        <span className="text-xs text-white/50">
+      <td className="whitespace-nowrap bg-white px-4 py-4">
+        <span className="text-xs text-black/70">
           {formatDate(date)}
         </span>
       </td>
@@ -425,7 +427,7 @@ function RepaymentRow({
           STATUS / VIEW
       =================================================== */}
 
-      <td className="px-4 py-4">
+      <td className="bg-white px-4 py-4">
         <div className="flex items-center justify-end gap-2">
           <span
             className={`
@@ -457,11 +459,16 @@ function RepaymentRow({
                 items-center
                 justify-center
                 rounded-lg
-                bg-white/[0.05]
-                text-white/40
+                border
+                border-slate-200
+                bg-white
+                text-black/50
                 transition
-                hover:bg-white/[0.09]
-                hover:text-white
+                hover:bg-slate-100
+                hover:text-black
+                focus:outline-none
+                focus:ring-1
+                focus:ring-slate-300
               "
               aria-label="View repayment"
             >
@@ -499,28 +506,28 @@ export default function LoanRepaymentList({
         overflow-hidden
         rounded-2xl
         border
-        border-white/[0.08]
-        bg-[#0b0b0b]
+        border-slate-200
+        bg-white
       "
     >
       {/* ===================================================
           HEADER
       =================================================== */}
 
-      <div className="border-b border-white/[0.06] px-4 py-4 sm:px-5">
+      <div className="border-b border-slate-200 bg-white px-4 py-4 sm:px-5">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold text-white">
+            <h2 className="text-sm font-semibold text-black">
               Loan Repayments
             </h2>
 
-            <p className="mt-0.5 text-xs text-white/30">
+            <p className="mt-0.5 text-xs text-black/50">
               Immutable loan repayment ledger
             </p>
           </div>
 
           {!loading && (
-            <span className="text-xs text-white/25">
+            <span className="text-xs text-black/50">
               {safeRepayments.length}{" "}
               {safeRepayments.length ===
               1
@@ -535,41 +542,41 @@ export default function LoanRepaymentList({
           HORIZONTAL TABLE WRAPPER
       =================================================== */}
 
-      <div className="overflow-x-auto">
-        <div className="min-w-[1000px]">
+      <div className="overflow-x-auto bg-white">
+        <div className="min-w-[1000px] bg-white">
 
           {/* =================================================
               STATIC HEADER
           ================================================= */}
 
-          <table className="w-full border-collapse text-left">
-            <thead>
-              <tr className="border-b border-white/[0.06]">
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+          <table className="w-full border-collapse bg-white text-left">
+            <thead className="bg-white">
+              <tr className="border-b border-slate-200 bg-white">
+                <th className="bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                   Loan
                 </th>
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                   Member
                 </th>
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                   Amount
                 </th>
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                   Source
                 </th>
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                   Reference
                 </th>
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                   Date
                 </th>
 
-                <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="bg-white px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                   Status
                 </th>
               </tr>
@@ -578,16 +585,11 @@ export default function LoanRepaymentList({
 
           {/* =================================================
               SCROLLABLE BODY
-
-              EXACT HEIGHT = 200px
-
-              Only three repayment rows should normally be
-              visible before vertical scrolling begins.
           ================================================= */}
 
-          <div className="h-[200px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
-            <table className="w-full border-collapse text-left">
-              <tbody>
+          <div className="h-[200px] overflow-y-auto overscroll-contain bg-white scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-300 hover:scrollbar-thumb-slate-400">
+            <table className="w-full border-collapse bg-white text-left">
+              <tbody className="bg-white">
                 {loading ? (
                   <LoadingRows />
                 ) : safeRepayments.length ===

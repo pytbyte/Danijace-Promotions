@@ -2,61 +2,36 @@
  * GEO-SHUA
  * Loan Domain Service
  *
- * Production financial loan service.
+ * Loan lifecycle: full CRUD.
  *
- * ARCHITECTURE
- * ------------------------------------------------------------------
+ * CORE LOAN MODEL
+ * ---------------------------------------------------------------
+ * principal            = total amount disbursed.
+ * interestAmount       = principal × applicable interest rate.
+ * totalDue             = principal + interestAmount.
+ * installmentAmount    = contractual amount expected each cycle.
+ * amountDue            = amount expected for the current specific cycle,
+ *                        never greater than the remaining core balance.
+ * amountPaid           = sum of recorded repayments.
+ * totalFines           = sum of cycle-based fines.
+ * outstandingBalance   = principal + interest + effective fines - amountPaid.
  *
- * 1. Public/domain IDs are strings.
- * 2. MongoDB relation IDs are ObjectId.
- * 3. ID conversion happens at the persistence boundary.
+ * INSTALLMENT FINE
+ * ---------------------------------------------------------------
+ * At the end of each completed repayment cycle:
  *
- * 4. Loans are persistent financial records.
- * 5. Repayments are append-only financial records.
- * 6. Fines are append-only financial records.
- * 7. Waivers are append-only financial records.
- * 8. Assessments are append-only financial records.
- * 9. Audit entries are append-only.
+ * installmentShortfall = max(0, amountDue - paymentsDuringPeriod)
+ * fineAmount           = installmentShortfall × fineRate
  *
- * 10. amountPaid is a maintained projection of the repayment ledger.
- * 11. totalFines is a maintained projection of the fine ledger.
- * 12. totalWaivedFines is a maintained projection of waiver ledger.
+ * The default fine rate is 10%.
+ * Fines are never calculated from the entire loan balance.
+ * Existing fines never compound.
+ * One fine is allowed per repayment cycle.
  *
- * 13. Core outstanding:
+ * Loan contractual dates are stored as YYYY-MM-DD calendar strings.
+ * Repayment transactionDate remains a real timestamp.
  *
- *       coreOutstanding =
- *          max(0, totalDue - amountPaid)
- *
- * 14. Final outstanding:
- *
- *       finalOutstanding =
- *          max(
- *            0,
- *            totalDue +
- *            totalFines -
- *            totalWaivedFines -
- *            amountPaid
- *          )
- *
- * 15. Fines are percentage-based.
- * 16. There are NO daily fines.
- * 17. A fine may be assessed once per completed repayment cycle.
- * 18. Repayment cycles default to 7 days.
- * 19. Fines are calculated from core outstanding only.
- * 20. Existing fines never compound.
- *
- * 21. transactionReference is the immutable idempotency key.
- * 22. Financial history is never permanently deleted.
- * 23. Read operations do not mutate financial state.
- * 24. Financial mutations use MongoDB transactions.
- *
- * IMPORTANT
- * ------------------------------------------------------------------
- *
- * A bank SMS/payment adapter should resolve the member and loan
- * before calling createLoanRepayment().
- *
- * The sender's M-Pesa name is NOT used to identify a member.
+ * Financial ledgers remain separate from the loan master record.
  */
 
 import {
@@ -82,6 +57,8 @@ import type {
   LoanSettings,
   LoanStatus,
   LoanWaiver,
+  LoanGuarantor,
+  LoanType,
 } from "./types";
 
 import {
@@ -444,48 +421,271 @@ function money(
   );
 }
 
-function addDays(
-  date: Date,
-  days: number,
-): Date {
-  const result =
-    new Date(
-      date.getTime(),
-    );
-
-  result.setDate(
-    result.getDate() +
-      days,
-  );
-
-  return result;
-}
-
-function startOfDay(
-  date: Date,
-): Date {
-  const result =
-    new Date(date);
-
-  result.setHours(
-    0,
-    0,
-    0,
-    0,
-  );
-
-  return result;
-}
+type CalendarDate = string;
 
 function isValidDate(
   value: Date,
 ): boolean {
   return (
     value instanceof Date &&
-    !Number.isNaN(
-      value.getTime(),
-    )
+    !Number.isNaN(value.getTime())
   );
+}
+
+function isCalendarDate(
+  value: unknown,
+): value is CalendarDate {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value)
+  ) {
+    return false;
+  }
+
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+
+  if (
+    !Number.isInteger(year) ||
+    year < 1 ||
+    year > 9999 ||
+    !Number.isInteger(month) ||
+    month < 1 ||
+    month > 12 ||
+    !Number.isInteger(day) ||
+    day < 1
+  ) {
+    return false;
+  }
+
+  const leap =
+    year % 4 === 0 &&
+    (year % 100 !== 0 || year % 400 === 0);
+
+  const daysInMonth = [
+    31,
+    leap ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ][month - 1];
+
+  return day <= daysInMonth;
+}
+
+function assertCalendarDate(
+  value: unknown,
+  fieldName: string,
+): asserts value is CalendarDate {
+  if (!isCalendarDate(value)) {
+    throw new Error(
+      `Invalid ${fieldName}. Expected YYYY-MM-DD.`,
+    );
+  }
+}
+
+/*
+ * Civil-date arithmetic.
+ *
+ * These helpers deliberately do NOT create JavaScript Date objects
+ * from loan business dates. Loan calendar dates remain YYYY-MM-DD
+ * strings throughout the domain and persistence layers.
+ */
+function daysFromCivil(
+  year: number,
+  month: number,
+  day: number,
+): number {
+  year -= month <= 2 ? 1 : 0;
+  const era = Math.floor(year / 400);
+  const yearOfEra = year - era * 400;
+  const monthPrime = month + (month > 2 ? -3 : 9);
+  const dayOfYear =
+    Math.floor((153 * monthPrime + 2) / 5) +
+    day -
+    1;
+  const dayOfEra =
+    yearOfEra * 365 +
+    Math.floor(yearOfEra / 4) -
+    Math.floor(yearOfEra / 100) +
+    dayOfYear;
+
+  return (
+    era * 146097 +
+    dayOfEra -
+    719468
+  );
+}
+
+function civilFromDays(
+  serial: number,
+): {
+  year: number;
+  month: number;
+  day: number;
+} {
+  serial += 719468;
+
+  const era =
+    Math.floor(
+      serial / 146097,
+    );
+  const dayOfEra =
+    serial -
+    era * 146097;
+  const yearOfEra =
+    Math.floor(
+      (
+        dayOfEra -
+        Math.floor(dayOfEra / 1460) +
+        Math.floor(dayOfEra / 36524) -
+        Math.floor(dayOfEra / 146096)
+      ) / 365,
+    );
+  let year =
+    yearOfEra +
+    era * 400;
+  const dayOfYear =
+    dayOfEra -
+    (
+      365 * yearOfEra +
+      Math.floor(yearOfEra / 4) -
+      Math.floor(yearOfEra / 100)
+    );
+  const monthPrime =
+    Math.floor(
+      (5 * dayOfYear + 2) / 153,
+    );
+  const day =
+    dayOfYear -
+    Math.floor(
+      (153 * monthPrime + 2) / 5,
+    ) +
+    1;
+  const month =
+    monthPrime +
+    (monthPrime < 10 ? 3 : -9);
+
+  year += month <= 2 ? 1 : 0;
+
+  return {
+    year,
+    month,
+    day,
+  };
+}
+
+function addCalendarDays(
+  value: CalendarDate,
+  days: number,
+): CalendarDate {
+  assertCalendarDate(
+    value,
+    "calendar date",
+  );
+
+  if (!Number.isInteger(days)) {
+    throw new Error(
+      "Calendar day offset must be a whole number.",
+    );
+  }
+
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+
+  const result = civilFromDays(
+    daysFromCivil(
+      year,
+      month,
+      day,
+    ) + days,
+  );
+
+  if (
+    result.year < 1 ||
+    result.year > 9999
+  ) {
+    throw new Error(
+      "Calendar date is outside the supported range.",
+    );
+  }
+
+  return `${String(result.year).padStart(4, "0")}-${String(result.month).padStart(2, "0")}-${String(result.day).padStart(2, "0")}`;
+}
+
+function differenceInCalendarDays(
+  from: CalendarDate,
+  to: CalendarDate,
+): number {
+  assertCalendarDate(
+    from,
+    "start calendar date",
+  );
+  assertCalendarDate(
+    to,
+    "end calendar date",
+  );
+
+  return (
+    daysFromCivil(
+      Number(from.slice(0, 4)),
+      Number(from.slice(5, 7)),
+      Number(from.slice(8, 10)),
+    ) -
+    daysFromCivil(
+      Number(to.slice(0, 4)),
+      Number(to.slice(5, 7)),
+      Number(to.slice(8, 10)),
+    )
+  ) * -1;
+}
+
+function dateToKenyanCalendarDate(
+  date: Date,
+): CalendarDate {
+  if (!isValidDate(date)) {
+    throw new Error(
+      "Invalid date.",
+    );
+  }
+
+  const parts =
+    new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone: "Africa/Nairobi",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      },
+    ).formatToParts(date);
+
+  const values: Record<string, string> = {};
+
+  for (const part of parts) {
+    if (part.type !== "literal") {
+      values[part.type] = part.value;
+    }
+  }
+
+  const result =
+    `${values.year}-${values.month}-${values.day}`;
+
+  assertCalendarDate(
+    result,
+    "Kenyan calendar date",
+  );
+
+  return result;
 }
 
 function escapeRegex(
@@ -1562,55 +1762,58 @@ async function getLoanPaidTotal(
 
 async function getLoanPaidTotalAsOf(
   loanId: ObjectId,
-  asOfDate: Date,
+  asOfDate: CalendarDate,
   session?: ClientSession,
 ): Promise<number> {
-  const {
-    repayments,
-  } =
-    await getCollections();
+  assertCalendarDate(
+    asOfDate,
+    "repayment cutoff date",
+  );
 
-  const result =
-    await repayments
-      .aggregate<{
-        _id: null;
-        total: number;
-      }>(
-        [
-          {
-            $match: {
-              loanId,
+  const { repayments } = await getCollections();
 
-              transactionDate: {
-                $lte:
-                  asOfDate,
-              },
-            },
-          },
-
-          {
-            $group: {
-              _id: null,
-
-              total: {
-                $sum:
-                  "$amount",
-              },
-            },
-          },
-        ],
-
+  const result = await repayments
+    .aggregate<{
+      _id: null;
+      total: number;
+    }>(
+      [
         {
-          session,
+          $match: {
+            loanId,
+          },
         },
-      )
-      .toArray();
+        {
+          $match: {
+            $expr: {
+              $lte: [
+                {
+                  $dateToString: {
+                    date: "$transactionDate",
+                    format: "%Y-%m-%d",
+                    timezone: "Africa/Nairobi",
+                  },
+                },
+                asOfDate,
+              ],
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: {
+              $sum: "$amount",
+            },
+          },
+        },
+      ],
+      { session },
+    )
+    .toArray();
 
   return money(
-    Number(
-      result[0]?.total ||
-        0,
-    ),
+    Number(result[0]?.total || 0),
   );
 }
 
@@ -1715,36 +1918,79 @@ async function getLoanWaivedFineTotal(
 ========================================================= */
 
 function calculateCoreOutstanding(
-  totalDue: number,
+  principal: number,
+  interestAmount: number,
   amountPaid: number,
 ): number {
   return money(
     Math.max(
       0,
-
-      totalDue -
-        amountPaid,
+      money(principal + interestAmount) - amountPaid,
     ),
   );
 }
 
 function calculateFinalOutstanding(
-  totalDue: number,
+  principal: number,
+  interestAmount: number,
   totalFines: number,
   totalWaivedFines: number,
   amountPaid: number,
 ): number {
+  const effectiveFines = money(
+    Math.max(
+      0,
+      totalFines - Math.min(totalFines, totalWaivedFines),
+    ),
+  );
+
   return money(
     Math.max(
       0,
-
-      totalDue +
-        totalFines -
-        totalWaivedFines -
+      money(principal + interestAmount) +
+        effectiveFines -
         amountPaid,
     ),
   );
 }
+
+/**
+ * Amount due for one specific repayment cycle.
+ *
+ * The contractual installment is the target. The final cycle may
+ * require less when the remaining core balance is smaller.
+ */
+export function calculateLoanAmountDue(
+  installmentAmount: number,
+  principal: number,
+  interestAmount: number,
+  amountPaid: number,
+): number {
+  const remainingCore = Math.max(
+    0,
+    money(principal + interestAmount) - amountPaid,
+  );
+
+  return money(
+    Math.min(
+      money(installmentAmount),
+      remainingCore,
+    ),
+  );
+}
+
+function calculateUnpaidInstallment(
+  amountDue: number,
+  paymentsDuringPeriod: number,
+): number {
+  return money(
+    Math.max(
+      0,
+      amountDue - paymentsDuringPeriod,
+    ),
+  );
+}
+
 
 /* =========================================================
    RECONCILE LOAN PROJECTION
@@ -1801,7 +2047,8 @@ async function reconcileLoan(
 
   const outstandingBalance =
     calculateFinalOutstanding(
-      loan.totalDue,
+      loan.principal,
+      loan.interestAmount,
       totalFines,
       totalWaivedFines,
       amountPaid,
@@ -1940,6 +2187,7 @@ async function writeAudit(
   );
 }
 
+
 /* =========================================================
    CREATE LOAN
 ========================================================= */
@@ -1966,6 +2214,9 @@ export async function createLoan(
       unknown
     >;
 
+  /*
+   * Reject removed legacy daily-fine fields.
+   */
   if (
     "dailyFine" in rawInput ||
     "defaultDailyFine" in rawInput ||
@@ -1976,6 +2227,10 @@ export async function createLoan(
     );
   }
 
+  /*
+   * Validate the complete create-loan payload before
+   * opening the database transaction.
+   */
   const validation =
     validateCreateLoan(
       input,
@@ -2001,7 +2256,10 @@ export async function createLoan(
     const createdLoan =
       await session.withTransaction(
         async (): Promise<Loan> => {
-          
+          /* =================================================
+             MEMBER
+          ================================================= */
+
           const member =
             await getMemberForLoan(
               input.memberId,
@@ -2013,6 +2271,7 @@ export async function createLoan(
               "Member is not eligible for a new loan.",
             );
           }
+
           if (
             member.status !==
             "active"
@@ -2021,6 +2280,10 @@ export async function createLoan(
               "Only active members can receive loans.",
             );
           }
+
+          /* =================================================
+             SETTINGS
+          ================================================= */
 
           const settings =
             await getLoanSettings(
@@ -2052,6 +2315,10 @@ export async function createLoan(
           } =
             await getCollections();
 
+          /* =================================================
+             PREVENT MULTIPLE OPEN LOANS
+          ================================================= */
+
           const existing =
             await loans.findOne(
               {
@@ -2065,7 +2332,6 @@ export async function createLoan(
                   ],
                 },
               },
-
               {
                 session,
               },
@@ -2076,6 +2342,10 @@ export async function createLoan(
               `Member already has an existing loan (${existing.loanNumber}).`,
             );
           }
+
+          /* =================================================
+             REGULAR LOAN ELIGIBILITY
+          ================================================= */
 
           if (
             input.type ===
@@ -2112,6 +2382,10 @@ export async function createLoan(
             }
           }
 
+          /* =================================================
+             PREVIOUS LOANS
+          ================================================= */
+
           const previousLoans =
             await loans
               .find(
@@ -2124,7 +2398,6 @@ export async function createLoan(
                       "cancelled",
                   },
                 },
-
                 {
                   session,
                 },
@@ -2159,12 +2432,10 @@ export async function createLoan(
 
             const outstanding =
               calculateFinalOutstanding(
-                previous.totalDue,
+                previous.principal,
+                previous.interestAmount,
                 fines,
-                Math.min(
-                  fines,
-                  waived,
-                ),
+                waived,
                 paid,
               );
 
@@ -2177,6 +2448,10 @@ export async function createLoan(
               );
             }
           }
+
+          /* =================================================
+             INTEREST
+          ================================================= */
 
           const rate =
             input.type ===
@@ -2195,11 +2470,17 @@ export async function createLoan(
                 rate,
             );
 
+          /* =================================================
+             REPAYMENT SETTINGS
+          ================================================= */
+
           /*
-           * AUTHORITATIVE SETTINGS
+           * These values are authoritative SACCO settings.
            *
-           * The repayment cycle and fine rate are SACCO
-           * configuration, not values supplied by the client.
+           * The client does not determine:
+           *
+           * - fine rate
+           * - repayment-cycle length
            */
           const repaymentCycleDays =
             normalizeCycleDays(
@@ -2211,66 +2492,154 @@ export async function createLoan(
               settings.fineRate,
             );
 
-          const disbursementDate =
-            input.disbursementDate
-              ? new Date(
-                  input.disbursementDate,
-                )
-              : new Date();
+          /* =================================================
+             INSTALLMENT
+          ================================================= */
+
+          /*
+           * installmentAmount is the amount expected during
+           * EACH repayment cycle.
+           *
+           * Example:
+           *
+           * repaymentCycleDays = 7
+           * installmentAmount  = KSh 5,000
+           *
+           * Expected weekly payment = KSh 5,000.
+           *
+           * This is NOT a daily fine.
+           */
+          const installmentAmount =
+            money(
+              input.installmentAmount,
+            );
 
           if (
-            !isValidDate(
-              disbursementDate,
-            )
+            !Number.isFinite(
+              installmentAmount,
+            ) ||
+            installmentAmount <= 0
           ) {
             throw new Error(
-              "Invalid disbursement date.",
+              "Installment amount must be greater than zero.",
             );
           }
 
-          const firstDueDate =
-            addDays(
+          /* =================================================
+             TOTAL DUE
+          ================================================= */
+
+          /*
+           * Contractual loan amount:
+           *
+           * principal + interest
+           *
+           * Fines are never included in totalDue.
+           */
+          const totalDue =
+            money(
+              principal +
+                interestAmount,
+            );
+
+          if (
+            installmentAmount >
+            totalDue
+          ) {
+            throw new Error(
+              "Installment amount cannot exceed the total loan amount due.",
+            );
+          }
+
+          /* =================================================
+             CONTRACTUAL CALENDAR DATES
+          ================================================= */
+
+          /*
+           * IMPORTANT:
+           *
+           * Loan business dates are CalendarDate strings:
+           *
+           *     YYYY-MM-DD
+           *
+           * They must NOT be converted to JavaScript Date
+           * objects before being stored.
+           */
+
+          const disbursementDate: CalendarDate =
+            input.disbursementDate !==
+            undefined
+              ? input.disbursementDate
+              : dateToKenyanCalendarDate(
+                  new Date(),
+                );
+
+          assertCalendarDate(
+            disbursementDate,
+            "disbursement date",
+          );
+
+          /*
+           * firstDueDate is the first repayment-cycle
+           * boundary.
+           *
+           * It is calculated independently from the user's
+           * selected repaymentDate.
+           *
+           * Example:
+           *
+           * disbursementDate = 2026-09-11
+           * cycle            = 7 days
+           *
+           * firstDueDate     = 2026-09-18
+           */
+          const firstDueDate: CalendarDate =
+            addCalendarDays(
               disbursementDate,
               repaymentCycleDays,
             );
 
-          const repaymentDate =
-            input.repaymentDate
-              ? new Date(
-                  input.repaymentDate,
-                )
+          /*
+           * If the user supplied a repaymentDate, preserve
+           * that exact calendar date.
+           *
+           * Do NOT replace it with firstDueDate.
+           */
+          const repaymentDate: CalendarDate =
+            input.repaymentDate !==
+            undefined
+              ? input.repaymentDate
               : firstDueDate;
 
-          const endDate =
-            input.endDate
-              ? new Date(
-                  input.endDate,
-                )
+          /*
+           * If the user supplied an endDate, preserve that
+           * exact calendar date.
+           *
+           * Otherwise the loan ends on the repayment date.
+           */
+          const endDate: CalendarDate =
+            input.endDate !==
+            undefined
+              ? input.endDate
               : repaymentDate;
 
-          if (
-            !isValidDate(
-              repaymentDate,
-            )
-          ) {
-            throw new Error(
-              "Invalid repayment date.",
-            );
-          }
+          /* -------------------------------------------------
+             VALIDATE ALL FINAL DATES
+          ------------------------------------------------- */
+
+          assertCalendarDate(
+            repaymentDate,
+            "repayment date",
+          );
+
+          assertCalendarDate(
+            endDate,
+            "loan end date",
+          );
 
           if (
-            !isValidDate(
-              endDate,
-            )
-          ) {
-            throw new Error(
-              "Invalid loan end date.",
-            );
-          }
-
-          if (
-            repaymentDate.getTime() <
-            disbursementDate.getTime()
+            repaymentDate <
+            disbursementDate
           ) {
             throw new Error(
               "Repayment date cannot be before disbursement date.",
@@ -2278,32 +2647,35 @@ export async function createLoan(
           }
 
           if (
-            endDate.getTime() <
-            repaymentDate.getTime()
+            endDate <
+            repaymentDate
           ) {
             throw new Error(
               "Loan end date cannot be before repayment date.",
             );
           }
 
-          const totalDue =
-            money(
-              principal +
-                interestAmount,
-            );
+          /* =================================================
+             LOAN NUMBER
+          ================================================= */
 
           const loanNumber =
             await generateLoanNumber(
               session,
             );
 
+          /* =================================================
+             GUARANTOR
+          ================================================= */
+
           const guarantor =
             normalizeGuarantor(
               input.guarantor,
             );
 
-          const now =
-            new Date();
+          /* =================================================
+             MEMBER NAME
+          ================================================= */
 
           const memberName =
             normalizeText(
@@ -2315,6 +2687,13 @@ export async function createLoan(
                 .filter(Boolean)
                 .join(" "),
             );
+
+          const now =
+            new Date();
+
+          /* =================================================
+             LOAN DOCUMENT
+          ================================================= */
 
           const loanDocument:
             LoanDocument = {
@@ -2341,29 +2720,90 @@ export async function createLoan(
 
             interestAmount,
 
+            /*
+             * Authoritative fine rate copied from SACCO
+             * settings at loan creation.
+             */
             fineRate,
 
+            /*
+             * Authoritative repayment cycle copied from
+             * SACCO settings at loan creation.
+             */
             repaymentCycleDays,
 
+            /*
+             * Expected payment for EACH repayment cycle.
+             */
+            installmentAmount,
+
+            /*
+             * IMPORTANT:
+             *
+             * Calendar dates are stored exactly as strings.
+             *
+             * Example:
+             *
+             *     "2026-09-11"
+             *
+             * There is NO Date conversion here.
+             */
             disbursementDate,
 
+            /*
+             * Preserve the user's selected repayment date.
+             *
+             * If none was supplied, this is firstDueDate.
+             */
             repaymentDate,
 
+            /*
+             * Preserve the user's selected end date.
+             *
+             * If none was supplied, this is repaymentDate.
+             */
             endDate,
 
+            /*
+             * First repayment-cycle boundary.
+             */
             firstDueDate,
 
+            /*
+             * Principal + interest only.
+             *
+             * Fines are never added to totalDue.
+             */
             totalDue,
 
+            /*
+             * No payments at creation.
+             */
             amountPaid:
               0,
 
+            /*
+             * No fines at creation.
+             */
             totalFines:
               0,
 
+            /*
+             * No waivers at creation.
+             */
             totalWaivedFines:
               0,
 
+            /*
+             * Initial outstanding:
+             *
+             * totalDue
+             * + fines
+             * - waived fines
+             * - payments
+             *
+             * = totalDue
+             */
             outstandingBalance:
               totalDue,
 
@@ -2394,12 +2834,20 @@ export async function createLoan(
               now,
           };
 
+          /* =================================================
+             INSERT
+          ================================================= */
+
           await loans.insertOne(
             loanDocument,
             {
               session,
             },
           );
+
+          /* =================================================
+             CREATION AUDIT
+          ================================================= */
 
           await writeAudit(
             loanDocument._id!,
@@ -2421,6 +2869,8 @@ export async function createLoan(
 
               repaymentCycleDays,
 
+              installmentAmount,
+
               disbursementDate,
 
               repaymentDate,
@@ -2433,6 +2883,10 @@ export async function createLoan(
             },
             session,
           );
+
+          /* =================================================
+             AUTHORIZATION AUDIT
+          ================================================= */
 
           await writeAudit(
             loanDocument._id!,
@@ -2450,7 +2904,6 @@ export async function createLoan(
             loanDocument,
           );
         },
-
         {
           readConcern: {
             level:
@@ -2538,95 +2991,49 @@ export async function getLoanByNumber(
 ========================================================= */
 
 /**
- * Fields that may be corrected through the loan edit action.
+ * Full CRUD loan update.
  *
- * IMPORTANT
- * ---------------------------------------------------------
- * Financial projections are NEVER accepted from the client.
+ * A loan can be edited regardless of whether repayments,
+ * fines, waivers, or assessments already exist.
  *
- * The following are immutable:
- * - loanNumber
- * - memberId
- * - memberNumber
- * - memberName
- * - amountPaid
- * - totalFines
- * - totalWaivedFines
- * - outstandingBalance
- * - createdAt
- * - createdBy
- * - authorizedBy
- * - authorizedAt
- *
- * A loan may only have its originating terms edited before
- * financial activity has been recorded against it.
+ * Client-editable fields are contractual fields only.
+ * Financial projections are always recalculated from the
+ * authoritative ledgers and are never accepted from the client.
  */
 export type UpdateLoanInput = {
-  type?: Loan["type"];
-
+  type?: LoanType;
   principal?: number;
-
-  disbursementDate?: Date | string;
-
-  repaymentDate?: Date | string;
-
-  endDate?: Date | string;
-
-  guarantor?: CreateLoanInput["guarantor"];
+  installmentAmount?: number;
+  disbursementDate?: string;
+  repaymentDate?: string;
+  endDate?: string;
+  guarantor?: LoanGuarantor;
 };
 
-/**
- * Updates the originating terms of a loan safely.
- *
- * Financial history is never rewritten.
- *
- * A loan that already has repayments, fines, waivers, or
- * assessments cannot have its originating financial terms
- * changed.
- */
 export async function updateLoan(
   loanId: string,
   changes: UpdateLoanInput,
   updatedBy: LoanActor,
 ): Promise<Loan> {
-  /* =======================================================
-     INPUT VALIDATION
-  ======================================================= */
-
   if (
     typeof loanId !== "string" ||
     !ObjectId.isValid(loanId)
   ) {
-    throw new Error(
-      "Invalid loan ID.",
-    );
+    throw new Error("Invalid loan ID.");
   }
-
-  const actor =
-    normalizeActor(
-      updatedBy,
-    );
 
   if (
     !changes ||
-    typeof changes !== "object"
+    typeof changes !== "object" ||
+    Array.isArray(changes)
   ) {
-    throw new Error(
-      "Loan update data is required.",
-    );
+    throw new Error("Loan update data is required.");
   }
 
-  const rawChanges =
-    changes as Record<
-      string,
-      unknown
-    >;
+  const actor = normalizeActor(updatedBy);
+  const rawChanges = changes as Record<string, unknown>;
 
-  /*
-   * Reject fields that must never be writable through
-   * the update endpoint.
-   */
-  const forbiddenFields = [
+  const forbiddenFields = new Set([
     "id",
     "_id",
     "loanNumber",
@@ -2636,58 +3043,45 @@ export async function updateLoan(
     "interestRate",
     "interestAmount",
     "totalDue",
+    "amountDue",
     "amountPaid",
     "totalFines",
     "totalWaivedFines",
     "outstandingBalance",
+    "fineRate",
+    "repaymentCycleDays",
     "fineStatus",
     "repaymentStatus",
+    "status",
     "createdBy",
     "authorizedBy",
     "authorizedAt",
     "createdAt",
     "updatedAt",
-  ];
+    "dailyFine",
+    "defaultDailyFine",
+    "fineSource",
+  ]);
 
-  for (
-    const field of forbiddenFields
-  ) {
-    if (field in rawChanges) {
+  for (const field of Object.keys(rawChanges)) {
+    if (forbiddenFields.has(field)) {
       throw new Error(
         `${field} cannot be changed through loan editing.`,
       );
     }
   }
 
-  /*
-   * Daily-fine fields belong to the old architecture and
-   * must never be reintroduced.
-   */
-  if (
-    "dailyFine" in rawChanges ||
-    "defaultDailyFine" in rawChanges ||
-    "fineSource" in rawChanges
-  ) {
-    throw new Error(
-      "Daily fines are no longer supported. Use fineRate.",
-    );
-  }
-
-  /*
-   * Only the explicitly supported fields are accepted.
-   */
   const allowedFields = new Set([
     "type",
     "principal",
+    "installmentAmount",
     "disbursementDate",
     "repaymentDate",
     "endDate",
     "guarantor",
   ]);
 
-  for (
-    const field of Object.keys(rawChanges)
-  ) {
+  for (const field of Object.keys(rawChanges)) {
     if (!allowedFields.has(field)) {
       throw new Error(
         `Loan field '${field}' cannot be changed.`,
@@ -2695,534 +3089,358 @@ export async function updateLoan(
     }
   }
 
-  if (
-    Object.keys(rawChanges).length === 0
-  ) {
-    throw new Error(
-      "No loan changes were supplied.",
-    );
+  if (Object.keys(rawChanges).length === 0) {
+    throw new Error("No loan changes were supplied.");
   }
 
-  /* =======================================================
-     COLLECTIONS + TRANSACTION
-  ======================================================= */
-
-  const {
-    client,
-  } =
-    await getCollections();
-
-  const session =
-    client.startSession();
+  const { client } = await getCollections();
+  const session = client.startSession();
 
   try {
-    const updatedLoan =
-      await session.withTransaction(
-        async (): Promise<Loan> => {
-          const {
-            loans,
-            repayments,
-            fines,
-            waivers,
-            assessments,
-          } =
-            await getCollections();
+    return await session.withTransaction(
+      async (): Promise<Loan> => {
+        const {
+          loans,
+        } = await getCollections();
 
-          const objectId =
-            createObjectId(
-              loanId,
-            );
+        const objectId = createObjectId(loanId);
 
-          /* =================================================
-             LOAD CURRENT LOAN
-          ================================================= */
+        const current = await loans.findOne(
+          { _id: objectId },
+          { session },
+        );
 
-          const current =
-            await loans.findOne(
-              {
-                _id:
-                  objectId,
-              },
-              {
-                session,
-              },
-            );
+        if (!current) {
+          throw new Error("Loan not found.");
+        }
 
-          if (!current) {
-            throw new Error(
-              "Loan not found.",
-            );
-          }
+        /* =================================================
+           TYPE
+        ================================================= */
 
-          /* =================================================
-             PROTECT HISTORICAL / TERMINAL LOANS
-          ================================================= */
+        const newType =
+          changes.type !== undefined
+            ? changes.type
+            : current.type;
 
-          if (
-            current.status ===
-            "cancelled"
-          ) {
-            throw new Error(
-              "A cancelled loan cannot be edited.",
-            );
-          }
+        if (
+          newType !== "regular" &&
+          newType !== "emergency"
+        ) {
+          throw new Error("Invalid loan type.");
+        }
 
-          if (
-            current.status ===
-            "completed"
-          ) {
-            throw new Error(
-              "A completed loan cannot be edited.",
-            );
-          }
+        const settings = await getLoanSettings(session);
 
-          /* =================================================
-             CHECK FINANCIAL ACTIVITY
-          ================================================= */
-
-          const [
-            repaymentCount,
-            fineCount,
-            waiverCount,
-            assessmentCount,
-          ] =
-            await Promise.all([
-              repayments.countDocuments(
-                {
-                  loanId:
-                    objectId,
-                },
-                {
-                  session,
-                },
-              ),
-
-              fines.countDocuments(
-                {
-                  loanId:
-                    objectId,
-                },
-                {
-                  session,
-                },
-              ),
-
-              waivers.countDocuments(
-                {
-                  loanId:
-                    objectId,
-                },
-                {
-                  session,
-                },
-              ),
-
-              assessments.countDocuments(
-                {
-                  loanId:
-                    objectId,
-                },
-                {
-                  session,
-                },
-              ),
-            ]);
-
-          /*
-           * Once financial activity exists, changing the
-           * originating terms would alter the meaning of
-           * existing financial records.
-           */
-          
-
-          /* =================================================
-             BUILD NEW VALUES
-          ================================================= */
-
-          const newType =
-            changes.type !==
-            undefined
-              ? changes.type
-              : current.type;
-
-          const newPrincipal =
-            changes.principal !==
-            undefined
-              ? money(
-                  Number(
-                    changes.principal,
-                  ),
-                )
-              : money(
-                  current.principal,
-                );
-
-          if (
-            !Number.isFinite(
-              newPrincipal,
-            ) ||
-            newPrincipal <= 0
-          ) {
-            throw new Error(
-              "Loan principal must be greater than zero.",
-            );
-          }
-
-          /*
-           * Loan type must remain one of the domain values.
-           *
-           * This is deliberately explicit rather than trusting
-           * the client payload.
-           */
-          if (
-            newType !==
-              "regular" &&
-            newType !==
-              "emergency"
-          ) {
-            throw new Error(
-              "Invalid loan type.",
-            );
-          }
-
-          /* =================================================
-             AUTHORITATIVE SETTINGS
-          ================================================= */
-
-          const settings =
-            await getLoanSettings(
-              session,
-            );
-
-          if (
-            newType ===
-              "emergency" &&
-            !settings.emergencyLoansEnabled
-          ) {
-            throw new Error(
-              "Emergency loans are currently disabled.",
-            );
-          }
-
-          if (
-            newType ===
-              "regular" &&
-            !settings.regularLoansEnabled
-          ) {
-            throw new Error(
-              "Regular loans are currently disabled.",
-            );
-          }
-
-          /*
-           * When the loan type changes, use the current
-           * authoritative rate for that loan type.
-           *
-           * Otherwise preserve the loan's existing rate.
-           */
-          const newInterestRate =
-            newType !==
-              current.type
-              ? newType ===
-                "emergency"
-                ? settings.emergencyInterestRate
-                : settings.regularInterestRate
-              : normalizeRate(
-                  current.interestRate,
-                );
-
-          const newInterestAmount =
-            money(
-              newPrincipal *
-                newInterestRate,
-            );
-
-          const newTotalDue =
-            money(
-              newPrincipal +
-                newInterestAmount,
-            );
-
-          /* =================================================
-             DATES
-          ================================================= */
-
-          const newDisbursementDate =
-            changes.disbursementDate !==
-            undefined
-              ? new Date(
-                  changes.disbursementDate,
-                )
-              : new Date(
-                  current.disbursementDate,
-                );
-
-          if (
-            !isValidDate(
-              newDisbursementDate,
-            )
-          ) {
-            throw new Error(
-              "Invalid disbursement date.",
-            );
-          }
-
-          const newRepaymentDate =
-            changes.repaymentDate !==
-            undefined
-              ? new Date(
-                  changes.repaymentDate,
-                )
-              : new Date(
-                  current.repaymentDate,
-                );
-
-          if (
-            !isValidDate(
-              newRepaymentDate,
-            )
-          ) {
-            throw new Error(
-              "Invalid repayment date.",
-            );
-          }
-
-          const newEndDate =
-            changes.endDate !==
-            undefined
-              ? new Date(
-                  changes.endDate,
-                )
-              : new Date(
-                  current.endDate,
-                );
-
-          if (
-            !isValidDate(
-              newEndDate,
-            )
-          ) {
-            throw new Error(
-              "Invalid loan end date.",
-            );
-          }
-
-          if (
-            newRepaymentDate.getTime() <
-            newDisbursementDate.getTime()
-          ) {
-            throw new Error(
-              "Repayment date cannot be before disbursement date.",
-            );
-          }
-
-          if (
-            newEndDate.getTime() <
-            newRepaymentDate.getTime()
-          ) {
-            throw new Error(
-              "Loan end date cannot be before repayment date.",
-            );
-          }
-
-          /*
-           * firstDueDate is derived from the disbursement
-           * date and the authoritative repayment cycle.
-           */
-          const repaymentCycleDays =
-            normalizeCycleDays(
-              current.repaymentCycleDays,
-            );
-
-          const newFirstDueDate =
-            addDays(
-              newDisbursementDate,
-              repaymentCycleDays,
-            );
-
-          /* =================================================
-             GUARANTOR
-          ================================================= */
-
-          const newGuarantor =
-            changes.guarantor !==
-            undefined
-              ? normalizeGuarantor(
-                  changes.guarantor,
-                )
-              : current.guarantor;
-
-          /* =================================================
-             SNAPSHOT FOR AUDIT
-          ================================================= */
-
-          const before = {
-            type:
-              current.type,
-
-            principal:
-              current.principal,
-
-            interestRate:
-              current.interestRate,
-
-            interestAmount:
-              current.interestAmount,
-
-            disbursementDate:
-              current.disbursementDate,
-
-            repaymentDate:
-              current.repaymentDate,
-
-            endDate:
-              current.endDate,
-
-            firstDueDate:
-              current.firstDueDate,
-
-            totalDue:
-              current.totalDue,
-
-            guarantor:
-              current.guarantor,
-          };
-
-          const after = {
-            type:
-              newType,
-
-            principal:
-              newPrincipal,
-
-            interestRate:
-              newInterestRate,
-
-            interestAmount:
-              newInterestAmount,
-
-            disbursementDate:
-              newDisbursementDate,
-
-            repaymentDate:
-              newRepaymentDate,
-
-            endDate:
-              newEndDate,
-
-            firstDueDate:
-              newFirstDueDate,
-
-            totalDue:
-              newTotalDue,
-
-            guarantor:
-              newGuarantor,
-          };
-
-          /* =================================================
-             CONCURRENT UPDATE PROTECTION
-          ================================================= */
-
-          const now = new Date();
-
-          await loans.updateOne(
-            {
-              _id: objectId,
-            },
-            {
-              $set: {
-                type: newType,
-                principal: newPrincipal,
-                interestRate: newInterestRate,
-                interestAmount: newInterestAmount,
-                disbursementDate: newDisbursementDate,
-                repaymentDate: newRepaymentDate,
-                endDate: newEndDate,
-                firstDueDate: newFirstDueDate,
-                totalDue: newTotalDue,
-                guarantor: newGuarantor,
-                updatedAt: now,
-              },
-            },
-            {
-              session,
-            },
+        if (
+          newType === "regular" &&
+          !settings.regularLoansEnabled
+        ) {
+          throw new Error(
+            "Regular loans are currently disabled.",
           );
+        }
 
-          /* =================================================
-             AUDIT
-          ================================================= */
+        if (
+          newType === "emergency" &&
+          !settings.emergencyLoansEnabled
+        ) {
+          throw new Error(
+            "Emergency loans are currently disabled.",
+          );
+        }
 
-          await writeAudit(
+        /* =================================================
+           PRINCIPAL
+        ================================================= */
+
+        const newPrincipal =
+          changes.principal !== undefined
+            ? money(Number(changes.principal))
+            : money(current.principal);
+
+        if (
+          !Number.isFinite(newPrincipal) ||
+          newPrincipal <= 0
+        ) {
+          throw new Error(
+            "Loan principal must be greater than zero.",
+          );
+        }
+
+        /* =================================================
+           INTEREST + TOTAL EXPECTED
+        ================================================= */
+
+        const newInterestRate =
+          newType === current.type
+            ? normalizeRate(current.interestRate)
+            : normalizeRate(
+                newType === "emergency"
+                  ? settings.emergencyInterestRate
+                  : settings.regularInterestRate,
+              );
+
+        const newInterestAmount = money(
+          newPrincipal * newInterestRate,
+        );
+
+        const newTotalDue = money(
+          newPrincipal + newInterestAmount,
+        );
+
+        /* =================================================
+           INSTALLMENT
+        ================================================= */
+
+        const newInstallmentAmount =
+          changes.installmentAmount !== undefined
+            ? money(Number(changes.installmentAmount))
+            : money(current.installmentAmount);
+
+        if (
+          !Number.isFinite(newInstallmentAmount) ||
+          newInstallmentAmount <= 0
+        ) {
+          throw new Error(
+            "Installment amount must be greater than zero.",
+          );
+        }
+
+        if (newInstallmentAmount > newTotalDue) {
+          throw new Error(
+            "Installment amount cannot exceed the total expected loan amount.",
+          );
+        }
+
+        /* =================================================
+           DATES
+        ================================================= */
+
+        const newDisbursementDate =
+          changes.disbursementDate !== undefined
+            ? changes.disbursementDate
+            : current.disbursementDate;
+
+        const newRepaymentDate =
+          changes.repaymentDate !== undefined
+            ? changes.repaymentDate
+            : current.repaymentDate;
+
+        const newEndDate =
+          changes.endDate !== undefined
+            ? changes.endDate
+            : current.endDate;
+
+        assertCalendarDate(
+          newDisbursementDate,
+          "disbursement date",
+        );
+
+        assertCalendarDate(
+          newRepaymentDate,
+          "repayment date",
+        );
+
+        assertCalendarDate(
+          newEndDate,
+          "loan end date",
+        );
+
+        if (newRepaymentDate < newDisbursementDate) {
+          throw new Error(
+            "Repayment date cannot be before disbursement date.",
+          );
+        }
+
+        if (newEndDate < newRepaymentDate) {
+          throw new Error(
+            "Loan end date cannot be before repayment date.",
+          );
+        }
+
+        const repaymentCycleDays = normalizeCycleDays(
+          current.repaymentCycleDays,
+        );
+
+        const newFirstDueDate = addCalendarDays(
+          newDisbursementDate,
+          repaymentCycleDays,
+        );
+
+        /* =================================================
+           GUARANTOR
+        ================================================= */
+
+        const newGuarantor =
+          changes.guarantor !== undefined
+            ? normalizeGuarantor(changes.guarantor)
+            : current.guarantor;
+
+        /* =================================================
+           AUTHORITATIVE LEDGER TOTALS
+        ================================================= */
+
+        const amountPaid = await getLoanPaidTotal(
+          objectId,
+          session,
+        );
+
+        const totalFines = await getLoanFineTotal(
+          objectId,
+          session,
+        );
+
+        const totalWaivedFines = Math.min(
+          totalFines,
+          await getLoanWaivedFineTotal(
             objectId,
-            current.loanNumber,
-            "updated",
-            actor,
-            {
-              action:
-                "loan_terms_updated",
-
-              before,
-
-              after,
-
-              updatedAt:
-                now,
-            },
             session,
+          ),
+        );
+
+        const outstandingBalance =
+          calculateFinalOutstanding(
+            newPrincipal,
+            newInterestAmount,
+            totalFines,
+            totalWaivedFines,
+            amountPaid,
           );
 
-          /* =================================================
-             RETURN UPDATED DOCUMENT
-          ================================================= */
+        /* =================================================
+           STATUS PROJECTION
+        ================================================= */
 
-          const updated =
-            await loans.findOne(
-              {
-                _id:
-                  objectId,
-              },
-              {
-                session,
-              },
-            );
+        const newStatus: Loan["status"] =
+          current.status === "cancelled"
+            ? "cancelled"
+            : outstandingBalance <= 0
+              ? "completed"
+              : "active";
 
-          if (!updated) {
-            throw new Error(
-              "Updated loan could not be retrieved.",
-            );
-          }
+        const newRepaymentStatus:
+          Loan["repaymentStatus"] =
+          outstandingBalance <= 0
+            ? "completed"
+            : current.repaymentStatus === "defaulted"
+              ? "defaulted"
+              : "current";
 
-          return toLoan(
-            updated,
+        const before = {
+          type: current.type,
+          principal: current.principal,
+          installmentAmount: current.installmentAmount,
+          interestRate: current.interestRate,
+          interestAmount: current.interestAmount,
+          disbursementDate: current.disbursementDate,
+          repaymentDate: current.repaymentDate,
+          endDate: current.endDate,
+          firstDueDate: current.firstDueDate,
+          totalDue: current.totalDue,
+          amountPaid: current.amountPaid,
+          totalFines: current.totalFines,
+          totalWaivedFines: current.totalWaivedFines,
+          outstandingBalance: current.outstandingBalance,
+          status: current.status,
+          repaymentStatus: current.repaymentStatus,
+          guarantor: current.guarantor,
+        };
+
+        const after = {
+          type: newType,
+          principal: newPrincipal,
+          installmentAmount: newInstallmentAmount,
+          interestRate: newInterestRate,
+          interestAmount: newInterestAmount,
+          disbursementDate: newDisbursementDate,
+          repaymentDate: newRepaymentDate,
+          endDate: newEndDate,
+          firstDueDate: newFirstDueDate,
+          totalDue: newTotalDue,
+          amountPaid,
+          totalFines,
+          totalWaivedFines,
+          outstandingBalance,
+          status: newStatus,
+          repaymentStatus: newRepaymentStatus,
+          guarantor: newGuarantor,
+        };
+
+        const now = new Date();
+
+        const updateResult = await loans.updateOne(
+          {
+            _id: objectId,
+            updatedAt: current.updatedAt,
+          },
+          {
+            $set: {
+              type: newType,
+              principal: newPrincipal,
+              installmentAmount: newInstallmentAmount,
+              interestRate: newInterestRate,
+              interestAmount: newInterestAmount,
+              disbursementDate: newDisbursementDate,
+              repaymentDate: newRepaymentDate,
+              endDate: newEndDate,
+              firstDueDate: newFirstDueDate,
+              totalDue: newTotalDue,
+              amountPaid,
+              totalFines,
+              totalWaivedFines,
+              outstandingBalance,
+              status: newStatus,
+              repaymentStatus: newRepaymentStatus,
+              guarantor: newGuarantor,
+              updatedAt: now,
+            },
+          },
+          { session },
+        );
+
+        if (updateResult.matchedCount !== 1) {
+          throw new Error(
+            "Loan was modified or removed before the update could be applied. Please retry.",
           );
-        },
+        }
 
-        {
-          readConcern: {
-            level:
-              "snapshot",
+        await writeAudit(
+          objectId,
+          current.loanNumber,
+          "updated",
+          actor,
+          {
+            action: "loan_updated",
+            before,
+            after,
           },
+          session,
+        );
 
-          writeConcern: {
-            w:
-              "majority",
-          },
+        const updated = await loans.findOne(
+          { _id: objectId },
+          { session },
+        );
 
-          maxCommitTimeMS:
-            10_000,
-        },
-      );
+        if (!updated) {
+          throw new Error(
+            "Updated loan could not be retrieved.",
+          );
+        }
 
-    return updatedLoan;
+        return toLoan(updated);
+      },
+      {
+        readConcern: { level: "snapshot" },
+        writeConcern: { w: "majority" },
+        maxCommitTimeMS: 10_000,
+      },
+    );
   } finally {
     await session.endSession();
   }
 }
-
-
-
 
 
 /**
@@ -3267,7 +3485,7 @@ export async function accrueAllLoanFines(): Promise<number> {
           firstDueDate:
             {
               $lte:
-                now,
+                dateToKenyanCalendarDate(now),
             },
         },
         {
@@ -3410,20 +3628,7 @@ export async function getLoans(
       isValidDate(date)
     ) {
       filter.repaymentDate =
-        {
-          $gte:
-            startOfDay(
-              date,
-            ),
-
-          $lt:
-            addDays(
-              startOfDay(
-                date,
-              ),
-              1,
-            ),
-        };
+        dateToKenyanCalendarDate(date);
     }
   }
 
@@ -3439,20 +3644,7 @@ export async function getLoans(
       isValidDate(date)
     ) {
       filter.endDate =
-        {
-          $gte:
-            startOfDay(
-              date,
-            ),
-
-          $lt:
-            addDays(
-              startOfDay(
-                date,
-              ),
-              1,
-            ),
-        };
+        dateToKenyanCalendarDate(date);
     }
   }
 
@@ -3557,8 +3749,8 @@ export async function getLoans(
 
 type AssessmentPeriod = {
   periodNumber: number;
-  periodStart: Date;
-  periodEnd: Date;
+  periodStart: CalendarDate;
+  periodEnd: CalendarDate;
 };
 
 function getAssessmentPeriod(
@@ -3566,9 +3758,7 @@ function getAssessmentPeriod(
   periodNumber: number,
 ): AssessmentPeriod {
   if (
-    !Number.isInteger(
-      periodNumber,
-    ) ||
+    !Number.isInteger(periodNumber) ||
     periodNumber <= 0
   ) {
     throw new Error(
@@ -3576,26 +3766,24 @@ function getAssessmentPeriod(
     );
   }
 
-  const cycleDays =
-    normalizeCycleDays(
-      loan.repaymentCycleDays,
-    );
+  const cycleDays = normalizeCycleDays(
+    loan.repaymentCycleDays,
+  );
 
-  const periodStart =
-    addDays(
-      loan.disbursementDate,
-      (
-        periodNumber -
-        1
-      ) *
-        cycleDays,
-    );
+  assertCalendarDate(
+    loan.disbursementDate,
+    "loan disbursement date",
+  );
 
-  const periodEnd =
-    addDays(
-      periodStart,
-      cycleDays,
-    );
+  const periodStart = addCalendarDays(
+    loan.disbursementDate,
+    (periodNumber - 1) * cycleDays,
+  );
+
+  const periodEnd = addCalendarDays(
+    periodStart,
+    cycleDays,
+  );
 
   return {
     periodNumber,
@@ -3608,33 +3796,24 @@ function getLatestDueAssessmentPeriod(
   loan: LoanDocument,
   asOfDate: Date,
 ): number {
-  const cycleDays =
-    normalizeCycleDays(
-      loan.repaymentCycleDays,
-    );
+  const cycleDays = normalizeCycleDays(
+    loan.repaymentCycleDays,
+  );
 
-  const cycleMilliseconds =
-    cycleDays *
-    24 *
-    60 *
-    60 *
-    1000;
+  const asOfCalendarDate = dateToKenyanCalendarDate(
+    asOfDate,
+  );
 
-  const elapsed =
-    asOfDate.getTime() -
-    loan.disbursementDate.getTime();
+  const elapsedDays = differenceInCalendarDays(
+    loan.disbursementDate,
+    asOfCalendarDate,
+  );
 
-  if (
-    elapsed <
-    cycleMilliseconds
-  ) {
+  if (elapsedDays < cycleDays) {
     return 0;
   }
 
-  return Math.floor(
-    elapsed /
-      cycleMilliseconds,
-  );
+  return Math.floor(elapsedDays / cycleDays);
 }
 
 async function getPeriodPaymentTotal(
@@ -3642,69 +3821,84 @@ async function getPeriodPaymentTotal(
   period: AssessmentPeriod,
   session?: ClientSession,
 ): Promise<number> {
-  const {
-    repayments,
-  } =
-    await getCollections();
+  const { repayments } = await getCollections();
 
-  const result =
-    await repayments
-      .aggregate<{
-        _id: null;
-        total: number;
-      }>(
-        [
-          {
-            $match: {
-              loanId,
+  const transactionCalendarDate = {
+    $dateToString: {
+      date: "$transactionDate",
+      format: "%Y-%m-%d",
+      timezone: "Africa/Nairobi",
+    },
+  };
 
-              transactionDate:
-                period.periodNumber ===
-                1
-                  ? {
-                      $gte:
-                        period.periodStart,
-
-                      $lte:
-                        period.periodEnd,
-                    }
-                  : {
-                      $gt:
-                        period.periodStart,
-
-                      $lte:
-                        period.periodEnd,
-                    },
+  const dateMatch =
+    period.periodNumber === 1
+      ? {
+          $and: [
+            {
+              $gte: [
+                transactionCalendarDate,
+                period.periodStart,
+              ],
             },
-          },
-
-          {
-            $group: {
-              _id:
-                null,
-
-              total: {
-                $sum:
-                  "$amount",
-              },
+            {
+              $lte: [
+                transactionCalendarDate,
+                period.periodEnd,
+              ],
             },
-          },
-        ],
+          ],
+        }
+      : {
+          $and: [
+            {
+              $gt: [
+                transactionCalendarDate,
+                period.periodStart,
+              ],
+            },
+            {
+              $lte: [
+                transactionCalendarDate,
+                period.periodEnd,
+              ],
+            },
+          ],
+        };
 
+  const result = await repayments
+    .aggregate<{
+      _id: null;
+      total: number;
+    }>(
+      [
         {
-          session,
+          $match: {
+            loanId,
+          },
         },
-      )
-      .toArray();
+        {
+          $match: {
+            $expr: dateMatch,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: {
+              $sum: "$amount",
+            },
+          },
+        },
+      ],
+      { session },
+    )
+    .toArray();
 
   return money(
-    Number(
-      result[0]?.total ||
-        0,
-    ),
+    Number(result[0]?.total || 0),
   );
 }
-
 
 /* =========================================================
    ASSESS LOAN PERIOD
@@ -3771,8 +3965,8 @@ async function assessLoanPeriod(
     );
 
   if (
-    assessmentDate.getTime() <
-    period.periodEnd.getTime()
+    dateToKenyanCalendarDate(assessmentDate) <
+    period.periodEnd
   ) {
     throw new Error(
       "A repayment cycle cannot be assessed before the cycle ends.",
@@ -3780,9 +3974,12 @@ async function assessLoanPeriod(
   }
 
   /*
-   * Balance at the beginning of the repayment cycle.
+   * =========================================================
+   * OPENING CORE BALANCE
+   * =========================================================
    *
-   * This is calculated from the core loan balance only.
+   * This is the loan balance before this repayment cycle.
+   *
    * Existing fines are deliberately excluded.
    */
   const amountPaidBeforePeriod =
@@ -3794,15 +3991,76 @@ async function assessLoanPeriod(
 
   const openingCoreBalance =
     calculateCoreOutstanding(
-      loan.totalDue,
+      loan.principal,
+      loan.interestAmount,
       amountPaidBeforePeriod,
     );
 
   /*
-   * Balance at the end of the repayment cycle.
+   * =========================================================
+   * PERIOD PAYMENTS
+   * =========================================================
    *
-   * Payments made during the cycle reduce the core
-   * outstanding balance before the fine is calculated.
+   * Only repayments belonging to this repayment cycle
+   * are used to determine whether the member met the
+   * weekly installment.
+   */
+  const paymentsDuringPeriod =
+    await getPeriodPaymentTotal(
+      loanId,
+      period,
+      session,
+    );
+
+  /*
+   * =========================================================
+   * EXPECTED INSTALLMENT
+   * =========================================================
+   *
+   * Never expect more than the remaining core balance.
+   *
+   * Example:
+   *
+   * Remaining loan = 3,000
+   * Weekly installment = 5,000
+   *
+   * Expected installment = 3,000
+   *
+   * There should be no 5,000 obligation when only
+   * 3,000 remains on the core loan.
+   */
+  const expectedInstallment =
+    calculateLoanAmountDue(
+      loan.installmentAmount,
+      loan.principal,
+      loan.interestAmount,
+      amountPaidBeforePeriod,
+    );
+
+  /*
+   * =========================================================
+   * UNPAID WEEKLY INSTALLMENT
+   * =========================================================
+   *
+   * The fine applies ONLY to the unpaid portion of the
+   * expected installment for this repayment cycle.
+   *
+   * It does NOT apply to the entire loan balance.
+   */
+  const unpaidInstallment =
+    calculateUnpaidInstallment(
+      expectedInstallment,
+      paymentsDuringPeriod,
+    );
+
+  /*
+   * =========================================================
+   * END-OF-PERIOD CORE BALANCE
+   * =========================================================
+   *
+   * Kept for reporting/reconciliation.
+   *
+   * This is NOT the fine base anymore.
    */
   const amountPaidAsOfPeriodEnd =
     await getLoanPaidTotalAsOf(
@@ -3813,55 +4071,55 @@ async function assessLoanPeriod(
 
   const balanceBeforeFine =
     calculateCoreOutstanding(
-      loan.totalDue,
+      loan.principal,
+      loan.interestAmount,
       amountPaidAsOfPeriodEnd,
-    );
-
-  /*
-   * Payment information is still recorded for the
-   * assessment and audit trail.
-   *
-   * IMPORTANT:
-   * paymentMade does NOT determine whether a fine
-   * is charged.
-   */
-  const paymentsDuringPeriod =
-    await getPeriodPaymentTotal(
-      loanId,
-      period,
-      session,
     );
 
   const paymentMade =
     paymentsDuringPeriod > 0;
 
   /*
-   * A loan is defaulted for this repayment cycle
-   * whenever there is still a core outstanding balance
-   * at the end of the cycle.
+   * =========================================================
+   * WEEKLY DEFAULT
+   * =========================================================
    *
-   * It does NOT matter whether the member made a
-   * partial payment during the cycle.
+   * A cycle is defaulted only when the member failed to
+   * meet the contractual installment for that cycle.
+   *
+   * Example:
+   *
+   * Expected = 5,000
+   * Paid     = 3,000
+   * Unpaid   = 2,000
+   *
+   * defaulted = true
    */
   const defaulted =
-    balanceBeforeFine > 0;
+    unpaidInstallment > 0;
 
-  /*
-   * Fines are calculated only against the core
-   * outstanding balance.
-   *
-   * Existing fines are deliberately excluded.
-   * Therefore fines never compound.
-   */
   const fineRate =
     normalizeRate(
       loan.fineRate,
     );
 
+  /*
+   * =========================================================
+   * FINE CALCULATION
+   * =========================================================
+   *
+   * IMPORTANT:
+   *
+   * Fine = unpaid installment × fine rate
+   *
+   * NOT:
+   *
+   * Fine = entire loan outstanding × fine rate
+   */
   const calculatedFine =
     defaulted
       ? money(
-          balanceBeforeFine *
+          unpaidInstallment *
             fineRate,
         )
       : 0;
@@ -3878,7 +4136,8 @@ async function assessLoanPeriod(
   ) {
     const fineDocument:
       LoanFineDocument = {
-      _id: new ObjectId(),
+      _id:
+        new ObjectId(),
 
       loanId,
 
@@ -3904,8 +4163,25 @@ async function assessLoanPeriod(
       periodEnd:
         period.periodEnd,
 
+      /*
+       * NEW WEEKLY-INSTALLMENT FIELDS
+       */
+      expectedInstallment,
+
+      
+        paymentsDuringPeriod,
+
+      installmentShortfall:
+  unpaidInstallment,
+
+      /*
+       * Retained for compatibility.
+       *
+       * This now represents the unpaid installment
+       * that the fine was actually assessed against.
+       */
       assessedCoreBalance:
-        balanceBeforeFine,
+        unpaidInstallment,
 
       source:
         "system" as FineSource,
@@ -3944,15 +4220,22 @@ async function assessLoanPeriod(
 
           fineRate,
 
+          expectedInstallment,
+
+          amountPaidDuringPeriod:
+            paymentsDuringPeriod,
+
+          unpaidInstallment,
+
           assessedCoreBalance:
-            balanceBeforeFine,
+            unpaidInstallment,
         },
         session,
       );
     } catch (error) {
       /*
-       * Another concurrent transaction may have
-       * created the fine for this repayment cycle.
+       * Another concurrent transaction may have created
+       * the fine for this repayment cycle.
        *
        * The unique index on:
        * { loanId, periodNumber }
@@ -3985,8 +4268,9 @@ async function assessLoanPeriod(
   }
 
   /*
-   * Store the assessment regardless of whether
-   * a fine was created.
+   * =========================================================
+   * STORE ASSESSMENT
+   * =========================================================
    */
   const assessmentDocument:
     LoanAssessmentDocument = {
@@ -4012,11 +4296,17 @@ async function assessLoanPeriod(
     periodEnd:
       period.periodEnd,
 
-    assessmentDate,
+    assessmentDate:
+      dateToKenyanCalendarDate(assessmentDate),
 
     openingCoreBalance,
 
+    expectedInstallment,
+
     paymentsDuringPeriod,
+
+    installmentShortfall:
+  unpaidInstallment,
 
     balanceBeforeFine,
 
@@ -4079,7 +4369,9 @@ async function assessLoanPeriod(
   }
 
   /*
-   * Record the completed assessment.
+   * =========================================================
+   * AUDIT ASSESSMENT
+   * =========================================================
    */
   await writeAudit(
     loanId,
@@ -4097,7 +4389,11 @@ async function assessLoanPeriod(
 
       openingCoreBalance,
 
+      expectedInstallment,
+
       paymentsDuringPeriod,
+
+      unpaidInstallment,
 
       balanceBeforeFine,
 
@@ -4114,9 +4410,7 @@ async function assessLoanPeriod(
   );
 
   /*
-   * Record a separate default audit event
-   * whenever the cycle ended with an outstanding
-   * core balance.
+   * Record a separate default audit event.
    */
   if (defaulted) {
     await writeAudit(
@@ -4129,6 +4423,12 @@ async function assessLoanPeriod(
 
         periodEnd:
           period.periodEnd,
+
+        expectedInstallment,
+
+        paymentsDuringPeriod,
+
+        unpaidInstallment,
 
         balanceBeforeFine,
 
@@ -4362,15 +4662,10 @@ export async function accrueLoanFines(
            */
           const outstanding =
             calculateFinalOutstanding(
-              loan.totalDue,
-
+              loan.principal,
+              loan.interestAmount,
               fines,
-
-              Math.min(
-                fines,
-                waived,
-              ),
-
+              waived,
               paid,
             );
 
@@ -4385,8 +4680,8 @@ export async function accrueLoanFines(
               "completed";
           } else if (
             defaultAssessment ||
-            asOfDate.getTime() >=
-              loan.endDate.getTime()
+            dateToKenyanCalendarDate(asOfDate) >=
+              loan.endDate
           ) {
             repaymentStatus =
               "defaulted";
@@ -5178,8 +5473,8 @@ export async function createLoanRepayment(
 
           if (
             input.source === "sms" &&
-            transactionDate.getTime() <=
-              loan.disbursementDate.getTime()
+            dateToKenyanCalendarDate(transactionDate) <=
+              loan.disbursementDate
           ) {
             throw new Error(
               "SMS_REPAYMENT_BEFORE_DISBURSEMENT",
@@ -5217,12 +5512,10 @@ export async function createLoanRepayment(
 
           const currentOutstanding =
             calculateFinalOutstanding(
-              loan.totalDue,
+              loan.principal,
+              loan.interestAmount,
               totalFinesBefore,
-              Math.min(
-                totalFinesBefore,
-                totalWaivedFinesBefore,
-              ),
+              totalWaivedFinesBefore,
               amountPaidBefore,
             );
 
@@ -5336,12 +5629,10 @@ export async function createLoanRepayment(
 
           const newOutstanding =
             calculateFinalOutstanding(
-              loan.totalDue,
+              loan.principal,
+              loan.interestAmount,
               totalFinesBefore,
-              Math.min(
-                totalFinesBefore,
-                totalWaivedFinesBefore,
-              ),
+              totalWaivedFinesBefore,
               newAmountPaid,
             );
 
@@ -6052,12 +6343,10 @@ export async function createLoanWaiver(
 
           const outstanding =
             calculateFinalOutstanding(
-              loan.totalDue,
+              loan.principal,
+              loan.interestAmount,
               totalFines,
-              Math.min(
-                totalFines,
-                newTotalWaived,
-              ),
+              newTotalWaived,
               amountPaid,
             );
 

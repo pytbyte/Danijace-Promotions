@@ -215,10 +215,10 @@ export default function SavingsTransactionCard({
         overflow-hidden
         rounded-[24px]
         border
-        border-white/[0.08]
-        bg-[#0b0d10]
+        border-slate-200
+        bg-white
         p-5
-        shadow-[0_12px_40px_rgba(0,0,0,0.18)]
+        shadow-sm
         transition
         active:scale-[0.995]
         sm:p-6
@@ -258,9 +258,9 @@ export default function SavingsTransactionCard({
               justify-center
               rounded-2xl
               border
-              border-blue-400/10
-              bg-blue-500/10
-              text-blue-300
+              border-blue-100
+              bg-blue-50
+              text-blue-600
             "
           >
             {getTypeIcon(transaction.type)}
@@ -268,7 +268,7 @@ export default function SavingsTransactionCard({
 
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <p className="truncate text-sm font-semibold text-white">
+              <p className="truncate text-sm font-semibold text-black">
                 {getTransactionLabel(
                   transaction.type
                 )}
@@ -285,10 +285,10 @@ export default function SavingsTransactionCard({
                   sm:inline-flex
                   ${
                     transaction.status === "confirmed"
-                      ? "bg-emerald-400/10 text-emerald-300"
+                      ? "bg-emerald-50 text-emerald-600"
                       : transaction.status === "pending"
-                        ? "bg-amber-400/10 text-amber-300"
-                        : "bg-red-400/10 text-red-300"
+                        ? "bg-amber-50 text-amber-600"
+                        : "bg-red-50 text-red-600"
                   }
                 `}
               >
@@ -298,7 +298,7 @@ export default function SavingsTransactionCard({
               </span>
             </div>
 
-            <p className="mt-1 text-[11px] text-white/35">
+            <p className="mt-1 text-[11px] text-black/40">
               {formatDate(
                 transaction.transactionAt
               )}{" "}
@@ -322,8 +322,8 @@ export default function SavingsTransactionCard({
               tracking-tight
               ${
                 positive
-                  ? "text-emerald-300"
-                  : "text-red-300"
+                  ? "text-emerald-600"
+                  : "text-red-600"
               }
             `}
           >
@@ -343,10 +343,10 @@ export default function SavingsTransactionCard({
               sm:hidden
               ${
                 transaction.status === "confirmed"
-                  ? "bg-emerald-400/10 text-emerald-300"
+                  ? "bg-emerald-50 text-emerald-600"
                   : transaction.status === "pending"
-                    ? "bg-amber-400/10 text-amber-300"
-                    : "bg-red-400/10 text-red-300"
+                    ? "bg-amber-50 text-amber-600"
+                    : "bg-red-50 text-red-600"
               }
             `}
           >
@@ -367,17 +367,17 @@ export default function SavingsTransactionCard({
           mt-5
           rounded-2xl
           border
-          border-white/[0.06]
-          bg-white/[0.025]
+          border-slate-200
+          bg-slate-50
           px-4
           py-3
         "
       >
-        <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-white/25">
+        <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-black/35">
           Member
         </p>
 
-        <p className="mt-1 truncate text-sm font-medium text-white/80">
+        <p className="mt-1 truncate text-sm font-medium text-black/80">
           {transaction.memberName ||
             "Unknown member"}
         </p>
@@ -389,12 +389,12 @@ export default function SavingsTransactionCard({
 
       <div className="relative mt-4 grid grid-cols-2 gap-x-4 gap-y-4">
         <div className="min-w-0">
-          <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-white/20">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-black/30">
             Source
           </p>
 
-          <div className="mt-1.5 flex items-center gap-1.5 text-xs text-white/55">
-            <span className="text-blue-300/70">
+          <div className="mt-1.5 flex items-center gap-1.5 text-xs text-black/55">
+            <span className="text-blue-600/70">
               {getSourceIcon(
                 transaction.source
               )}
@@ -410,21 +410,21 @@ export default function SavingsTransactionCard({
 
         {transaction.reference ? (
           <div className="min-w-0 text-right">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-white/20">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-black/30">
               Reference
             </p>
 
-            <p className="mt-1.5 truncate font-mono text-[10px] text-white/45">
+            <p className="mt-1.5 truncate font-mono text-[10px] text-black/50">
               {transaction.reference}
             </p>
           </div>
         ) : (
           <div className="text-right">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-white/20">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-black/30">
               Transaction
             </p>
 
-            <p className="mt-1.5 text-xs text-white/35">
+            <p className="mt-1.5 text-xs text-black/40">
               Savings ledger
             </p>
           </div>
@@ -432,11 +432,11 @@ export default function SavingsTransactionCard({
 
         {transaction.smsId && (
           <div className="col-span-2 min-w-0">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-white/20">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-black/30">
               SMS ID
             </p>
 
-            <p className="mt-1.5 truncate font-mono text-[10px] text-white/35">
+            <p className="mt-1.5 truncate font-mono text-[10px] text-black/40">
               {transaction.smsId}
             </p>
           </div>
@@ -444,11 +444,11 @@ export default function SavingsTransactionCard({
 
         {transaction.reason && (
           <div className="col-span-2 min-w-0">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-white/20">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-black/30">
               Reason
             </p>
 
-            <p className="mt-1 text-xs leading-5 text-white/45">
+            <p className="mt-1 text-xs leading-5 text-black/50">
               {transaction.reason}
             </p>
           </div>
@@ -469,7 +469,7 @@ export default function SavingsTransactionCard({
             justify-end
             gap-2
             border-t
-            border-white/[0.06]
+            border-slate-200
             pt-3
           "
         >
@@ -486,15 +486,15 @@ export default function SavingsTransactionCard({
                 gap-1.5
                 rounded-xl
                 border
-                border-white/[0.06]
+                border-slate-200
                 px-3
                 text-xs
                 font-medium
-                text-white/45
+                text-black/50
                 transition
-                hover:border-blue-400/20
-                hover:bg-blue-500/[0.06]
-                hover:text-blue-300
+                hover:border-blue-200
+                hover:bg-blue-50
+                hover:text-blue-600
                 active:scale-[0.98]
               "
             >
@@ -520,15 +520,15 @@ export default function SavingsTransactionCard({
                 gap-1.5
                 rounded-xl
                 border
-                border-red-400/[0.08]
+                border-red-100
                 px-3
                 text-xs
                 font-medium
-                text-red-300/65
+                text-red-600/70
                 transition
-                hover:border-red-400/20
-                hover:bg-red-500/[0.06]
-                hover:text-red-300
+                hover:border-red-200
+                hover:bg-red-50
+                hover:text-red-600
                 active:scale-[0.98]
               "
             >

@@ -92,7 +92,7 @@ export default function LoansPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [editingLoan, setEditingLoan] =
-  useState<Loan | null>(null);
+    useState<Loan | null>(null);
 
   /* =======================================================
      REPAYMENT MODAL
@@ -102,6 +102,7 @@ export default function LoansPage() {
     useState<Loan | null>(null);
 
   const [repaymentOpen, setRepaymentOpen] = useState(false);
+
   const [repaymentLoading, setRepaymentLoading] =
     useState(false);
 
@@ -112,8 +113,10 @@ export default function LoansPage() {
   const [selectedLoan, setSelectedLoan] =
     useState<Loan | null>(null);
 
-  const [transactionHistoryOpen, setTransactionHistoryOpen] =
-    useState(false);
+  const [
+    transactionHistoryOpen,
+    setTransactionHistoryOpen,
+  ] = useState(false);
 
   /* =======================================================
      MOUNT
@@ -214,143 +217,113 @@ export default function LoansPage() {
      FILTERED LOANS
   ======================================================= */
 
-const filteredLoans = useMemo(() => {
-  const search =
-    loanFilters.search
-      .trim()
-      .toLowerCase();
-
-  const repaymentDate =
-    loanFilters.repaymentDate.trim();
-
-  return loans.filter((loan) => {
-    /* =====================================================
-       SEARCH
-    ===================================================== */
-
-    if (search) {
-      const searchableText = [
-        loan.loanNumber,
-        loan.memberName,
-        loan.memberNumber,
-        loan.type,
-      ]
-        .filter(
-          (value) =>
-            typeof value === "string" &&
-            value.trim().length > 0,
-        )
-        .join(" ")
+  const filteredLoans = useMemo(() => {
+    const search =
+      loanFilters.search
+        .trim()
         .toLowerCase();
 
-      if (
-        !searchableText.includes(search)
-      ) {
-        return false;
+    const repaymentDate =
+      loanFilters.repaymentDate.trim();
+
+    return loans.filter((loan) => {
+      /* =====================================================
+         SEARCH
+      ===================================================== */
+
+      if (search) {
+        const searchableText = [
+          loan.loanNumber,
+          loan.memberName,
+          loan.memberNumber,
+          loan.type,
+        ]
+          .filter(
+            (value) =>
+              typeof value === "string" &&
+              value.trim().length > 0,
+          )
+          .join(" ")
+          .toLowerCase();
+
+        if (!searchableText.includes(search)) {
+          return false;
+        }
       }
-    }
 
-    /* =====================================================
-       STATUS
-    ===================================================== */
+      /* =====================================================
+         STATUS
+      ===================================================== */
 
-    if (
-      loanFilters.status &&
-      loan.status !==
-        loanFilters.status
-    ) {
-      return false;
-    }
-
-    /* =====================================================
-       TYPE
-    ===================================================== */
-
-    if (
-      loanFilters.type &&
-      loan.type
-        .trim()
-        .toLowerCase() !==
-        loanFilters.type
-          .trim()
-          .toLowerCase()
-    ) {
-      return false;
-    }
-
-    /* =====================================================
-       REPAYMENT DATE
-    ===================================================== */
-
-    if (repaymentDate) {
       if (
-        !loan.repaymentDate
+        loanFilters.status &&
+        loan.status !== loanFilters.status
       ) {
         return false;
       }
 
-      const loanDate =
-        getCalendarDate(
+      /* =====================================================
+         TYPE
+      ===================================================== */
+
+      if (
+        loanFilters.type &&
+        loan.type.trim().toLowerCase() !==
+          loanFilters.type.trim().toLowerCase()
+      ) {
+        return false;
+      }
+
+      /* =====================================================
+         REPAYMENT DATE
+      ===================================================== */
+
+      if (repaymentDate) {
+        if (!loan.repaymentDate) {
+          return false;
+        }
+
+        const loanDate = getCalendarDate(
           loan.repaymentDate,
         );
 
-      if (
-        loanDate !==
-        repaymentDate
-      ) {
-        return false;
+        if (loanDate !== repaymentDate) {
+          return false;
+        }
       }
+
+      return true;
+    });
+  }, [loans, loanFilters]);
+
+  /* =========================================================
+     CALENDAR DATE HELPER
+  ========================================================= */
+
+  function getCalendarDate(
+    value: Date | string,
+  ): string {
+    const date =
+      value instanceof Date
+        ? value
+        : new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return "";
     }
 
-    return true;
-  });
-}, [loans, loanFilters]);
+    const year = date.getFullYear();
 
-
-/* =========================================================
-   CALENDAR DATE HELPER
-========================================================= */
-
-/**
- * Converts a loan repayment date into YYYY-MM-DD
- * for comparison with the native HTML date input.
- *
- * Handles:
- * - Date
- * - ISO date strings
- * - serialized dates
- */
-function getCalendarDate(
-  value: Date | string,
-): string {
-  const date =
-    value instanceof Date
-      ? value
-      : new Date(value);
-
-  if (
-    Number.isNaN(
-      date.getTime(),
-    )
-  ) {
-    return "";
-  }
-
-  const year =
-    date.getFullYear();
-
-  const month =
-    String(
+    const month = String(
       date.getMonth() + 1,
     ).padStart(2, "0");
 
-  const day =
-    String(
+    const day = String(
       date.getDate(),
     ).padStart(2, "0");
 
-  return `${year}-${month}-${day}`;
-}
+    return `${year}-${month}-${day}`;
+  }
 
   /* =======================================================
      LOAN TYPES
@@ -392,37 +365,45 @@ function getCalendarDate(
     setLoanFormOpen(true);
   }, []);
 
+  /* =======================================================
+     EDIT LOAN
+  ======================================================= */
+
   const handleEditLoan = useCallback(
-  (loan: Loan) => {
-    if (
-      !loan ||
-      typeof loan.id !== "string" ||
-      !loan.id.trim()
-    ) {
-      setError(
-        "This loan does not have a valid ID and cannot be edited.",
-      );
+    (loan: Loan) => {
+      if (
+        !loan ||
+        typeof loan.id !== "string" ||
+        !loan.id.trim()
+      ) {
+        setError(
+          "This loan does not have a valid ID and cannot be edited.",
+        );
 
-      return;
-    }
+        return;
+      }
 
-    if (
-      loan.status === "completed" ||
-      loan.status === "cancelled"
-    ) {
-      setError(
-        "Completed or cancelled loans cannot be edited.",
-      );
+      if (
+        loan.status === "completed" ||
+        loan.status === "cancelled"
+      ) {
+        setError(
+          "Completed or cancelled loans cannot be edited.",
+        );
 
-      return;
-    }
+        return;
+      }
 
-    setError("");
-    setEditingLoan(loan);
-    setLoanFormOpen(true);
-  },
-  [],
-);
+      setError("");
+      setEditingLoan(loan);
+      setLoanFormOpen(true);
+    },
+    [],
+  );
+
+  /* =======================================================
+     LOAN FORM SUCCESS
+  ======================================================= */
 
   const handleLoanFormSuccess = useCallback(() => {
     setLoanFormOpen(false);
@@ -430,35 +411,34 @@ function getCalendarDate(
     void loadLoans(true);
   }, [loadLoans]);
 
-/* =======================================================
-   DELETE LOAN
-======================================================= */
+  /* =======================================================
+     DELETE LOAN
+  ======================================================= */
 
-const handleDeleteLoan = useCallback(
-  (loanId: string) => {
-    setLoans((currentLoans) =>
-      currentLoans.filter(
-        (loan) => loan.id !== loanId,
-      ),
-    );
+  const handleDeleteLoan = useCallback(
+    (loanId: string) => {
+      setLoans((currentLoans) =>
+        currentLoans.filter(
+          (loan) => loan.id !== loanId,
+        ),
+      );
 
-    // Clear any stale selected loan references.
-    setSelectedLoan((currentLoan) =>
-      currentLoan?.id === loanId
-        ? null
-        : currentLoan,
-    );
+      setSelectedLoan((currentLoan) =>
+        currentLoan?.id === loanId
+          ? null
+          : currentLoan,
+      );
 
-    setRepaymentLoan((currentLoan) =>
-      currentLoan?.id === loanId
-        ? null
-        : currentLoan,
-    );
+      setRepaymentLoan((currentLoan) =>
+        currentLoan?.id === loanId
+          ? null
+          : currentLoan,
+      );
 
-    setError("");
-  },
-  [],
-);
+      setError("");
+    },
+    [],
+  );
 
   /* =======================================================
      SETTINGS
@@ -628,17 +608,8 @@ const handleDeleteLoan = useCallback(
           );
         }
 
-        /*
-         * Server remains authoritative for all
-         * financial calculations.
-         */
-
         setRepaymentOpen(false);
         setRepaymentLoan(null);
-
-        /*
-         * Refresh authoritative balances.
-         */
 
         try {
           await loadLoans(true);
@@ -746,7 +717,7 @@ const handleDeleteLoan = useCallback(
 
   if (!mounted) {
     return (
-      <main className="min-h-[100dvh] w-full overflow-x-clip bg-[#050505] text-white">
+      <main className="min-h-[100dvh] w-full overflow-x-clip bg-white text-black">
         <TopBar />
 
         <div className="w-full min-w-0 pt-16">
@@ -763,7 +734,17 @@ const handleDeleteLoan = useCallback(
   ======================================================= */
 
   return (
-    <main className="min-h-[100dvh] w-full max-w-full overflow-x-clip bg-[#050505] text-white">
+    <main
+      className="
+        loan-page-theme
+        min-h-[100dvh]
+        w-full
+        max-w-full
+        overflow-x-clip
+        bg-white
+        text-black
+      "
+    >
       <TopBar />
 
       <div className="w-full min-w-0 pt-16">
@@ -777,19 +758,20 @@ const handleDeleteLoan = useCallback(
             <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <div className="flex items-center gap-2">
-                  <div className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+                  <div className="h-1.5 w-1.5 rounded-full bg-sky-500" />
 
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-300/60">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-black/50">
                     GEO-SHUA
                   </p>
                 </div>
 
-                <h2 className="mt-1 text-base font-semibold tracking-tight text-white">
+                <h2 className="mt-1 text-base font-semibold tracking-tight text-black">
                   Loan Management
                 </h2>
               </div>
 
               <div className="flex w-full gap-2 sm:w-auto">
+
                 {/* REFRESH */}
 
                 <button
@@ -802,13 +784,14 @@ const handleDeleteLoan = useCallback(
                     flex h-11 w-11 shrink-0
                     items-center justify-center
                     rounded-xl
-                    border border-white/[0.08]
-                    bg-white/[0.025]
-                    text-white/45
+                    border border-slate-200
+                    bg-white
+                    text-black/60
+                    shadow-sm
                     transition
-                    hover:border-white/[0.14]
-                    hover:bg-white/[0.05]
-                    hover:text-white
+                    hover:border-slate-300
+                    hover:bg-slate-50
+                    hover:text-black
                     disabled:cursor-not-allowed
                     disabled:opacity-40
                   "
@@ -837,15 +820,15 @@ const handleDeleteLoan = useCallback(
                     flex h-11 min-w-0 flex-1
                     items-center justify-center gap-2
                     rounded-xl
-                    border border-white/[0.08]
-                    bg-white/[0.025]
+                    border border-slate-200
+                    bg-white
                     px-4
                     text-sm font-medium
-                    text-white/60
+                    text-black
+                    shadow-sm
                     transition
-                    hover:border-yellow-500/20
-                    hover:bg-white/[0.05]
-                    hover:text-white
+                    hover:border-slate-300
+                    hover:bg-slate-50
                     sm:flex-none
                   "
                 >
@@ -870,7 +853,7 @@ const handleDeleteLoan = useCallback(
                     px-4
                     text-sm font-semibold
                     text-black
-                    shadow-[0_8px_30px_rgba(234,179,8,0.08)]
+                    shadow-sm
                     transition
                     hover:bg-yellow-400
                     active:scale-[0.98]
@@ -894,9 +877,9 @@ const handleDeleteLoan = useCallback(
 
           {error && (
             <section className="mb-6">
-              <div className="flex flex-col gap-4 rounded-2xl border border-red-500/15 bg-red-500/[0.045] p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <div className="flex flex-col gap-4 rounded-2xl border border-red-200 bg-red-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <div className="flex min-w-0 items-start gap-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-400">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-600">
                     <AlertCircle
                       size={18}
                       strokeWidth={1.8}
@@ -904,11 +887,11 @@ const handleDeleteLoan = useCallback(
                   </div>
 
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-red-300">
+                    <p className="text-sm font-medium text-red-700">
                       Loan operation failed
                     </p>
 
-                    <p className="mt-1 break-words text-xs leading-5 text-red-300/55">
+                    <p className="mt-1 break-words text-xs leading-5 text-red-600/80">
                       {error}
                     </p>
                   </div>
@@ -922,13 +905,13 @@ const handleDeleteLoan = useCallback(
                   }}
                   className="
                     h-10 shrink-0 rounded-xl
-                    border border-red-400/10
-                    bg-red-400/[0.06]
+                    border border-red-200
+                    bg-white
                     px-4
                     text-xs font-medium
-                    text-red-300
+                    text-red-700
                     transition
-                    hover:bg-red-400/10
+                    hover:bg-red-50
                   "
                 >
                   Try again
@@ -992,18 +975,10 @@ const handleDeleteLoan = useCallback(
               </section>
 
               {/* =================================================
-                  GEO-SHUA
+                  LOANS
               ================================================= */}
 
               <section className="mt-5">
-                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                  
-                </div>
-
-                {/* =================================================
-                    EMPTY STATES
-                ================================================= */}
-
                 {filteredLoans.length === 0 ? (
                   loans.length === 0 ? (
                     <EmptyLoans
@@ -1025,10 +1000,11 @@ const handleDeleteLoan = useCallback(
                     ================================================= */}
 
                     <div className="hidden lg:block">
-                      <div className="overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02] shadow-[0_20px_80px_rgba(0,0,0,0.18)]">
+                      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+
                         {/* HEADER */}
 
-                        <div className="grid grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_120px] gap-4 border-b border-white/[0.06] bg-[#080808] px-4 py-3 text-[9px] font-medium uppercase tracking-[0.14em] text-white/25">
+                        <div className="grid grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_120px] gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3 text-[9px] font-semibold uppercase tracking-[0.14em] text-black">
                           <span>Loan</span>
                           <span>Member</span>
                           <span>Principal</span>
@@ -1041,16 +1017,22 @@ const handleDeleteLoan = useCallback(
 
                         {/* BODY */}
 
-                        <div className="h-[200px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
-                          <div className="divide-y divide-white/[0.05]">
+                        <div className="h-[200px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-300 hover:scrollbar-thumb-slate-400">
+                          <div className="divide-y divide-slate-200">
                             {filteredLoans.map(
                               (loan) => (
                                 <LoanRow
                                   key={loan.id}
                                   loan={loan}
-                                  onEdit={handleEditLoan}
-                                  onRepay={handleOpenRepayment}
-                                  onView={handleViewLoanHistory}
+                                  onEdit={
+                                    handleEditLoan
+                                  }
+                                  onRepay={
+                                    handleOpenRepayment
+                                  }
+                                  onView={
+                                    handleViewLoanHistory
+                                  }
                                 />
                               ),
                             )}
@@ -1061,8 +1043,6 @@ const handleDeleteLoan = useCallback(
 
                     {/* =================================================
                         MOBILE
-                        
-                        ONE FULL-WIDTH CARD PER VIEW
                     ================================================= */}
 
                     <div className="lg:hidden">
@@ -1101,16 +1081,24 @@ const handleDeleteLoan = useCallback(
                                 <LoanCard
                                   loan={loan}
                                   onEdit={() =>
-                                    handleEditLoan(loan)
+                                    handleEditLoan(
+                                      loan,
+                                    )
                                   }
                                   onView={() =>
-                                    handleViewLoanHistory(loan)
+                                    handleViewLoanHistory(
+                                      loan,
+                                    )
                                   }
                                   onRepay={() =>
-                                    handleOpenRepayment(loan)
+                                    handleOpenRepayment(
+                                      loan,
+                                    )
                                   }
                                   onDelete={() =>
-                                    handleDeleteLoan(loan.id)
+                                    handleDeleteLoan(
+                                      loan.id,
+                                    )
                                   }
                                 />
                               </div>
@@ -1123,20 +1111,20 @@ const handleDeleteLoan = useCallback(
 
                       {filteredLoans.length > 1 && (
                         <div className="mt-4 flex items-center justify-between px-1">
-                          <p className="text-[9px] tracking-wide text-white/20">
+                          <p className="text-[9px] tracking-wide text-black/50">
                             {filteredLoans.length}{" "}
                             loans
                           </p>
 
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[9px] text-white/20">
+                            <span className="text-[9px] text-black/50">
                               Swipe
                             </span>
 
                             <ArrowUpRight
                               size={11}
                               strokeWidth={1.5}
-                              className="rotate-45 text-white/20"
+                              className="rotate-45 text-black/50"
                             />
                           </div>
                         </div>
@@ -1152,7 +1140,7 @@ const handleDeleteLoan = useCallback(
 
               {loans.length > 0 && (
                 <div className="mt-5 flex flex-col gap-2 px-1 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-[10px] text-white/20">
+                  <p className="text-[10px] text-black/50">
                     Showing{" "}
                     {filteredLoans.length.toLocaleString(
                       "en-KE",
@@ -1164,7 +1152,7 @@ const handleDeleteLoan = useCallback(
                     loans
                   </p>
 
-                  <p className="text-[10px] text-white/20">
+                  <p className="text-[10px] text-black/50">
                     Financial records remain
                     authoritative in the domain
                     services.
@@ -1180,7 +1168,7 @@ const handleDeleteLoan = useCallback(
           NEW LOAN MODAL
       ===================================================== */}
 
-     <LoanForm
+      <LoanForm
         open={loanFormOpen}
         loan={editingLoan}
         onClose={() => {
@@ -1234,7 +1222,9 @@ const handleDeleteLoan = useCallback(
 function isRepayable(loan: Loan): boolean {
   return (
     loan.status === "active" &&
-    Number.isFinite(loan.outstandingBalance) &&
+    Number.isFinite(
+      loan.outstandingBalance,
+    ) &&
     loan.outstandingBalance > 0
   );
 }
@@ -1249,20 +1239,20 @@ function EmptyLoans({
   onCreate: () => void;
 }) {
   return (
-    <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-yellow-500/10 bg-yellow-500/[0.018] p-6">
+    <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="max-w-md text-center">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.03] text-yellow-400/70">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-yellow-600">
           <Banknote
             size={24}
             strokeWidth={1.5}
           />
         </div>
 
-        <h2 className="mt-5 text-base font-semibold text-white/70">
+        <h2 className="mt-5 text-base font-semibold text-black">
           No loans yet
         </h2>
 
-        <p className="mt-2 text-xs leading-6 text-white/25">
+        <p className="mt-2 text-xs leading-6 text-black/60">
           Create the first loan to start
           tracking lending, repayments and
           outstanding balances.
@@ -1306,13 +1296,13 @@ function NoMatchingLoans({
   onReset: () => void;
 }) {
   return (
-    <div className="flex min-h-[200px] items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.02] p-6">
+    <div className="flex min-h-[200px] items-center justify-center rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="text-center">
-        <p className="text-sm font-medium text-white/55">
+        <p className="text-sm font-medium text-black">
           No matching loans
         </p>
 
-        <p className="mt-1 text-xs leading-5 text-white/25">
+        <p className="mt-1 text-xs leading-5 text-black/60">
           Try changing your search or filters.
         </p>
 
@@ -1323,14 +1313,13 @@ function NoMatchingLoans({
             mt-4 inline-flex h-9
             items-center justify-center
             rounded-xl
-            border border-white/[0.08]
-            bg-white/[0.03]
+            border border-slate-200
+            bg-white
             px-4
             text-xs font-medium
-            text-white/45
+            text-black
             transition
-            hover:bg-white/[0.06]
-            hover:text-white
+            hover:bg-slate-50
           "
         >
           Clear filters
@@ -1374,34 +1363,35 @@ function LoanRow({
   ): string {
     switch (status) {
       case "active":
-        return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
+        return "border-emerald-200 bg-emerald-50 text-emerald-700";
 
       case "pending":
-        return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+        return "border-amber-200 bg-amber-50 text-amber-700";
 
       case "completed":
-        return "border-blue-500/20 bg-blue-500/10 text-blue-300";
+        return "border-blue-200 bg-blue-50 text-blue-700";
 
       case "cancelled":
-        return "border-red-500/20 bg-red-500/10 text-red-300";
+        return "border-red-200 bg-red-50 text-red-700";
 
       default:
-        return "border-white/10 bg-white/5 text-white/60";
+        return "border-slate-200 bg-slate-50 text-black/70";
     }
   }
 
   const canRepay = isRepayable(loan);
 
   return (
-    <div className="grid grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_120px] items-center gap-4 px-4 py-3.5 transition hover:bg-white/[0.022]">
+    <div className="grid grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_120px] items-center gap-4 bg-white px-4 py-3.5 transition hover:bg-slate-50">
+
       {/* LOAN */}
 
       <div className="min-w-0">
-        <p className="truncate text-xs font-semibold text-white/85">
+        <p className="truncate text-xs font-semibold text-black">
           {loan.loanNumber || "—"}
         </p>
 
-        <p className="mt-1 truncate text-[10px] text-white/25">
+        <p className="mt-1 truncate text-[10px] text-black/55">
           {loan.type || "loan"} loan
         </p>
       </div>
@@ -1409,25 +1399,25 @@ function LoanRow({
       {/* MEMBER */}
 
       <div className="min-w-0">
-        <p className="truncate text-xs text-white/70">
+        <p className="truncate text-xs text-black">
           {loan.memberName ||
             "Unknown member"}
         </p>
 
-        <p className="mt-1 truncate text-[10px] text-white/25">
+        <p className="mt-1 truncate text-[10px] text-black/55">
           {loan.memberNumber || "—"}
         </p>
       </div>
 
       {/* PRINCIPAL */}
 
-      <p className="truncate text-xs font-medium text-white/65">
+      <p className="truncate text-xs font-medium text-black">
         {formatMoney(loan.principal)}
       </p>
 
       {/* BALANCE */}
 
-      <p className="truncate text-xs font-medium text-white/70">
+      <p className="truncate text-xs font-medium text-black">
         {formatMoney(
           loan.outstandingBalance,
         )}
@@ -1446,6 +1436,7 @@ function LoanRow({
       {/* ACTIONS */}
 
       <div className="flex items-center justify-end gap-1">
+
         {/* VIEW */}
 
         <button
@@ -1455,13 +1446,13 @@ function LoanRow({
             flex h-8 w-8 shrink-0
             items-center justify-center
             rounded-lg
-            text-white/30
+            text-black/50
             transition
-            hover:bg-white/[0.06]
-            hover:text-white
+            hover:bg-slate-100
+            hover:text-black
             focus:outline-none
             focus:ring-1
-            focus:ring-white/15
+            focus:ring-slate-300
           "
           aria-label={`View transaction history for ${loan.loanNumber}`}
           title="View transaction history"
@@ -1483,13 +1474,13 @@ function LoanRow({
               flex h-8 w-8 shrink-0
               items-center justify-center
               rounded-lg
-              text-white/30
+              text-black/50
               transition
-              hover:bg-white/[0.06]
-              hover:text-yellow-400
+              hover:bg-slate-100
+              hover:text-yellow-600
               focus:outline-none
               focus:ring-1
-              focus:ring-white/15
+              focus:ring-slate-300
             "
             aria-label={`Edit ${loan.loanNumber}`}
             title={`Edit ${loan.loanNumber}`}
@@ -1530,7 +1521,7 @@ function LoanRow({
             Repay
           </button>
         ) : (
-          <span className="px-1 text-[10px] text-white/15">
+          <span className="px-1 text-[10px] text-black/30">
             —
           </span>
         )}
@@ -1554,20 +1545,20 @@ function LoansLoading() {
               className="
                 h-[105px]
                 rounded-2xl
-                border border-white/[0.06]
-                bg-white/[0.025]
+                border border-slate-200
+                bg-slate-100
               "
             />
           ),
         )}
       </section>
 
-      <section className="h-[72px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
+      <section className="h-[72px] rounded-2xl border border-slate-200 bg-slate-100" />
 
-      <section className="hidden h-[280px] rounded-2xl border border-white/[0.06] bg-white/[0.025] lg:block" />
+      <section className="hidden h-[280px] rounded-2xl border border-slate-200 bg-slate-100 lg:block" />
 
       <section className="lg:hidden">
-        <div className="h-[230px] rounded-2xl border border-white/[0.06] bg-white/[0.025]" />
+        <div className="h-[230px] rounded-2xl border border-slate-200 bg-slate-100" />
       </section>
     </div>
   );

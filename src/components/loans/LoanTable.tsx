@@ -126,19 +126,19 @@ function getStatusClass(
 ): string {
   switch (status) {
     case "active":
-      return "bg-emerald-500/10 text-emerald-400";
+      return "bg-emerald-50 text-emerald-700";
 
     case "pending":
-      return "bg-yellow-500/10 text-yellow-400";
+      return "bg-yellow-50 text-yellow-700";
 
     case "completed":
-      return "bg-blue-500/10 text-blue-400";
+      return "bg-blue-50 text-blue-700";
 
     case "cancelled":
-      return "bg-red-500/10 text-red-400";
+      return "bg-red-50 text-red-700";
 
     default:
-      return "bg-white/[0.05] text-white/40";
+      return "bg-slate-100 text-black/70";
   }
 }
 
@@ -209,12 +209,15 @@ function LoadingRows() {
   return (
     <>
       {Array.from({ length: 3 }, (_, index) => (
-        <tr key={index}>
+        <tr
+          key={index}
+          className="border-b border-slate-200 bg-white"
+        >
           <td
             colSpan={7}
             className="px-4 py-3"
           >
-            <div className="h-[48px] animate-pulse rounded-xl bg-white/[0.04]" />
+            <div className="h-[48px] animate-pulse rounded-xl bg-slate-100" />
           </td>
         </tr>
       ))}
@@ -228,23 +231,23 @@ function LoadingRows() {
 
 function EmptyState() {
   return (
-    <tr>
+    <tr className="bg-white">
       <td
         colSpan={7}
         className="px-6 py-12 text-center"
       >
-        <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-yellow-500/10 text-yellow-400">
+        <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl border border-yellow-200 bg-yellow-50 text-yellow-600">
           <Banknote
             size={20}
             strokeWidth={1.7}
           />
         </div>
 
-        <p className="mt-4 text-sm font-medium text-white/60">
+        <p className="mt-4 text-sm font-medium text-black">
           No loans found
         </p>
 
-        <p className="mt-1 text-xs text-white/25">
+        <p className="mt-1 text-xs text-black/50">
           Loans matching the current view will
           appear here.
         </p>
@@ -582,21 +585,22 @@ function LoanRow({
     <tr
       className="
         border-b
-        border-white/[0.04]
+        border-slate-200
+        bg-white
         transition
         last:border-b-0
-        hover:bg-white/[0.015]
+        hover:bg-slate-50
       "
     >
       {/* LOAN */}
 
       <td className="px-4 py-3">
         <div className="min-w-0">
-          <p className="truncate text-xs font-semibold text-white">
+          <p className="truncate text-xs font-semibold text-black">
             {loan.loanNumber || "—"}
           </p>
 
-          <p className="mt-1 flex items-center gap-1 text-[9px] text-white/20">
+          <p className="mt-1 flex items-center gap-1 text-[9px] text-black/60">
             <CalendarDays
               size={10}
               strokeWidth={1.7}
@@ -611,11 +615,11 @@ function LoanRow({
 
       <td className="max-w-[190px] px-4 py-3">
         <div className="min-w-0">
-          <p className="truncate text-xs font-medium text-white/70">
+          <p className="truncate text-xs font-medium text-black">
             {loan.memberName || "Unknown member"}
           </p>
 
-          <p className="mt-1 truncate font-mono text-[9px] text-white/20">
+          <p className="mt-1 truncate font-mono text-[9px] text-black/60">
             {loan.memberNumber || "—"}
           </p>
         </div>
@@ -624,7 +628,7 @@ function LoanRow({
       {/* TYPE */}
 
       <td className="px-4 py-3">
-        <span className="capitalize text-xs text-white/45">
+        <span className="capitalize text-xs text-black">
           {loan.type || "—"}
         </span>
       </td>
@@ -632,7 +636,7 @@ function LoanRow({
       {/* PRINCIPAL */}
 
       <td className="whitespace-nowrap px-4 py-3">
-        <span className="text-xs text-white/60">
+        <span className="text-xs font-medium text-black">
           {formatKES(loan.principal)}
         </span>
       </td>
@@ -640,7 +644,7 @@ function LoanRow({
       {/* BALANCE */}
 
       <td className="whitespace-nowrap px-4 py-3">
-        <span className="text-xs font-semibold text-white/80">
+        <span className="text-xs font-semibold text-black">
           {formatKES(
             loan.outstandingBalance,
           )}
@@ -681,13 +685,13 @@ function LoanRow({
               items-center
               justify-center
               rounded-lg
-              text-white/30
+              text-black/60
               transition
-              hover:bg-white/[0.06]
-              hover:text-white
+              hover:bg-slate-100
+              hover:text-black
               focus:outline-none
               focus:ring-1
-              focus:ring-white/20
+              focus:ring-slate-300
             "
             aria-label={`View transaction history for ${
               loan.loanNumber || "loan"
@@ -860,26 +864,26 @@ export default function LoanTable({
           overflow-hidden
           rounded-2xl
           border
-          border-white/[0.08]
-          bg-[#0b0b0b]
+          border-slate-200
+          bg-white
         "
       >
         {/* SECTION HEADER */}
 
-        <div className="border-b border-white/[0.06] px-4 py-4 sm:px-5">
+        <div className="border-b border-slate-200 bg-white px-4 py-4 sm:px-5">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-white">
+              <h2 className="text-sm font-semibold text-black">
                 Loans
               </h2>
 
-              <p className="mt-0.5 text-xs text-white/30">
+              <p className="mt-0.5 text-xs text-black/60">
                 Loan portfolio
               </p>
             </div>
 
             {!loading && (
-              <span className="shrink-0 text-xs text-white/25">
+              <span className="shrink-0 text-xs text-black/60">
                 {safeLoans.length}{" "}
                 {safeLoans.length === 1
                   ? "loan"
@@ -893,38 +897,38 @@ export default function LoanTable({
             DESKTOP
         ================================================= */}
 
-        <div className="hidden overflow-x-auto lg:block">
-          <div className="min-w-[1050px]">
+        <div className="hidden overflow-x-auto bg-white lg:block">
+          <div className="min-w-[1050px] bg-white">
             {/* HEADER */}
 
-            <table className="w-full border-collapse text-left">
+            <table className="w-full border-collapse bg-white text-left">
               <thead>
-                <tr className="border-b border-white/[0.06]">
-                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <tr className="border-b border-slate-200 bg-white">
+                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                     Loan
                   </th>
 
-                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                     Member
                   </th>
 
-                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                     Type
                   </th>
 
-                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                     Principal
                   </th>
 
-                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                     Balance
                   </th>
 
-                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                     Status
                   </th>
 
-                  <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                  <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                     Actions
                   </th>
                 </tr>
@@ -933,9 +937,9 @@ export default function LoanTable({
 
             {/* BODY */}
 
-            <div className="h-[200px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
-              <table className="w-full border-collapse text-left">
-                <tbody>
+            <div className="h-[200px] overflow-y-auto overscroll-contain bg-white scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-300 hover:scrollbar-thumb-slate-400">
+              <table className="w-full border-collapse bg-white text-left">
+                <tbody className="bg-white">
                   {loading ? (
                     <LoadingRows />
                   ) : safeLoans.length === 0 ? (
@@ -962,14 +966,14 @@ export default function LoanTable({
             MOBILE — ONE RICH CARD PER VIEW
         ================================================= */}
 
-        <div className="lg:hidden">
+        <div className="bg-white lg:hidden">
           {loading ? (
-            <div className="p-4">
-              <div className="flex min-h-[420px] items-center justify-center rounded-2xl bg-white/[0.025]">
-                <div className="flex items-center gap-2 text-xs text-white/40">
+            <div className="bg-white p-4">
+              <div className="flex min-h-[420px] items-center justify-center rounded-2xl border border-slate-200 bg-slate-50">
+                <div className="flex items-center gap-2 text-xs text-black/60">
                   <Loader2
                     size={16}
-                    className="animate-spin"
+                    className="animate-spin text-yellow-600"
                   />
 
                   Loading loans...
@@ -977,20 +981,20 @@ export default function LoanTable({
               </div>
             </div>
           ) : safeLoans.length === 0 ? (
-            <div className="flex min-h-[220px] items-center justify-center p-6 text-center">
+            <div className="flex min-h-[220px] items-center justify-center bg-white p-6 text-center">
               <div>
-                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-yellow-500/10 text-yellow-400">
+                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl border border-yellow-200 bg-yellow-50 text-yellow-600">
                   <Smartphone
                     size={19}
                     strokeWidth={1.7}
                   />
                 </div>
 
-                <p className="mt-4 text-sm font-medium text-white/60">
+                <p className="mt-4 text-sm font-medium text-black">
                   No loans found
                 </p>
 
-                <p className="mt-1 text-xs text-white/25">
+                <p className="mt-1 text-xs text-black/60">
                   Loan records will appear here.
                 </p>
               </div>
@@ -1003,6 +1007,7 @@ export default function LoanTable({
                 snap-mandatory
                 gap-4
                 overflow-x-auto
+                bg-white
                 px-4
                 py-4
                 scroll-smooth
@@ -1029,24 +1034,24 @@ export default function LoanTable({
                   />
 
                   <div className="mt-3 grid grid-cols-2 gap-2">
-                    <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-3">
-                      <p className="text-[8px] uppercase tracking-[0.12em] text-white/20">
+                    <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                      <p className="text-[8px] uppercase tracking-[0.12em] text-black/50">
                         Disbursed
                       </p>
 
-                      <p className="mt-1 text-[10px] font-medium text-white/55">
+                      <p className="mt-1 text-[10px] font-medium text-black">
                         {formatDate(
                           loan.disbursementDate,
                         )}
                       </p>
                     </div>
 
-                    <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-3">
-                      <p className="text-[8px] uppercase tracking-[0.12em] text-white/20">
+                    <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                      <p className="text-[8px] uppercase tracking-[0.12em] text-black/50">
                         First Due
                       </p>
 
-                      <p className="mt-1 text-[10px] font-medium text-white/55">
+                      <p className="mt-1 text-[10px] font-medium text-black">
                         {formatDate(
                           loan.firstDueDate,
                         )}
@@ -1060,7 +1065,7 @@ export default function LoanTable({
 
           {!loading &&
             safeLoans.length > 1 && (
-              <div className="border-t border-white/[0.05] px-4 py-2.5">
+              <div className="border-t border-slate-200 bg-white px-4 py-2.5">
                 <div className="flex items-center justify-center gap-1.5">
                   {safeLoans
                     .slice(
@@ -1077,13 +1082,13 @@ export default function LoanTable({
                           h-1
                           w-4
                           rounded-full
-                          bg-white/10
+                          bg-slate-300
                         "
                       />
                     ))}
                 </div>
 
-                <p className="mt-1 text-center text-[9px] text-white/15">
+                <p className="mt-1 text-center text-[9px] text-black/50">
                   Swipe left for more loans
                 </p>
               </div>

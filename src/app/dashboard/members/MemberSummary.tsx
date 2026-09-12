@@ -40,7 +40,7 @@ export default function MemberSummary({
         value={total}
         description="Registered members"
         icon={<Users size={19} strokeWidth={1.8} />}
-        iconClass="bg-blue-500/10 text-blue-400"
+        iconClass="bg-blue-50 text-blue-600"
       />
 
       <SummaryCard
@@ -48,7 +48,7 @@ export default function MemberSummary({
         value={active}
         description="Currently active"
         icon={<UserCheck size={19} strokeWidth={1.8} />}
-        iconClass="bg-emerald-500/10 text-emerald-400"
+        iconClass="bg-emerald-50 text-emerald-600"
       />
 
       <SummaryCard
@@ -56,7 +56,7 @@ export default function MemberSummary({
         value={inactive}
         description="Inactive members"
         icon={<UserX size={19} strokeWidth={1.8} />}
-        iconClass="bg-white/[0.06] text-white/50"
+        iconClass="bg-slate-100 text-slate-500"
       />
 
       <SummaryCard
@@ -64,7 +64,7 @@ export default function MemberSummary({
         value={suspended}
         description="Require attention"
         icon={<AlertTriangle size={19} strokeWidth={1.8} />}
-        iconClass="bg-red-500/10 text-red-400"
+        iconClass="bg-red-50 text-red-600"
       />
     </section>
   );
@@ -91,26 +91,26 @@ function SummaryCard({
     <div
       className="
         rounded-2xl
-        border border-white/[0.08]
-        bg-white/[0.025]
+        border border-slate-200
+        bg-white
         p-4
         transition-colors
-        hover:border-white/[0.12]
-        hover:bg-white/[0.035]
+        hover:border-slate-300
+        hover:bg-slate-50
         sm:p-5
       "
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-xs font-medium text-white/35">
+          <p className="truncate text-xs font-medium text-black/50">
             {label}
           </p>
 
-          <p className="mt-3 text-xl font-semibold tracking-tight text-white sm:text-2xl">
+          <p className="mt-3 text-xl font-semibold tracking-tight text-black sm:text-2xl">
             {value.toLocaleString()}
           </p>
 
-          <p className="mt-2 truncate text-[10px] text-white/25 sm:text-[11px]">
+          <p className="mt-2 truncate text-[10px] text-black/40 sm:text-[11px]">
             {description}
           </p>
         </div>

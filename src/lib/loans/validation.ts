@@ -25,9 +25,30 @@
  * belong in service.ts.
  *
  * Financial records are append-oriented.
+ *
+ * =========================================================
+ * DATE ARCHITECTURE
+ * =========================================================
+ *
+ * Loan business/calendar dates are strings in:
+ *
+ *   YYYY-MM-DD
+ *
+ * Example:
+ *
+ *   "2026-09-11"
+ *
+ * They must NOT be converted to JavaScript Date objects.
+ *
+ * The value entered by the user should be the value that
+ * reaches the service and is ultimately stored in MongoDB.
+ *
+ * Actual timestamps such as transactionDate, createdAt,
+ * updatedAt and authorizedAt remain Date values.
  */
 
 import type {
+  CalendarDate,
   CreateLoanInput,
   CreateLoanRepaymentInput,
   CreateLoanWaiverInput,
@@ -135,124 +156,134 @@ function validateOptionalText(
   return errors;
 }
 
-function validateDate(
+/* =========================================================
+   CALENDAR DATE VALIDATION
+========================================================= */
+
+/**
+ * Strictly validates a calendar date.
+ *
+ * Accepted:
+ *
+ *   2026-09-11
+ *
+ * Rejected:
+ *
+ *   2026-9-11
+ *   11-09-2026
+ *   2026/09/11
+ *   2026-02-30
+ *   Date objects
+ *   timestamps
+ *   ISO datetime strings
+ *
+ * IMPORTANT:
+ *
+ * This function does not create a JavaScript Date from the
+ * supplied business date.
+ *
+ * Calendar dates remain strings throughout loan processing.
+ */
+function isValidCalendarDate(
+  value: unknown,
+): value is CalendarDate {
+  if (
+    typeof value !== "string"
+  ) {
+    return false;
+  }
+
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})$/.exec(
+      value,
+    );
+
+  if (!match) {
+    return false;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
+    return false;
+  }
+
+  if (
+    month < 1 ||
+    month > 12
+  ) {
+    return false;
+  }
+
+  if (
+    day < 1 ||
+    day > 31
+  ) {
+    return false;
+  }
+
+  /*
+   * Determine the actual number of days in the requested
+   * month without converting the supplied calendar date
+   * into a Date object.
+   *
+   * This is purely calendar arithmetic.
+   */
+  const daysInMonth = [
+    31,
+    isLeapYear(year) ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ][month - 1];
+
+  return day <= daysInMonth;
+}
+
+/**
+ * Leap-year calculation using Gregorian calendar rules.
+ */
+function isLeapYear(
+  year: number,
+): boolean {
+  return (
+    year % 4 === 0 &&
+    (
+      year % 100 !== 0 ||
+      year % 400 === 0
+    )
+  );
+}
+
+/**
+ * Validates a calendar date field.
+ */
+function validateCalendarDate(
   value: unknown,
   fieldName: string,
 ): string[] {
   if (
-    !(value instanceof Date) ||
-    Number.isNaN(value.getTime())
+    !isValidCalendarDate(value)
   ) {
     return [
-      `${fieldName} must be a valid date.`,
+      `${fieldName} must be a valid calendar date in YYYY-MM-DD format.`,
     ];
   }
 
   return [];
-}
-
-function validateAmount(
-  amount: number,
-  fieldName = "Amount",
-): string[] {
-  const errors: string[] = [];
-
-  if (!isFiniteNumber(amount)) {
-    errors.push(
-      `${fieldName} must be a valid number.`,
-    );
-
-    return errors;
-  }
-
-  if (amount <= 0) {
-    errors.push(
-      `${fieldName} must be greater than zero.`,
-    );
-  }
-
-  if (amount > MAX_MONEY) {
-    errors.push(
-      `${fieldName} is too large.`,
-    );
-  }
-
-  return errors;
-}
-
-function validateNonNegativeAmount(
-  amount: number,
-  fieldName: string,
-): string[] {
-  const errors: string[] = [];
-
-  if (!isFiniteNumber(amount)) {
-    errors.push(
-      `${fieldName} must be a valid number.`,
-    );
-
-    return errors;
-  }
-
-  if (amount < 0) {
-    errors.push(
-      `${fieldName} must be zero or greater.`,
-    );
-  }
-
-  if (amount > MAX_MONEY) {
-    errors.push(
-      `${fieldName} is too large.`,
-    );
-  }
-
-  return errors;
-}
-
-function validateRate(
-  rate: unknown,
-  fieldName: string,
-): string[] {
-  if (
-    !isFiniteNumber(rate) ||
-    rate < 0 ||
-    rate > MAX_RATE
-  ) {
-    return [
-      `${fieldName} must be between 0 and 1.`,
-    ];
-  }
-
-  return [];
-}
-
-function validatePositiveInteger(
-  value: unknown,
-  fieldName: string,
-  maximum = MAX_CYCLE_DAYS,
-): string[] {
-  const errors: string[] = [];
-
-  if (
-    !Number.isInteger(value) ||
-    (value as number) <= 0
-  ) {
-    errors.push(
-      `${fieldName} must be a whole number greater than zero.`,
-    );
-
-    return errors;
-  }
-
-  if (
-    (value as number) > maximum
-  ) {
-    errors.push(
-      `${fieldName} is too large.`,
-    );
-  }
-
-  return errors;
 }
 
 /* =========================================================
@@ -388,6 +419,33 @@ export function validateCreateLoan(
   );
 
   /* -------------------------------------------------------
+     INSTALLMENT AMOUNT
+  ------------------------------------------------------- */
+
+  errors.push(
+    ...validateAmount(
+      input.installmentAmount,
+      "Installment amount",
+    ),
+  );
+
+  /* -------------------------------------------------------
+     REPAYMENT CYCLE DAYS
+  ------------------------------------------------------- */
+
+  if (
+    input.repaymentCycleDays !==
+    undefined
+  ) {
+    errors.push(
+      ...validatePositiveInteger(
+        input.repaymentCycleDays,
+        "Repayment cycle days",
+      ),
+    );
+  }
+
+  /* -------------------------------------------------------
      GUARANTOR
   ------------------------------------------------------- */
 
@@ -397,9 +455,8 @@ export function validateCreateLoan(
     ),
   );
 
-
   /* -------------------------------------------------------
-     NEW FINE RATE
+     FINE RATE
   ------------------------------------------------------- */
 
   if (
@@ -422,7 +479,7 @@ export function validateCreateLoan(
     undefined
   ) {
     errors.push(
-      ...validateDate(
+      ...validateCalendarDate(
         input.disbursementDate,
         "Disbursement date",
       ),
@@ -438,7 +495,7 @@ export function validateCreateLoan(
     undefined
   ) {
     errors.push(
-      ...validateDate(
+      ...validateCalendarDate(
         input.repaymentDate,
         "Repayment date",
       ),
@@ -454,7 +511,7 @@ export function validateCreateLoan(
     undefined
   ) {
     errors.push(
-      ...validateDate(
+      ...validateCalendarDate(
         input.endDate,
         "Loan end date",
       ),
@@ -462,9 +519,13 @@ export function validateCreateLoan(
   }
 
   /*
-   * Date ordering is additionally checked in the service
-   * because the service determines the authoritative
-   * disbursement date.
+   * Date ordering belongs to the service.
+   *
+   * The service knows the authoritative repayment cycle,
+   * calculated dates and existing loan state.
+   *
+   * This validation layer only verifies that supplied
+   * calendar dates are structurally valid.
    */
 
   return {
@@ -561,6 +622,9 @@ export function validateLoanRepayment(
 
   /* -------------------------------------------------------
      TRANSACTION DATE
+     
+     This is intentionally still a Date because it represents
+     the actual moment the payment occurred.
   ------------------------------------------------------- */
 
   errors.push(
@@ -836,7 +900,7 @@ export function validateLoanSettings(
   }
 
   /* -------------------------------------------------------
-     NEW 7-DAY REPAYMENT CYCLE
+     REPAYMENT CYCLE DAYS
   ------------------------------------------------------- */
 
   if (
@@ -852,7 +916,7 @@ export function validateLoanSettings(
   }
 
   /* -------------------------------------------------------
-     NEW FINE RATE
+     FINE RATE
   ------------------------------------------------------- */
 
   if (
@@ -898,7 +962,6 @@ export function validateLoanSettings(
       );
     }
   }
-
 
   /* -------------------------------------------------------
      EMERGENCY LOANS
@@ -971,4 +1034,146 @@ export function normalizeGuarantor(
         }
       : {}),
   };
+}
+
+/* =========================================================
+   INTERNAL DATE VALIDATION
+========================================================= */
+
+/**
+ * Actual timestamps are still validated as Date objects.
+ *
+ * This is intentionally separate from calendar-date
+ * validation above.
+ */
+function validateDate(
+  value: unknown,
+  fieldName: string,
+): string[] {
+  if (
+    !(value instanceof Date) ||
+    Number.isNaN(value.getTime())
+  ) {
+    return [
+      `${fieldName} must be a valid timestamp.`,
+    ];
+  }
+
+  return [];
+}
+
+/* =========================================================
+   AMOUNT VALIDATION
+========================================================= */
+
+function validateAmount(
+  amount: number,
+  fieldName = "Amount",
+): string[] {
+  const errors: string[] = [];
+
+  if (!isFiniteNumber(amount)) {
+    errors.push(
+      `${fieldName} must be a valid number.`,
+    );
+
+    return errors;
+  }
+
+  if (amount <= 0) {
+    errors.push(
+      `${fieldName} must be greater than zero.`,
+    );
+  }
+
+  if (amount > MAX_MONEY) {
+    errors.push(
+      `${fieldName} is too large.`,
+    );
+  }
+
+  return errors;
+}
+
+function validateNonNegativeAmount(
+  amount: number,
+  fieldName: string,
+): string[] {
+  const errors: string[] = [];
+
+  if (!isFiniteNumber(amount)) {
+    errors.push(
+      `${fieldName} must be a valid number.`,
+    );
+
+    return errors;
+  }
+
+  if (amount < 0) {
+    errors.push(
+      `${fieldName} must be zero or greater.`,
+    );
+  }
+
+  if (amount > MAX_MONEY) {
+    errors.push(
+      `${fieldName} is too large.`,
+    );
+  }
+
+  return errors;
+}
+
+/* =========================================================
+   RATE VALIDATION
+========================================================= */
+
+function validateRate(
+  rate: unknown,
+  fieldName: string,
+): string[] {
+  if (
+    !isFiniteNumber(rate) ||
+    rate < 0 ||
+    rate > MAX_RATE
+  ) {
+    return [
+      `${fieldName} must be between 0 and 1.`,
+    ];
+  }
+
+  return [];
+}
+
+/* =========================================================
+   INTEGER VALIDATION
+========================================================= */
+
+function validatePositiveInteger(
+  value: unknown,
+  fieldName: string,
+  maximum = MAX_CYCLE_DAYS,
+): string[] {
+  const errors: string[] = [];
+
+  if (
+    !Number.isInteger(value) ||
+    (value as number) <= 0
+  ) {
+    errors.push(
+      `${fieldName} must be a whole number greater than zero.`,
+    );
+
+    return errors;
+  }
+
+  if (
+    (value as number) > maximum
+  ) {
+    errors.push(
+      `${fieldName} is too large.`,
+    );
+  }
+
+  return errors;
 }

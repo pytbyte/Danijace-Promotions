@@ -33,8 +33,12 @@ import { downloadMemberSummaryPdf } from "@/app/dashboard/members/memberSummaryP
 type MemberViewModalProps = {
   member: Member | MemberWithFinancialSummary;
   onClose: () => void;
-  onEdit?: (member: Member | MemberWithFinancialSummary) => void;
-  onDelete?: (member: Member | MemberWithFinancialSummary) => void;
+  onEdit?: (
+    member: Member | MemberWithFinancialSummary,
+  ) => void;
+  onDelete?: (
+    member: Member | MemberWithFinancialSummary,
+  ) => void;
 };
 
 /* =========================================================
@@ -60,8 +64,11 @@ export default function MemberViewModal({
   onEdit,
   onDelete,
 }: MemberViewModalProps) {
-  const [downloading, setDownloading] = useState(false);
-  const [imageFailed, setImageFailed] = useState(false);
+  const [downloading, setDownloading] =
+    useState(false);
+
+  const [imageFailed, setImageFailed] =
+    useState(false);
 
   /* =======================================================
      DERIVED DATA
@@ -78,12 +85,15 @@ export default function MemberViewModal({
   const initials = getInitials(member);
 
   const profileImageUrl = member.profileImage
-    ? getProfileImageUrl(member.membershipNumber)
+    ? getProfileImageUrl(
+        member.membershipNumber,
+      )
     : null;
 
-  const financialSummary = hasFinancialSummary(member)
-    ? member.financialSummary
-    : undefined;
+  const financialSummary =
+    hasFinancialSummary(member)
+      ? member.financialSummary
+      : undefined;
 
   const loan = financialSummary?.loan;
 
@@ -92,7 +102,9 @@ export default function MemberViewModal({
   ======================================================= */
 
   useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
+    function handleKeyDown(
+      event: KeyboardEvent,
+    ) {
       if (event.key === "Escape") {
         onClose();
       }
@@ -119,7 +131,8 @@ export default function MemberViewModal({
     const previousOverflow =
       document.body.style.overflow;
 
-    document.body.style.overflow = "hidden";
+    document.body.style.overflow =
+      "hidden";
 
     return () => {
       document.body.style.overflow =
@@ -175,7 +188,7 @@ export default function MemberViewModal({
         flex
         items-end
         justify-center
-        bg-black/75
+        bg-black/40
         p-0
         backdrop-blur-md
         sm:items-center
@@ -202,10 +215,10 @@ export default function MemberViewModal({
           overflow-hidden
           rounded-t-[28px]
           border
-          border-white/[0.08]
-          bg-[#0b1014]
+          border-slate-200
+          bg-white
           shadow-2xl
-          shadow-black/60
+          shadow-black/20
           sm:max-w-3xl
           sm:rounded-[28px]
         "
@@ -218,8 +231,8 @@ export default function MemberViewModal({
           className="
             shrink-0
             border-b
-            border-white/[0.07]
-            bg-[#10171c]
+            border-slate-200
+            bg-white
             px-4
             py-4
             sm:px-6
@@ -240,9 +253,9 @@ export default function MemberViewModal({
                     w-14
                     overflow-hidden
                     rounded-2xl
-                    bg-white/[0.03]
+                    bg-slate-100
                     ring-1
-                    ring-white/10
+                    ring-slate-200
                     sm:h-16
                     sm:w-16
                   "
@@ -261,7 +274,9 @@ export default function MemberViewModal({
                   />
                 </div>
               ) : (
-                <InitialsAvatar />
+                <InitialsAvatar
+                  initials={initials}
+                />
               )}
             </div>
 
@@ -278,7 +293,7 @@ export default function MemberViewModal({
                     text-lg
                     font-semibold
                     tracking-tight
-                    text-white
+                    text-black
                     sm:text-xl
                   "
                 >
@@ -291,18 +306,18 @@ export default function MemberViewModal({
               </div>
 
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-                <p className="text-xs font-semibold text-sky-300/75">
+                <p className="text-xs font-semibold text-sky-700">
                   {member.membershipNumber}
                 </p>
 
                 {member.phone && (
-                  <p className="text-[11px] text-white/30">
+                  <p className="text-[11px] text-black/50">
                     {member.phone}
                   </p>
                 )}
               </div>
 
-              <p className="mt-1 text-[10px] uppercase tracking-[0.12em] text-white/20">
+              <p className="mt-1 text-[10px] uppercase tracking-[0.12em] text-black/40">
                 Member record
               </p>
             </div>
@@ -324,13 +339,12 @@ export default function MemberViewModal({
                 justify-center
                 rounded-xl
                 border
-                border-white/[0.08]
-                bg-white/[0.03]
-                text-white/40
+                border-slate-200
+                bg-white
+                text-black
                 transition
-                hover:border-white/[0.12]
-                hover:bg-white/[0.06]
-                hover:text-white
+                hover:border-slate-300
+                hover:bg-slate-50
                 active:scale-[0.97]
               "
             >
@@ -352,6 +366,7 @@ export default function MemberViewModal({
             flex-1
             overflow-y-auto
             overscroll-contain
+            bg-white
             px-4
             py-5
             sm:px-6
@@ -419,8 +434,8 @@ export default function MemberViewModal({
                 className="
                   rounded-2xl
                   border
-                  border-white/[0.07]
-                  bg-white/[0.025]
+                  border-slate-200
+                  bg-white
                   p-4
                 "
               >
@@ -434,8 +449,10 @@ export default function MemberViewModal({
                       items-center
                       justify-center
                       rounded-xl
-                      bg-white/[0.04]
-                      text-white/25
+                      border
+                      border-slate-200
+                      bg-slate-50
+                      text-black
                     "
                   >
                     <CreditCard
@@ -445,14 +462,15 @@ export default function MemberViewModal({
                   </div>
 
                   <div className="min-w-0">
-                    <p className="text-xs font-medium text-white/55">
+                    <p className="text-xs font-medium text-black">
                       Financial summary not loaded
                     </p>
 
-                    <p className="mt-1 text-[11px] leading-5 text-white/25">
-                      Financial information will appear
-                      here when the member record includes
-                      the financial summary.
+                    <p className="mt-1 text-[11px] leading-5 text-black/50">
+                      Financial information will
+                      appear here when the member
+                      record includes the financial
+                      summary.
                     </p>
                   </div>
                 </div>
@@ -476,18 +494,18 @@ export default function MemberViewModal({
                   className="
                     rounded-2xl
                     border
-                    border-white/[0.07]
-                    bg-white/[0.025]
+                    border-slate-200
+                    bg-white
                     p-4
                   "
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-[9px] uppercase tracking-[0.14em] text-white/20">
+                      <p className="text-[9px] uppercase tracking-[0.14em] text-black/40">
                         Loan Number
                       </p>
 
-                      <p className="mt-1 text-sm font-semibold text-white/75">
+                      <p className="mt-1 text-sm font-semibold text-black">
                         {loan.loanNumber}
                       </p>
                     </div>
@@ -546,7 +564,7 @@ export default function MemberViewModal({
                       gap-x-5
                       gap-y-2
                       border-t
-                      border-white/[0.06]
+                      border-slate-200
                       pt-3
                     "
                   >
@@ -570,8 +588,8 @@ export default function MemberViewModal({
                   className="
                     rounded-2xl
                     border
-                    border-emerald-400/10
-                    bg-emerald-400/[0.035]
+                    border-emerald-200
+                    bg-emerald-50
                     p-4
                   "
                 >
@@ -585,8 +603,8 @@ export default function MemberViewModal({
                         items-center
                         justify-center
                         rounded-xl
-                        bg-emerald-400/10
-                        text-emerald-300
+                        bg-emerald-100
+                        text-emerald-700
                       "
                     >
                       <CheckCircle2
@@ -596,11 +614,11 @@ export default function MemberViewModal({
                     </div>
 
                     <div>
-                      <p className="text-xs font-semibold text-emerald-300/80">
+                      <p className="text-xs font-semibold text-emerald-800">
                         No active loan
                       </p>
 
-                      <p className="mt-1 text-[11px] text-white/25">
+                      <p className="mt-1 text-[11px] text-black/50">
                         No loan position is currently
                         recorded for this member.
                       </p>
@@ -802,12 +820,12 @@ export default function MemberViewModal({
                 className="
                   rounded-2xl
                   border
-                  border-white/[0.07]
-                  bg-white/[0.025]
+                  border-slate-200
+                  bg-white
                   p-4
                 "
               >
-                <p className="whitespace-pre-wrap text-sm leading-6 text-white/50">
+                <p className="whitespace-pre-wrap text-sm leading-6 text-black/70">
                   {member.notes}
                 </p>
               </div>
@@ -860,8 +878,8 @@ export default function MemberViewModal({
           className="
             shrink-0
             border-t
-            border-white/[0.07]
-            bg-[#10171c]
+            border-slate-200
+            bg-white
             px-4
             py-3
             sm:px-6
@@ -892,15 +910,15 @@ export default function MemberViewModal({
                   justify-center
                   rounded-xl
                   border
-                  border-white/[0.08]
-                  bg-white/[0.03]
+                  border-slate-200
+                  bg-white
                   px-4
                   text-xs
                   font-medium
-                  text-white/45
+                  text-black
                   transition
-                  hover:bg-white/[0.06]
-                  hover:text-white
+                  hover:bg-slate-50
+                  hover:border-slate-300
                   active:scale-[0.98]
                 "
               >
@@ -919,16 +937,15 @@ export default function MemberViewModal({
                     gap-2
                     rounded-xl
                     border
-                    border-white/[0.08]
-                    bg-white/[0.03]
+                    border-slate-200
+                    bg-white
                     px-3
                     text-xs
                     font-medium
-                    text-white/45
+                    text-black
                     transition
-                    hover:border-white/[0.12]
-                    hover:bg-white/[0.06]
-                    hover:text-white
+                    hover:bg-slate-50
+                    hover:border-slate-300
                     active:scale-[0.98]
                   "
                 >
@@ -953,16 +970,14 @@ export default function MemberViewModal({
                     gap-2
                     rounded-xl
                     border
-                    border-rose-400/10
-                    bg-rose-400/[0.04]
+                    border-rose-200
+                    bg-rose-50
                     px-3
                     text-xs
                     font-medium
-                    text-rose-300/70
+                    text-rose-700
                     transition
-                    hover:border-rose-400/20
-                    hover:bg-rose-400/[0.08]
-                    hover:text-rose-200
+                    hover:bg-rose-100
                     active:scale-[0.98]
                   "
                 >
@@ -1048,10 +1063,10 @@ function SectionTitle({
       <Icon
         size={14}
         strokeWidth={1.7}
-        className="text-sky-300/60"
+        className="text-sky-600"
       />
 
-      <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-white/30">
+      <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-black/50">
         {title}
       </p>
     </div>
@@ -1078,17 +1093,18 @@ function MetricCard({
       className={`
         rounded-2xl
         border
+        bg-white
         p-3
         ${
           danger
-            ? "border-rose-400/10 bg-rose-400/[0.04]"
+            ? "border-rose-200"
             : highlight
-              ? "border-sky-300/10 bg-sky-400/[0.07]"
-              : "border-white/[0.07] bg-white/[0.025]"
+              ? "border-sky-200"
+              : "border-slate-200"
         }
       `}
     >
-      <p className="text-[8px] uppercase tracking-[0.12em] text-white/25">
+      <p className="text-[8px] uppercase tracking-[0.12em] text-black/45">
         {label}
       </p>
 
@@ -1100,10 +1116,10 @@ function MetricCard({
           font-semibold
           ${
             danger
-              ? "text-rose-300"
+              ? "text-rose-700"
               : highlight
-                ? "text-sky-300"
-                : "text-white/65"
+                ? "text-sky-700"
+                : "text-black"
           }
         `}
       >
@@ -1147,8 +1163,8 @@ function InfoItem({
       className="
         rounded-xl
         border
-        border-white/[0.06]
-        bg-white/[0.02]
+        border-slate-200
+        bg-white
         px-3
         py-2.5
       "
@@ -1158,16 +1174,16 @@ function InfoItem({
           <Icon
             size={13}
             strokeWidth={1.6}
-            className="mt-0.5 shrink-0 text-white/20"
+            className="mt-0.5 shrink-0 text-black/50"
           />
         )}
 
         <div className="min-w-0">
-          <p className="text-[8px] uppercase tracking-[0.1em] text-white/20">
+          <p className="text-[8px] uppercase tracking-[0.1em] text-black/45">
             {label}
           </p>
 
-          <p className="mt-1 break-words text-xs text-white/55">
+          <p className="mt-1 break-words text-xs text-black">
             {value || "—"}
           </p>
         </div>
@@ -1191,7 +1207,7 @@ function InfoMetric({
 }) {
   return (
     <div>
-      <p className="text-[8px] uppercase tracking-[0.1em] text-white/20">
+      <p className="text-[8px] uppercase tracking-[0.1em] text-black/45">
         {label}
       </p>
 
@@ -1202,8 +1218,8 @@ function InfoMetric({
           font-semibold
           ${
             danger
-              ? "text-rose-300"
-              : "text-white/60"
+              ? "text-rose-700"
+              : "text-black"
           }
         `}
       >
@@ -1226,11 +1242,11 @@ function MetaItem({
 }) {
   return (
     <div>
-      <span className="text-[8px] uppercase tracking-[0.1em] text-white/20">
+      <span className="text-[8px] uppercase tracking-[0.1em] text-black/45">
         {label}
       </span>
 
-      <span className="ml-1 text-[10px] text-white/45">
+      <span className="ml-1 text-[10px] text-black">
         {value}
       </span>
     </div>
@@ -1241,9 +1257,11 @@ function MetaItem({
    INITIALS AVATAR
 ========================================================= */
 
-function InitialsAvatar() {
-  const initials = "M";
-
+function InitialsAvatar({
+  initials,
+}: {
+  initials: string;
+}) {
   return (
     <div
       className="
@@ -1255,11 +1273,11 @@ function InitialsAvatar() {
         justify-center
         rounded-2xl
         border
-        border-sky-300/10
-        bg-sky-400/[0.08]
+        border-sky-200
+        bg-sky-50
         text-base
         font-bold
-        text-sky-300
+        text-sky-700
         sm:h-16
         sm:w-16
       "
@@ -1283,10 +1301,10 @@ function StatusBadge({
 }) {
   const className =
     status === "active"
-      ? "bg-emerald-400/10 text-emerald-300"
+      ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
       : status === "suspended"
-        ? "bg-rose-400/10 text-rose-300"
-        : "bg-white/[0.06] text-white/35";
+        ? "bg-rose-50 text-rose-700 ring-rose-200"
+        : "bg-slate-100 text-black ring-slate-200";
 
   return (
     <span
@@ -1299,6 +1317,7 @@ function StatusBadge({
         font-semibold
         uppercase
         tracking-[0.1em]
+        ring-1
         ${className}
       `}
     >
@@ -1322,12 +1341,12 @@ function LoanStatusBadge({
 }) {
   const className =
     status === "active"
-      ? "bg-sky-400/10 text-sky-300"
+      ? "bg-sky-50 text-sky-700 ring-sky-200"
       : status === "completed"
-        ? "bg-emerald-400/10 text-emerald-300"
+        ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
         : status === "cancelled"
-          ? "bg-rose-400/10 text-rose-300"
-          : "bg-amber-400/10 text-amber-300";
+          ? "bg-rose-50 text-rose-700 ring-rose-200"
+          : "bg-amber-50 text-amber-700 ring-amber-200";
 
   return (
     <span
@@ -1340,6 +1359,7 @@ function LoanStatusBadge({
         font-semibold
         uppercase
         tracking-[0.1em]
+        ring-1
         ${className}
       `}
     >
@@ -1411,10 +1431,7 @@ function formatStatus(
   }
 
   return value
-    .replace(
-      /[_-]+/g,
-      " ",
-    )
+    .replace(/[_-]+/g, " ")
     .replace(
       /\b\w/g,
       (character) =>

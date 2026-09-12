@@ -9,6 +9,7 @@ import {
 } from "@/lib/loans/service";
 
 import type {
+  CalendarDate,
   LoanType,
   UpdateLoanInput,
 } from "@/lib/loans/types";
@@ -101,51 +102,92 @@ function isRecord(
   );
 }
 
-function getLoanId(
+async function getLoanId(
   context: {
     params: Promise<{ id: string }>;
   },
-) {
-  return context.params.then(
-    ({ id }) => id.trim(),
-  );
+): Promise<string> {
+  const { id } = await context.params;
+
+  return id.trim();
 }
 
 /* =========================================================
-   DATE PARSER
+   CALENDAR DATE VALIDATION
 ========================================================= */
 
+/**
+ * Loan business dates are calendar dates.
+ *
+ * They are intentionally stored as strings:
+ *
+ *     YYYY-MM-DD
+ *
+ * We do NOT convert these to JavaScript Date objects.
+ *
+ * This prevents timezone-related date shifts such as:
+ *
+ *     2026-09-11
+ *
+ * becoming:
+ *
+ *     2026-09-10
+ *
+ * when the value passes through UTC/local-time conversion.
+ */
 function parseOptionalDate(
   value: unknown,
   fieldName: string,
-): Date | undefined {
+): CalendarDate | undefined {
   if (value === undefined) {
     return undefined;
   }
 
-  if (
-    typeof value !== "string" ||
-    !value.trim()
-  ) {
+  if (typeof value !== "string") {
     throw new Error(
-      `${fieldName} must be a valid date string.`,
+      `${fieldName} must be a valid date string in YYYY-MM-DD format.`,
     );
   }
 
-  const date =
-    new Date(value);
+  const date = value.trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error(
+      `${fieldName} must be a valid date string in YYYY-MM-DD format.`,
+    );
+  }
+
+  const [
+    year,
+    month,
+    day,
+  ] = date.split("-").map(Number);
+
+  /*
+   * Validate the actual calendar date without converting
+   * the supplied value into a Date for storage.
+   */
+  const daysInMonth =
+    new Date(
+      Date.UTC(
+        year,
+        month,
+        0,
+      ),
+    ).getUTCDate();
 
   if (
-    Number.isNaN(
-      date.getTime(),
-    )
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInMonth
   ) {
     throw new Error(
       `Invalid ${fieldName.toLowerCase()}.`,
     );
   }
 
-  return date;
+  return date as CalendarDate;
 }
 
 /* =========================================================
@@ -183,20 +225,66 @@ function parseGuarantor(
     );
   }
 
-  return {
+  const guarantor: UpdateLoanInput["guarantor"] = {
     name,
     phone,
   };
+
+  /*
+   * Preserve idNumber when supplied.
+   *
+   * This keeps the update behavior consistent with the
+   * create-loan route.
+   */
+  if (
+    typeof value.idNumber === "string" &&
+    value.idNumber.trim()
+  ) {
+    guarantor.idNumber =
+      value.idNumber.trim();
+  }
+
+  return guarantor;
 }
 
 /* =========================================================
    ALLOWED UPDATE FIELDS
 ========================================================= */
 
+/**
+ * These are the fields the client is allowed to request
+ * changing.
+ *
+ * Financial/business rules are enforced by updateLoan()
+ * in the service layer.
+ *
+ * In particular:
+ *
+ * - installmentAmount MAY be requested for editing.
+ * - updateLoan() must reject changing it after financial
+ *   activity has occurred.
+ *
+ * We do NOT put protected/calculated fields here such as:
+ *
+ * - loanNumber
+ * - interestRate
+ * - interestAmount
+ * - totalDue
+ * - amountPaid
+ * - outstandingBalance
+ * - fineRate
+ * - repaymentCycleDays
+ * - status
+ * - repaymentStatus
+ * - firstDueDate
+ * - createdAt
+ * - updatedAt
+ */
 const ALLOWED_UPDATE_FIELDS =
   new Set([
     "type",
     "principal",
+    "installmentAmount",
     "guarantor",
     "disbursementDate",
     "repaymentDate",
@@ -384,10 +472,8 @@ export async function PATCH(
       body.type !== undefined
     ) {
       if (
-        body.type !==
-          "emergency" &&
-        body.type !==
-          "regular"
+        body.type !== "emergency" &&
+        body.type !== "regular"
       ) {
         return errorResponse(
           "Loan type must be either emergency or regular.",
@@ -435,6 +521,70 @@ export async function PATCH(
 
       changes.principal =
         body.principal;
+    }
+
+    /* -------------------------------------------------------
+       INSTALLMENT AMOUNT
+    ------------------------------------------------------- */
+
+    /**
+     * installmentAmount is an editable request field.
+     *
+     * It represents the repayment amount for each
+     * repayment cycle.
+     *
+     * Normal GEO-SHUA configuration:
+     *
+     *     7 days = weekly installment
+     *
+     * This is NOT a daily fine.
+     *
+     * IMPORTANT:
+     *
+     * We only validate it when the client actually sends
+     * installmentAmount.
+     *
+     * The service layer remains responsible for deciding
+     * whether the existing loan is still allowed to have
+     * its installment changed.
+     */
+    if (
+      body.installmentAmount !==
+      undefined
+    ) {
+      const installmentAmount =
+        typeof body.installmentAmount ===
+        "number"
+          ? body.installmentAmount
+          : NaN;
+
+      if (
+        !Number.isFinite(
+          installmentAmount,
+        ) ||
+        installmentAmount <= 0
+      ) {
+        return errorResponse(
+          "Installment amount must be a positive number.",
+          400,
+        );
+      }
+
+      if (
+        !Number.isSafeInteger(
+          Math.round(
+            installmentAmount * 100,
+          ),
+        )
+      ) {
+        return errorResponse(
+          "Installment amount is outside the supported financial range.",
+          400,
+        );
+      }
+
+      changes.installmentAmount =
+        installmentAmount;
     }
 
     /* -------------------------------------------------------
@@ -531,6 +681,46 @@ export async function PATCH(
     }
 
     /* -------------------------------------------------------
+       DATE ORDER VALIDATION
+    ------------------------------------------------------- */
+
+    if (
+      changes.disbursementDate &&
+      changes.repaymentDate &&
+      changes.repaymentDate <
+        changes.disbursementDate
+    ) {
+      return errorResponse(
+        "Repayment date cannot be before the disbursement date.",
+        400,
+      );
+    }
+
+    if (
+      changes.repaymentDate &&
+      changes.endDate &&
+      changes.endDate <
+        changes.repaymentDate
+    ) {
+      return errorResponse(
+        "End date cannot be before the repayment date.",
+        400,
+      );
+    }
+
+    if (
+      changes.disbursementDate &&
+      changes.endDate &&
+      changes.endDate <
+        changes.disbursementDate
+    ) {
+      return errorResponse(
+        "End date cannot be before the disbursement date.",
+        400,
+      );
+    }
+
+    /* -------------------------------------------------------
        UPDATE LOAN
     ------------------------------------------------------- */
 
@@ -612,9 +802,7 @@ export async function PATCH(
 
     return errorResponse(
       message,
-      knownError
-        ? 400
-        : 500,
+      knownError ? 400 : 500,
     );
   }
 }
@@ -662,9 +850,7 @@ export async function DELETE(
        DELETE LOAN
     ------------------------------------------------------- */
 
-    await deleteLoan(
-      id,
-    );
+    await deleteLoan(id);
 
     /* -------------------------------------------------------
        SUCCESS RESPONSE
@@ -688,10 +874,6 @@ export async function DELETE(
         ? error.message
         : "Failed to delete loan.";
 
-    /* -------------------------------------------------------
-       KNOWN ERRORS
-    ------------------------------------------------------- */
-
     if (
       message ===
       "Invalid loan ID."
@@ -709,16 +891,6 @@ export async function DELETE(
       return errorResponse(
         message,
         404,
-      );
-    }
-
-    if (
-      message ===
-      "Failed to delete loan."
-    ) {
-      return errorResponse(
-        message,
-        500,
       );
     }
 

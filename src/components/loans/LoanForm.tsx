@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -147,15 +148,18 @@ function parseMoney(value: string): number | null {
     return null;
   }
 
-  return Math.round(
-    (amount + Number.EPSILON) * 100,
-  ) / 100;
+  return (
+    Math.round(
+      (amount + Number.EPSILON) * 100,
+    ) / 100
+  );
 }
 
 function getDefaultDate(): string {
   const now = new Date();
 
   const year = now.getFullYear();
+
   const month = String(
     now.getMonth() + 1,
   ).padStart(2, "0");
@@ -331,6 +335,9 @@ export default function LoanForm({
   const [principal, setPrincipal] =
     useState("");
 
+  const [installmentAmount, setInstallmentAmount] =
+    useState("");
+
   const [disbursementDate, setDisbursementDate] =
     useState(getDefaultDate());
 
@@ -382,10 +389,7 @@ export default function LoanForm({
 
   function showError(
     message: string,
-    section: Exclude<
-      ErrorSection,
-      null
-    >,
+    section: Exclude<ErrorSection, null>,
   ) {
     setError(message);
     setErrorSection(section);
@@ -397,10 +401,7 @@ export default function LoanForm({
   }
 
   function clearSectionError(
-    section: Exclude<
-      ErrorSection,
-      null
-    >,
+    section: Exclude<ErrorSection, null>,
   ) {
     if (errorSection === section) {
       setError(null);
@@ -422,6 +423,7 @@ export default function LoanForm({
 
     setType("regular");
     setPrincipal("");
+    setInstallmentAmount("");
 
     setDisbursementDate(
       getDefaultDate(),
@@ -455,8 +457,23 @@ export default function LoanForm({
     }
 
     setType(loan.type);
+
     setPrincipal(
       String(loan.principal),
+    );
+
+    /*
+     * IMPORTANT:
+     *
+     * The contractual repayment installment is stored on
+     * the loan as installmentAmount.
+     *
+     * Load it into the edit form so PATCH does not send
+     * an empty/null installment when the user edits another
+     * field.
+     */
+    setInstallmentAmount(
+      String(loan.installmentAmount),
     );
 
     const loanDisbursementDate =
@@ -672,7 +689,7 @@ export default function LoanForm({
 
   /* =========================================================
      LOAD MEMBER
-     
+
      CREATE:
        Uses memberId prop if supplied and forLoan=true.
 
@@ -682,43 +699,103 @@ export default function LoanForm({
   ========================================================= */
 
   useEffect(() => {
-  if (!open) return;
-
-  const cleanMemberId =
-    loan?.memberId?.trim() ??
-    memberId?.trim() ??
-    "";
-
-  if (!cleanMemberId) {
-    setMember(null);
-
-    if (!isEditMode) {
-      setMemberSearch("");
+    if (!open) {
+      return;
     }
 
-    return;
-  }
+    const cleanMemberId =
+      loan?.memberId?.trim() ??
+      memberId?.trim() ??
+      "";
 
-  let cancelled = false;
+    if (!cleanMemberId) {
+      setMember(null);
 
-  async function loadSelectedMember() {
-    try {
-      clearSectionError("member");
+      if (!isEditMode) {
+        setMemberSearch("");
+      }
 
-      /*
-       * EDIT MODE
-       *
-       * A loan already contains the exact MongoDB
-       * member ID. Use the dedicated member endpoint.
-       *
-       * We deliberately do NOT use the paginated/search
-       * members endpoint here.
-       */
-      if (isEditMode) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadSelectedMember() {
+      try {
+        clearSectionError("member");
+
+        /*
+         * EDIT MODE
+         *
+         * A loan already contains the exact MongoDB
+         * member ID. Use the dedicated member endpoint.
+         *
+         * We deliberately do NOT use the paginated/search
+         * members endpoint here.
+         */
+        if (isEditMode) {
+          const response = await fetch(
+            `/api/members/${encodeURIComponent(
+              cleanMemberId,
+            )}`,
+            {
+              method: "GET",
+              cache: "no-store",
+              headers: {
+                Accept: "application/json",
+              },
+            },
+          );
+
+          let result:
+            | {
+                success?: boolean;
+                data?: Member;
+                error?: string;
+              }
+            | null = null;
+
+          try {
+            result = await response.json();
+          } catch {
+            result = null;
+          }
+
+          if (cancelled) {
+            return;
+          }
+
+          if (
+            !response.ok ||
+            !result?.success ||
+            !result.data
+          ) {
+            throw new Error(
+              result?.error ||
+                "Unable to load the member attached to this loan.",
+            );
+          }
+
+          setMember(result.data);
+
+          /*
+           * The member is locked in edit mode.
+           *
+           * We intentionally do not modify memberSearch
+           * because the member cannot be changed.
+           */
+          return;
+        }
+
+        /*
+         * CREATE MODE
+         *
+         * Preserve the existing loan-eligible member search.
+         */
         const response = await fetch(
-          `/api/members/${encodeURIComponent(
+          `/api/members?search=${encodeURIComponent(
             cleanMemberId,
-          )}`,
+          )}&page=1&limit=10&forLoan=true`,
           {
             method: "GET",
             cache: "no-store",
@@ -729,127 +806,76 @@ export default function LoanForm({
         );
 
         let result:
-          | {
-              success?: boolean;
-              data?: Member;
-              error?: string;
-            }
+          | MembersResponse
           | null = null;
 
         try {
-          result = await response.json();
+          result =
+            await response.json();
         } catch {
           result = null;
         }
 
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
 
         if (
           !response.ok ||
           !result?.success ||
-          !result.data
+          !Array.isArray(result.data)
         ) {
           throw new Error(
             result?.error ||
-              "Unable to load the member attached to this loan.",
+              "Unable to load member.",
           );
         }
 
-        setMember(result.data);
+        const found = result.data.find(
+          (item) =>
+            String(item._id) ===
+            cleanMemberId,
+        );
 
-        /*
-         * The member is locked in edit mode.
-         *
-         * We intentionally do not modify memberSearch
-         * because the member cannot be changed.
-         */
-        return;
-      }
+        if (!found) {
+          throw new Error(
+            "The selected member could not be found or is not eligible for a new loan.",
+          );
+        }
 
-      /*
-       * CREATE MODE
-       *
-       * Preserve the existing loan-eligible member search.
-       */
-      const response = await fetch(
-        `/api/members?search=${encodeURIComponent(
-          cleanMemberId,
-        )}&page=1&limit=10&forLoan=true`,
-        {
-          method: "GET",
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
-          },
-        },
-      );
+        setMember(found);
+      } catch (loadError) {
+        if (cancelled) {
+          return;
+        }
 
-      let result:
-        | MembersResponse
-        | null = null;
+        console.error(
+          "Loan member loading error:",
+          loadError,
+        );
 
-      try {
-        result = await response.json();
-      } catch {
-        result = null;
-      }
+        setMember(null);
 
-      if (cancelled) return;
-
-      if (
-        !response.ok ||
-        !result?.success ||
-        !Array.isArray(result.data)
-      ) {
-        throw new Error(
-          result?.error ||
-            "Unable to load member.",
+        showError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Unable to load member.",
+          "member",
         );
       }
-
-      const found = result.data.find(
-        (item) =>
-          String(item._id) ===
-          cleanMemberId,
-      );
-
-      if (!found) {
-        throw new Error(
-          "The selected member could not be found or is not eligible for a new loan.",
-        );
-      }
-
-      setMember(found);
-    } catch (loadError) {
-      if (cancelled) return;
-
-      console.error(
-        "Loan member loading error:",
-        loadError,
-      );
-
-      setMember(null);
-
-      showError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Unable to load member.",
-        "member",
-      );
     }
-  }
 
-  void loadSelectedMember();
+    void loadSelectedMember();
 
-  return () => {
-    cancelled = true;
-  };
-}, [
-  open,
-  loan,
-  memberId,
-  isEditMode,
-]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    open,
+    loan,
+    memberId,
+    isEditMode,
+  ]);
 
   /* =========================================================
      MEMBER SEARCH
@@ -1106,6 +1132,9 @@ export default function LoanForm({
   const parsedPrincipal =
     parseMoney(principal);
 
+  const parsedInstallment =
+    parseMoney(installmentAmount);
+
   const interestRate =
     settings
       ? type === "emergency"
@@ -1274,6 +1303,24 @@ export default function LoanForm({
   }
 
   /* =========================================================
+     INSTALLMENT HANDLER
+  ========================================================= */
+
+  function handleInstallmentChange(
+    value: string,
+  ) {
+    if (submitting) {
+      return;
+    }
+
+    setInstallmentAmount(value);
+
+    clearSectionError(
+      "principal",
+    );
+  }
+
+  /* =========================================================
      GUARANTOR HANDLERS
   ========================================================= */
 
@@ -1319,486 +1366,506 @@ export default function LoanForm({
     );
   }
 
-  /* =========================================================
-     SUBMIT
-  ========================================================= */
+/* =========================================================
+   SUBMIT
+========================================================= */
 
-  async function handleSubmit(
-    event: FormEvent<HTMLFormElement>,
+async function handleSubmit(
+  event: FormEvent<HTMLFormElement>,
+) {
+  event.preventDefault();
+
+  if (submitting) {
+    return;
+  }
+
+  clearError();
+
+  /* -------------------------------------------------------
+     MEMBER
+  ------------------------------------------------------- */
+
+  if (!member) {
+    showError(
+      isEditMode
+        ? "Unable to load the loan member."
+        : "Select a member before creating the loan.",
+      "member",
+    );
+
+    return;
+  }
+
+  const selectedMemberId =
+    getMemberId(member);
+
+  if (!selectedMemberId) {
+    showError(
+      "Selected member has no valid member ID.",
+      "member",
+    );
+
+    return;
+  }
+
+  if (
+    member.status !==
+    "active"
   ) {
-    event.preventDefault();
+    showError(
+      "Only active members can receive loans.",
+      "member",
+    );
 
-    if (submitting) {
-      return;
-    }
+    return;
+  }
 
-    clearError();
+  /* -------------------------------------------------------
+     SAVINGS
 
-    /* -------------------------------------------------------
-       MEMBER
-    ------------------------------------------------------- */
+     These checks apply only to CREATE.
 
-    if (!member) {
+     During EDIT, the backend decides whether the loan
+     itself is editable. We do not treat an edit as a
+     brand-new loan application.
+  ------------------------------------------------------- */
+
+  if (
+    !isEditMode &&
+    type === "regular" &&
+    !savingsAccount
+  ) {
+    showError(
+      "The member does not have an active fixed savings account.",
+      "savings",
+    );
+
+    return;
+  }
+
+  if (
+    !isEditMode &&
+    type === "regular" &&
+    savingsAccount
+  ) {
+    const active =
+      savingsAccount.isActive !==
+        false &&
+      savingsAccount.status !==
+        "inactive";
+
+    if (!active) {
       showError(
-        isEditMode
-          ? "Unable to load the loan member."
-          : "Select a member before creating the loan.",
-        "member",
-      );
-
-      return;
-    }
-
-    const selectedMemberId =
-      getMemberId(member);
-
-    if (!selectedMemberId) {
-      showError(
-        "Selected member has no valid member ID.",
-        "member",
-      );
-
-      return;
-    }
-
-    if (
-      member.status !==
-      "active"
-    ) {
-      showError(
-        "Only active members can receive loans.",
-        "member",
-      );
-
-      return;
-    }
-
-    /* -------------------------------------------------------
-       SAVINGS
-
-       These checks apply only to CREATE.
-
-       During EDIT, the backend decides whether the loan
-       itself is editable. We do not treat an edit as a
-       brand-new loan application.
-    ------------------------------------------------------- */
-
-    if (
-      !isEditMode &&
-      type === "regular" &&
-      !savingsAccount
-    ) {
-      showError(
-        "The member does not have an active fixed savings account.",
+        "The member's fixed savings account is inactive.",
         "savings",
       );
 
       return;
     }
+  }
 
-    if (
-      !isEditMode &&
-      type === "regular" &&
-      savingsAccount
-    ) {
-      const active =
-        savingsAccount.isActive !==
-          false &&
-        savingsAccount.status !==
-          "inactive";
+  /* -------------------------------------------------------
+     SETTINGS
+  ------------------------------------------------------- */
 
-      if (!active) {
-        showError(
-          "The member's fixed savings account is inactive.",
-          "savings",
+  if (!settings) {
+    showError(
+      "Loan settings are not available. Please refresh and try again.",
+      "settings",
+    );
+
+    return;
+  }
+
+  if (
+    !Number.isInteger(
+      settings.repaymentCycleDays,
+    ) ||
+    settings.repaymentCycleDays <=
+      0
+  ) {
+    showError(
+      "Loan repayment cycle settings are invalid.",
+      "settings",
+    );
+
+    return;
+  }
+
+  if (
+    !Number.isFinite(
+      settings.fineRate,
+    ) ||
+    settings.fineRate < 0 ||
+    settings.fineRate > 1
+  ) {
+    showError(
+      "Loan fine rate settings are invalid.",
+      "settings",
+    );
+
+    return;
+  }
+
+  /* -------------------------------------------------------
+     LOAN TYPE ENABLED
+  ------------------------------------------------------- */
+
+  if (
+    type === "emergency" &&
+    !settings.emergencyLoansEnabled
+  ) {
+    showError(
+      "Emergency loans are currently disabled.",
+      "type",
+    );
+
+    return;
+  }
+
+  if (
+    type === "regular" &&
+    !settings.regularLoansEnabled
+  ) {
+    showError(
+      "Regular loans are currently disabled.",
+      "type",
+    );
+
+    return;
+  }
+
+  /* -------------------------------------------------------
+     PRINCIPAL
+  ------------------------------------------------------- */
+
+  const amount =
+    parseMoney(principal);
+
+  if (amount === null) {
+    showError(
+      "Enter a valid loan amount greater than zero.",
+      "principal",
+    );
+
+    return;
+  }
+
+  /* -------------------------------------------------------
+     REPAYMENT INSTALLMENT
+
+     Applies to BOTH CREATE and EDIT.
+
+     This is the contractual amount expected from the
+     member during every repayment cycle.
+  ------------------------------------------------------- */
+
+  const installment =
+    parseMoney(
+      installmentAmount,
+    );
+
+  if (
+    installment === null ||
+    installment <= 0
+  ) {
+    showError(
+      "Enter a valid repayment installment greater than zero.",
+      "principal",
+    );
+
+    return;
+  }
+
+  if (installment > amount) {
+    showError(
+      "Repayment installment cannot exceed the loan amount.",
+      "principal",
+    );
+
+    return;
+  }
+
+  /* -------------------------------------------------------
+     REGULAR ELIGIBILITY
+
+     New loans only.
+  ------------------------------------------------------- */
+
+  if (
+    !isEditMode &&
+    type === "regular" &&
+    belowRegularMinimum
+  ) {
+    showError(
+      `Regular loan requires minimum savings of ${formatKES(
+        settings.regularMinimumSavings,
+      )}.`,
+      "savings",
+    );
+
+    return;
+  }
+
+  if (
+    !isEditMode &&
+    type === "regular" &&
+    exceedsRegularLimit
+  ) {
+    showError(
+      `Regular loan cannot exceed ${formatKES(
+        maximumRegularLoan,
+      )} based on the member's current savings.`,
+      "principal",
+    );
+
+    return;
+  }
+
+  /* -------------------------------------------------------
+     LOAN CALENDAR DATES
+
+     These values come from <input type="date"> and should
+     remain YYYY-MM-DD strings.
+
+     DO NOT convert them to JavaScript Date objects here.
+
+     DO NOT use:
+       new Date(value)
+       value.toISOString()
+
+     The API is responsible for converting the validated
+     calendar date into the canonical database representation.
+  ------------------------------------------------------- */
+
+  const validCalendarDate =
+    (value: unknown): value is string => {
+      if (
+        typeof value !== "string"
+      ) {
+        return false;
+      }
+
+      const trimmed =
+        value.trim();
+
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+          trimmed,
+        )
+      ) {
+        return false;
+      }
+
+      const match =
+        /^(\d{4})-(\d{2})-(\d{2})$/.exec(
+          trimmed,
         );
 
-        return;
-      }
-    }
-
-    /* -------------------------------------------------------
-       SETTINGS
-    ------------------------------------------------------- */
-
-    if (!settings) {
-      showError(
-        "Loan settings are not available. Please refresh and try again.",
-        "settings",
-      );
-
-      return;
-    }
-
-    if (
-      !Number.isInteger(
-        settings.repaymentCycleDays,
-      ) ||
-      settings.repaymentCycleDays <=
-        0
-    ) {
-      showError(
-        "Loan repayment cycle settings are invalid.",
-        "settings",
-      );
-
-      return;
-    }
-
-    if (
-      !Number.isFinite(
-        settings.fineRate,
-      ) ||
-      settings.fineRate < 0 ||
-      settings.fineRate > 1
-    ) {
-      showError(
-        "Loan fine rate settings are invalid.",
-        "settings",
-      );
-
-      return;
-    }
-
-    /* -------------------------------------------------------
-       LOAN TYPE ENABLED
-    ------------------------------------------------------- */
-
-    if (
-      type === "emergency" &&
-      !settings.emergencyLoansEnabled
-    ) {
-      showError(
-        "Emergency loans are currently disabled.",
-        "type",
-      );
-
-      return;
-    }
-
-    if (
-      type === "regular" &&
-      !settings.regularLoansEnabled
-    ) {
-      showError(
-        "Regular loans are currently disabled.",
-        "type",
-      );
-
-      return;
-    }
-
-    /* -------------------------------------------------------
-       PRINCIPAL
-    ------------------------------------------------------- */
-
-    const amount =
-      parseMoney(principal);
-
-    if (amount === null) {
-      showError(
-        "Enter a valid loan amount greater than zero.",
-        "principal",
-      );
-
-      return;
-    }
-
-    /* -------------------------------------------------------
-       REGULAR ELIGIBILITY
-
-       New loans only.
-    ------------------------------------------------------- */
-
-    if (
-      !isEditMode &&
-      type === "regular" &&
-      belowRegularMinimum
-    ) {
-      showError(
-        `Regular loan requires minimum savings of ${formatKES(
-          settings.regularMinimumSavings,
-        )}.`,
-        "savings",
-      );
-
-      return;
-    }
-
-    if (
-      !isEditMode &&
-      type === "regular" &&
-      exceedsRegularLimit
-    ) {
-      showError(
-        `Regular loan cannot exceed ${formatKES(
-          maximumRegularLoan,
-        )} based on the member's current savings.`,
-        "principal",
-      );
-
-      return;
-    }
-
-    /* -------------------------------------------------------
-       DISBURSEMENT DATE
-    ------------------------------------------------------- */
-
-    const parsedDisbursementDate =
-      getDateObject(
-        disbursementDate,
-      );
-
-    if (!parsedDisbursementDate) {
-      showError(
-        "Enter a valid disbursement date.",
-        "dates",
-      );
-
-      return;
-    }
-
-    /* -------------------------------------------------------
-       REPAYMENT DATE
-    ------------------------------------------------------- */
-
-    const parsedRepaymentDate =
-      getDateObject(
-        repaymentDate,
-      );
-
-    if (!parsedRepaymentDate) {
-      showError(
-        "A valid repayment date is required.",
-        "dates",
-      );
-
-      return;
-    }
-
-    if (
-      parsedRepaymentDate.getTime() <
-      parsedDisbursementDate.getTime()
-    ) {
-      showError(
-        "Repayment date cannot be before the disbursement date.",
-        "dates",
-      );
-
-      return;
-    }
-
-    /* -------------------------------------------------------
-       END DATE
-    ------------------------------------------------------- */
-
-    const parsedEndDate =
-      getDateObject(endDate);
-
-    if (!parsedEndDate) {
-      showError(
-        "A valid loan end date is required.",
-        "dates",
-      );
-
-      return;
-    }
-
-    if (
-      parsedEndDate.getTime() <
-      parsedRepaymentDate.getTime()
-    ) {
-      showError(
-        "End date cannot be before the repayment date.",
-        "dates",
-      );
-
-      return;
-    }
-
-    /* -------------------------------------------------------
-       GUARANTOR
-    ------------------------------------------------------- */
-
-    const cleanGuarantorName =
-      guarantorName.trim();
-
-    const cleanGuarantorPhone =
-      guarantorPhone.trim();
-
-    const cleanGuarantorId =
-      guarantorIdNumber.trim();
-
-    if (!cleanGuarantorName) {
-      showError(
-        "Guarantor name is required.",
-        "guarantor",
-      );
-
-      return;
-    }
-
-    if (!cleanGuarantorPhone) {
-      showError(
-        "Guarantor phone number is required.",
-        "guarantor",
-      );
-
-      return;
-    }
-
-    /* -------------------------------------------------------
-       SUBMIT
-    ------------------------------------------------------- */
-
-    setSubmitting(true);
-
-    try {
-      /* =====================================================
-         EDIT LOAN
-      ===================================================== */
-
-      if (isEditMode) {
-        if (!loan?.id) {
-          throw new Error(
-            "The loan does not have a valid ID.",
-          );
-        }
-
-        /*
-         * IMPORTANT:
-         *
-         * Only editable fields are sent.
-         *
-         * We deliberately do NOT send:
-         * - memberId
-         * - loanNumber
-         * - amountPaid
-         * - totalFines
-         * - totalWaivedFines
-         * - outstandingBalance
-         * - fineStatus
-         * - repaymentStatus
-         * - createdBy
-         * - authorizedBy
-         * - createdAt
-         * - interest
-         * - totalDue
-         *
-         * The backend remains authoritative for those.
-         */
-
-        const editInput = {
-          type,
-
-          principal: amount,
-
-          disbursementDate:
-            parsedDisbursementDate.toISOString(),
-
-          repaymentDate:
-            parsedRepaymentDate.toISOString(),
-
-          endDate:
-            parsedEndDate.toISOString(),
-
-          guarantor: {
-            name:
-              cleanGuarantorName,
-
-            phone:
-              cleanGuarantorPhone,
-
-            ...(cleanGuarantorId
-              ? {
-                  idNumber:
-                    cleanGuarantorId,
-                }
-              : {}),
-          },
-        };
-
-        const response =
-          await fetch(
-            `/api/loans/${encodeURIComponent(
-              loan.id,
-            )}`,
-            {
-              method: "PATCH",
-
-              headers: {
-                "Content-Type":
-                  "application/json",
-
-                Accept:
-                  "application/json",
-              },
-
-              body: JSON.stringify(
-                editInput,
-              ),
-            },
-          );
-
-        let result:
-          | LoanApiResponse
-          | null = null;
-
-        try {
-          result =
-            await response.json();
-        } catch {
-          result = null;
-        }
-
-        if (!response.ok) {
-          throw new Error(
-            result?.error ||
-              `Failed to update loan. Server returned ${response.status}.`,
-          );
-        }
-
-        if (
-          !result?.success ||
-          !result.data
-        ) {
-          throw new Error(
-            result?.error ||
-              "Loan was updated but the server returned no loan.",
-          );
-        }
-
-        onSuccess?.(result.data);
-
-        resetForm();
-        onClose();
-
-        return;
+      if (!match) {
+        return false;
       }
 
-      /* =====================================================
-         CREATE LOAN
-      ===================================================== */
+      const year =
+        Number(match[1]);
 
-      const input: CreateLoanInput = {
-        memberId:
-          selectedMemberId,
+      const month =
+        Number(match[2]);
 
+      const day =
+        Number(match[3]);
+
+      const daysInMonth =
+        new Date(
+          Date.UTC(
+            year,
+            month,
+            0,
+          ),
+        ).getUTCDate();
+
+      return (
+        Number.isInteger(year) &&
+        Number.isInteger(month) &&
+        Number.isInteger(day) &&
+        month >= 1 &&
+        month <= 12 &&
+        day >= 1 &&
+        day <= daysInMonth
+      );
+    };
+
+  /* -------------------------------------------------------
+     DISBURSEMENT DATE
+  ------------------------------------------------------- */
+
+  if (
+    !validCalendarDate(
+      disbursementDate,
+    )
+  ) {
+    showError(
+      "Enter a valid disbursement date.",
+      "dates",
+    );
+
+    return;
+  }
+
+  /* -------------------------------------------------------
+     REPAYMENT DATE
+  ------------------------------------------------------- */
+
+  if (
+    !validCalendarDate(
+      repaymentDate,
+    )
+  ) {
+    showError(
+      "A valid repayment date is required.",
+      "dates",
+    );
+
+    return;
+  }
+
+  /*
+   * YYYY-MM-DD strings sort chronologically, so this
+   * comparison is timezone-independent.
+   */
+  if (
+    repaymentDate <
+    disbursementDate
+  ) {
+    showError(
+      "Repayment date cannot be before the disbursement date.",
+      "dates",
+    );
+
+    return;
+  }
+
+  /* -------------------------------------------------------
+     END DATE
+  ------------------------------------------------------- */
+
+  if (
+    !validCalendarDate(
+      endDate,
+    )
+  ) {
+    showError(
+      "A valid loan end date is required.",
+      "dates",
+    );
+
+    return;
+  }
+
+  if (
+    endDate <
+    repaymentDate
+  ) {
+    showError(
+      "End date cannot be before the repayment date.",
+      "dates",
+    );
+
+    return;
+  }
+
+  /* -------------------------------------------------------
+     GUARANTOR
+  ------------------------------------------------------- */
+
+  const cleanGuarantorName =
+    guarantorName.trim();
+
+  const cleanGuarantorPhone =
+    guarantorPhone.trim();
+
+  const cleanGuarantorId =
+    guarantorIdNumber.trim();
+
+  if (!cleanGuarantorName) {
+    showError(
+      "Guarantor name is required.",
+      "guarantor",
+    );
+
+    return;
+  }
+
+  if (!cleanGuarantorPhone) {
+    showError(
+      "Guarantor phone number is required.",
+      "guarantor",
+    );
+
+    return;
+  }
+
+  /* -------------------------------------------------------
+     SUBMIT
+  ------------------------------------------------------- */
+
+  setSubmitting(true);
+
+  try {
+    /* =====================================================
+       EDIT LOAN
+    ===================================================== */
+
+    if (isEditMode) {
+      if (!loan?.id) {
+        throw new Error(
+          "The loan does not have a valid ID.",
+        );
+      }
+
+      /*
+       * Only editable fields are sent.
+       *
+       * We deliberately do NOT send:
+       * - memberId
+       * - loanNumber
+       * - amountPaid
+       * - totalFines
+       * - totalWaivedFines
+       * - outstandingBalance
+       * - fineStatus
+       * - repaymentStatus
+       * - createdBy
+       * - authorizedBy
+       * - createdAt
+       * - interest
+       * - totalDue
+       *
+       * The backend remains authoritative for those.
+       *
+       * IMPORTANT:
+       *
+       * Calendar dates remain YYYY-MM-DD strings.
+       * They are NOT converted to ISO timestamps.
+       */
+
+      const editInput = {
         type,
 
-        principal: amount,
+        principal:
+          amount,
 
-        fineRate:
-          settings.fineRate,
+        installmentAmount:
+          installment,
 
         disbursementDate:
-          parsedDisbursementDate,
+          disbursementDate,
 
         repaymentDate:
-          parsedRepaymentDate,
+          repaymentDate,
 
         endDate:
-          parsedEndDate,
+          endDate,
 
         guarantor: {
           name:
@@ -1818,9 +1885,11 @@ export default function LoanForm({
 
       const response =
         await fetch(
-          "/api/loans",
+          `/api/loans/${encodeURIComponent(
+            loan.id,
+          )}`,
           {
-            method: "POST",
+            method: "PATCH",
 
             headers: {
               "Content-Type":
@@ -1830,18 +1899,9 @@ export default function LoanForm({
                 "application/json",
             },
 
-            body: JSON.stringify({
-              ...input,
-
-              disbursementDate:
-                parsedDisbursementDate.toISOString(),
-
-              repaymentDate:
-                parsedRepaymentDate.toISOString(),
-
-              endDate:
-                parsedEndDate.toISOString(),
-            }),
+            body: JSON.stringify(
+              editInput,
+            ),
           },
         );
 
@@ -1859,7 +1919,7 @@ export default function LoanForm({
       if (!response.ok) {
         throw new Error(
           result?.error ||
-            `Failed to create loan. Server returned ${response.status}.`,
+            `Failed to update loan. Server returned ${response.status}.`,
         );
       }
 
@@ -1869,34 +1929,145 @@ export default function LoanForm({
       ) {
         throw new Error(
           result?.error ||
-            "Loan was created but the server returned no loan.",
+            "Loan was updated but the server returned no loan.",
         );
       }
 
-      onSuccess?.(result.data);
+      onSuccess?.(
+        result.data,
+      );
 
       resetForm();
       onClose();
-    } catch (submitError) {
-      console.error(
-        isEditMode
-          ? "Loan update error:"
-          : "Loan creation error:",
-        submitError,
+
+      return;
+    }
+
+    /* =====================================================
+       CREATE LOAN
+    ===================================================== */
+
+    /*
+     * Keep the date values as calendar-date strings when
+     * sending them to the API.
+     *
+     * The API/service will normalize them into the canonical
+     * database representation.
+     */
+    const input = {
+      memberId:
+        selectedMemberId,
+
+      type,
+
+      principal:
+        amount,
+
+      installmentAmount:
+        installment,
+
+      fineRate:
+        settings.fineRate,
+
+      disbursementDate:
+        disbursementDate,
+
+      repaymentDate:
+        repaymentDate,
+
+      endDate:
+        endDate,
+
+      guarantor: {
+        name:
+          cleanGuarantorName,
+
+        phone:
+          cleanGuarantorPhone,
+
+        ...(cleanGuarantorId
+          ? {
+              idNumber:
+                cleanGuarantorId,
+            }
+          : {}),
+      },
+    };
+
+    const response =
+      await fetch(
+        "/api/loans",
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+
+            Accept:
+              "application/json",
+          },
+
+          body: JSON.stringify(
+            input,
+          ),
+        },
       );
 
-      showError(
-        submitError instanceof Error
-          ? submitError.message
-          : isEditMode
-            ? "Failed to update loan."
-            : "Failed to create loan.",
-        "general",
-      );
-    } finally {
-      setSubmitting(false);
+    let result:
+      | LoanApiResponse
+      | null = null;
+
+    try {
+      result =
+        await response.json();
+    } catch {
+      result = null;
     }
+
+    if (!response.ok) {
+      throw new Error(
+        result?.error ||
+          `Failed to create loan. Server returned ${response.status}.`,
+      );
+    }
+
+    if (
+      !result?.success ||
+      !result.data
+    ) {
+      throw new Error(
+        result?.error ||
+          "Loan was created but the server returned no loan.",
+      );
+    }
+
+    onSuccess?.(
+      result.data,
+    );
+
+    resetForm();
+    onClose();
+  } catch (submitError) {
+    console.error(
+      isEditMode
+        ? "Loan update error:"
+        : "Loan creation error:",
+      submitError,
+    );
+
+    showError(
+      submitError instanceof Error
+        ? submitError.message
+        : isEditMode
+          ? "Failed to update loan."
+          : "Failed to create loan.",
+      "general",
+    );
+  } finally {
+    setSubmitting(false);
   }
+}
 
   /* =========================================================
      CLOSE
@@ -2227,8 +2398,6 @@ export default function LoanForm({
                 </div>
               )}
 
-              {/* MEMBER ERROR */}
-
               {error &&
                 errorSection ===
                   "member" && (
@@ -2236,8 +2405,6 @@ export default function LoanForm({
                     {error}
                   </SectionError>
                 )}
-
-              {/* SAVINGS */}
 
               {member && (
                 <div className="mt-3 rounded-xl bg-black/20 p-3">
@@ -2284,8 +2451,6 @@ export default function LoanForm({
                   </div>
                 </div>
               )}
-
-              {/* SAVINGS ERROR */}
 
               {error &&
                 errorSection ===
@@ -2424,8 +2589,6 @@ export default function LoanForm({
                   </SectionError>
                 )}
 
-              {/* REGULAR ELIGIBILITY */}
-
               {type === "regular" &&
                 settings &&
                 member && (
@@ -2491,8 +2654,8 @@ export default function LoanForm({
 
                 <p className="mt-1 text-xs text-white/40">
                   {isEditMode
-                    ? "Update the editable principal and repayment schedule."
-                    : "Enter the principal and repayment schedule."}
+                    ? "Update the editable principal, installment and repayment schedule."
+                    : "Enter the principal, repayment installment and repayment schedule."}
                 </p>
               </div>
 
@@ -2549,6 +2712,56 @@ export default function LoanForm({
                       </FieldError>
                     )}
                 </label>
+
+                {/* REPAYMENT INSTALLMENT */}
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="installment-amount"
+                    className="text-sm font-medium text-white/80"
+                  >
+                    Repayment installment
+                  </label>
+
+                  <input
+                    id="installment-amount"
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={
+                      installmentAmount
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      handleInstallmentChange(
+                        event.target
+                          .value,
+                      )
+                    }
+                    placeholder="e.g. 5,000"
+                    disabled={
+                      submitting
+                    }
+                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-white/30 focus:border-sky-400/50 focus:ring-2 focus:ring-sky-400/20"
+                  />
+
+                  <p className="text-xs text-white/40">
+                    Amount the member is expected to pay every repayment cycle.
+                  </p>
+
+                  {parsedInstallment !==
+                    null &&
+                    parsedPrincipal !==
+                      null &&
+                    parsedInstallment >
+                      parsedPrincipal && (
+                      <FieldError>
+                        Repayment installment cannot exceed the loan amount.
+                      </FieldError>
+                    )}
+                </div>
 
                 {/* DISBURSEMENT */}
 
@@ -2734,7 +2947,7 @@ export default function LoanForm({
                     </p>
 
                     <p className="mt-1 text-[10px] leading-4 text-white/30">
-                      Applied once per completed repayment cycle.
+                      Applied once per completed repayment cycle to the unpaid installment amount.
                     </p>
                   </div>
                 </div>
@@ -2744,7 +2957,7 @@ export default function LoanForm({
 
               {parsedPrincipal !==
                 null && (
-                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-6">
                   <div className="rounded-xl bg-black/20 p-3">
                     <p className="text-[9px] uppercase tracking-wide text-white/30">
                       Principal
@@ -2754,6 +2967,21 @@ export default function LoanForm({
                       {formatKES(
                         parsedPrincipal,
                       )}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-black/20 p-3">
+                    <p className="text-[9px] uppercase tracking-wide text-white/30">
+                      Installment
+                    </p>
+
+                    <p className="mt-1 text-xs font-semibold text-sky-300">
+                      {parsedInstallment !==
+                      null
+                        ? formatKES(
+                            parsedInstallment,
+                          )
+                        : "—"}
                     </p>
                   </div>
 
@@ -3023,6 +3251,21 @@ export default function LoanForm({
                       {formatKES(
                         parsedPrincipal,
                       )}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between gap-4">
+                    <span className="text-white/45">
+                      Repayment installment
+                    </span>
+
+                    <span className="font-semibold text-sky-300">
+                      {parsedInstallment !==
+                      null
+                        ? formatKES(
+                            parsedInstallment,
+                          )
+                        : "—"}
                     </span>
                   </div>
 

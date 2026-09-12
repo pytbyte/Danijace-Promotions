@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -152,17 +151,6 @@ function getProfileImageUrl(
    IMAGE COMPRESSION
 ========================================================= */
 
-/**
- * Normalizes any supported image into:
- *
- * 512 × 512
- * JPEG
- * quality 0.78
- *
- * Camera photos, gallery photos, PNG and WebP
- * are therefore converted into one compact format
- * before reaching Vercel Blob.
- */
 async function compressProfileImage(
   file: File,
 ): Promise<Blob> {
@@ -246,9 +234,6 @@ async function compressProfileImage(
       );
     }
 
-    /*
-     * Center crop into a square.
-     */
     const sourceSize =
       Math.min(
         sourceWidth,
@@ -265,11 +250,6 @@ async function compressProfileImage(
         sourceSize) /
       2;
 
-    /*
-     * JPEG has no transparency.
-     * White background prevents transparent
-     * PNG/WebP areas from becoming black.
-     */
     context.fillStyle =
       "#ffffff";
 
@@ -317,10 +297,6 @@ async function compressProfileImage(
       );
     }
 
-    /*
-     * A 512 × 512 JPEG should normally be
-     * considerably smaller than this.
-     */
     if (
       blob.size >
       1024 * 1024
@@ -340,14 +316,6 @@ async function compressProfileImage(
    BASE64 → FILE
 ========================================================= */
 
-/**
- * Converts a Capacitor Base64 camera result into
- * a real File object.
- *
- * Uses a concrete ArrayBuffer so newer TypeScript
- * versions do not reject Uint8Array<ArrayBufferLike>
- * as a BlobPart.
- */
 function base64ToFile(
   base64: string,
   fileName: string,
@@ -508,10 +476,6 @@ function ProfileImage({
         setUploaded(false);
         setUploading(true);
 
-        /* -------------------------------------------------
-           IMMEDIATE LOCAL PREVIEW
-        ------------------------------------------------- */
-
         temporaryPreview =
           URL.createObjectURL(
             file,
@@ -521,18 +485,10 @@ function ProfileImage({
           temporaryPreview,
         );
 
-        /* -------------------------------------------------
-           NORMALIZE IMAGE
-        ------------------------------------------------- */
-
         const compressed =
           await compressProfileImage(
             file,
           );
-
-        /* -------------------------------------------------
-           UPLOAD JPEG DIRECTLY
-        ------------------------------------------------- */
 
         const response =
           await fetch(
@@ -550,10 +506,6 @@ function ProfileImage({
               body: compressed,
             },
           );
-
-        /* -------------------------------------------------
-           SERVER RESPONSE
-        ------------------------------------------------- */
 
         let result: {
           success?: boolean;
@@ -581,10 +533,6 @@ function ProfileImage({
           );
         }
 
-        /* -------------------------------------------------
-           CACHE-BUSTED IMAGE URL
-        ------------------------------------------------- */
-
         const uploadedUrl =
           result.profileImageUrl ||
           getProfileImageUrl(
@@ -598,10 +546,6 @@ function ProfileImage({
 
         setUploaded(true);
 
-        /* -------------------------------------------------
-           CLEAN TEMPORARY PREVIEW
-        ------------------------------------------------- */
-
         if (
           temporaryPreview
         ) {
@@ -612,10 +556,6 @@ function ProfileImage({
           temporaryPreview =
             null;
         }
-
-        /* -------------------------------------------------
-           SUCCESS INDICATOR
-        ------------------------------------------------- */
 
         window.setTimeout(
           () => {
@@ -631,9 +571,6 @@ function ProfileImage({
           uploadError,
         );
 
-        /*
-         * Restore previous image if upload fails.
-         */
         setPreview(
           initialImageUrl,
         );
@@ -676,19 +613,11 @@ function ProfileImage({
       setUploaded(false);
 
       try {
-        /* -----------------------------------------------
-           CHECK PERMISSION
-        ------------------------------------------------ */
-
         let permissions =
           await Camera.checkPermissions();
 
         let cameraPermission =
           permissions.camera;
-
-        /* -----------------------------------------------
-           REQUEST PERMISSION
-        ------------------------------------------------ */
 
         if (
           cameraPermission !==
@@ -707,10 +636,6 @@ function ProfileImage({
             permissions.camera;
         }
 
-        /* -----------------------------------------------
-           PERMISSION DENIED
-        ------------------------------------------------ */
-
         if (
           cameraPermission !==
           "granted"
@@ -719,10 +644,6 @@ function ProfileImage({
             "Camera permission was not granted. Please allow camera access in your device settings.",
           );
         }
-
-        /* -----------------------------------------------
-           OPEN CAMERA
-        ------------------------------------------------ */
 
         const photo =
           await Camera.getPhoto(
@@ -747,10 +668,6 @@ function ProfileImage({
             },
           );
 
-        /* -----------------------------------------------
-           CAMERA RESULT
-        ------------------------------------------------ */
-
         if (
           !photo.base64String
         ) {
@@ -759,19 +676,11 @@ function ProfileImage({
           );
         }
 
-        /* -----------------------------------------------
-           CONVERT TO FILE
-        ------------------------------------------------ */
-
         const file =
           base64ToFile(
             photo.base64String,
             `${member.membershipNumber}.jpg`,
           );
-
-        /* -----------------------------------------------
-           UPLOAD
-        ------------------------------------------------ */
 
         await uploadProfileImage(
           file,
@@ -782,10 +691,6 @@ function ProfileImage({
           cameraError,
         );
 
-        /*
-         * User cancelling the camera should not
-         * be treated as a serious application error.
-         */
         const message =
           cameraError instanceof
           Error
@@ -845,10 +750,6 @@ function ProfileImage({
       const file =
         event.target.files?.[0];
 
-      /*
-       * Reset the input so selecting the same
-       * photo again is possible.
-       */
       event.target.value =
         "";
 
@@ -907,8 +808,8 @@ function ProfileImage({
           overflow-hidden
           rounded-2xl
           border
-          border-white/10
-          bg-white/10
+          border-slate-200
+          bg-slate-100
           shadow-sm
           transition
           active:scale-95
@@ -940,12 +841,11 @@ function ProfileImage({
               items-center
               justify-center
               bg-gradient-to-br
-              from-blue-500/20
-              to-slate-500/10
+              from-blue-100
+              to-slate-100
               text-lg
               font-semibold
-              text-slate-700
-              dark:text-slate-200
+              text-blue-700
             "
           >
             {getInitials(
@@ -1042,24 +942,6 @@ function ProfileImage({
       </button>
 
       {/* =================================================
-          OPTIONAL GALLERY ACTION
-
-          Kept available internally, but the visible
-          interaction remains camera-first.
-      ================================================= */}
-
-      {/*
-      <button
-        type="button"
-        onClick={
-          handleSelectFromGallery
-        }
-      >
-        Choose from gallery
-      </button>
-      */}
-
-      {/* =================================================
           ERROR
       ================================================= */}
 
@@ -1072,14 +954,13 @@ function ProfileImage({
             z-20
             w-60
             rounded-lg
-            bg-red-500/10
+            bg-red-50
             px-2
             py-1.5
             text-[10px]
             font-medium
             leading-tight
             text-red-600
-            dark:text-red-400
           "
         >
           {error}
@@ -1102,21 +983,21 @@ function StatusBadge({
     active: {
       label: "Active",
       badge:
-        "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+        "bg-emerald-50 text-emerald-700",
       dot: "bg-emerald-500",
     },
 
     inactive: {
       label: "Inactive",
       badge:
-        "bg-slate-500/10 text-slate-600 dark:text-slate-400",
+        "bg-slate-100 text-slate-600",
       dot: "bg-slate-400",
     },
 
     suspended: {
       label: "Suspended",
       badge:
-        "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+        "bg-amber-50 text-amber-700",
       dot: "bg-amber-500",
     },
   } satisfies Record<
@@ -1220,13 +1101,10 @@ function MemberCard({
         overflow-hidden
         rounded-3xl
         border
-        border-slate-200/70
-        bg-blue-50/80
+        border-slate-200
+        bg-white
         p-4
         shadow-[0_10px_40px_rgba(15,23,42,0.07)]
-        dark:border-white/10
-        dark:bg-slate-900
-        dark:shadow-none
       "
     >
       {/* ===================================================
@@ -1260,8 +1138,7 @@ function MemberCard({
                 truncate
                 text-sm
                 font-bold
-                text-slate-900
-                dark:text-white
+                text-black
               "
             >
               {fullName ||
@@ -1273,8 +1150,7 @@ function MemberCard({
                 mt-0.5
                 text-[11px]
                 font-medium
-                text-slate-500
-                dark:text-slate-400
+                text-black/50
               "
             >
               {
@@ -1310,7 +1186,7 @@ function MemberCard({
         <div
           className="
             rounded-2xl
-            bg-emerald-500/8
+            bg-emerald-50
             p-3
           "
         >
@@ -1318,8 +1194,7 @@ function MemberCard({
             className="
               text-[10px]
               font-medium
-              text-slate-500
-              dark:text-slate-400
+              text-black/50
             "
           >
             Savings
@@ -1331,8 +1206,7 @@ function MemberCard({
               truncate
               text-base
               font-bold
-              text-slate-900
-              dark:text-white
+              text-black
             "
           >
             {formatCurrency(
@@ -1346,7 +1220,7 @@ function MemberCard({
         <div
           className="
             rounded-2xl
-            bg-amber-500/8
+            bg-amber-50
             p-3
           "
         >
@@ -1354,8 +1228,7 @@ function MemberCard({
             className="
               text-[10px]
               font-medium
-              text-slate-500
-              dark:text-slate-400
+              text-black/50
             "
           >
             Loan balance
@@ -1367,8 +1240,7 @@ function MemberCard({
               truncate
               text-base
               font-bold
-              text-slate-900
-              dark:text-white
+              text-black
             "
           >
             {loan
@@ -1399,15 +1271,13 @@ function MemberCard({
             rounded-2xl
             bg-slate-50
             p-3
-            dark:bg-white/5
           "
         >
           <p
             className="
               text-[10px]
               font-medium
-              text-slate-500
-              dark:text-slate-400
+              text-black/50
             "
           >
             Deposits
@@ -1419,8 +1289,7 @@ function MemberCard({
               truncate
               text-xs
               font-bold
-              text-slate-900
-              dark:text-white
+              text-black
             "
           >
             {formatCurrency(
@@ -1436,15 +1305,13 @@ function MemberCard({
             rounded-2xl
             bg-slate-50
             p-3
-            dark:bg-white/5
           "
         >
           <p
             className="
               text-[10px]
               font-medium
-              text-slate-500
-              dark:text-slate-400
+              text-black/50
             "
           >
             Withdrawals
@@ -1456,8 +1323,7 @@ function MemberCard({
               truncate
               text-xs
               font-bold
-              text-slate-900
-              dark:text-white
+              text-black
             "
           >
             {formatCurrency(
@@ -1491,8 +1357,7 @@ function MemberCard({
           <span
             className="
               text-xs
-              text-slate-500
-              dark:text-slate-400
+              text-black/50
             "
           >
             Phone
@@ -1504,8 +1369,7 @@ function MemberCard({
               truncate
               text-xs
               font-semibold
-              text-slate-900
-              dark:text-white
+              text-black
             "
           >
             {member.phone ||
@@ -1526,8 +1390,7 @@ function MemberCard({
           <span
             className="
               text-xs
-              text-slate-500
-              dark:text-slate-400
+              text-black/50
             "
           >
             Gender
@@ -1538,8 +1401,7 @@ function MemberCard({
               text-xs
               font-semibold
               capitalize
-              text-slate-900
-              dark:text-white
+              text-black
             "
           >
             {member.gender ||
@@ -1560,8 +1422,7 @@ function MemberCard({
           <span
             className="
               text-xs
-              text-slate-500
-              dark:text-slate-400
+              text-black/50
             "
           >
             Joined
@@ -1571,8 +1432,7 @@ function MemberCard({
             className="
               text-xs
               font-semibold
-              text-slate-900
-              dark:text-white
+              text-black
             "
           >
             {formatDate(
@@ -1591,7 +1451,7 @@ function MemberCard({
               justify-between
               gap-3
               rounded-xl
-              bg-amber-500/8
+              bg-amber-50
               px-3
               py-2
             "
@@ -1600,8 +1460,7 @@ function MemberCard({
               className="
                 text-[10px]
                 font-medium
-                text-slate-500
-                dark:text-slate-400
+                text-black/50
               "
             >
               Loan
@@ -1613,8 +1472,7 @@ function MemberCard({
                 truncate
                 text-[10px]
                 font-semibold
-                text-slate-900
-                dark:text-white
+                text-black
               "
             >
               {
@@ -1654,11 +1512,10 @@ function MemberCard({
             bg-slate-100
             text-xs
             font-semibold
-            text-slate-700
+            text-black
             transition
+            hover:bg-slate-200
             active:scale-[0.98]
-            dark:bg-white/5
-            dark:text-slate-200
           "
         >
           <Eye className="h-4 w-4" />
@@ -1677,13 +1534,13 @@ function MemberCard({
             justify-center
             gap-1.5
             rounded-xl
-            bg-blue-500/10
+            bg-blue-50
             text-xs
             font-semibold
             text-blue-700
             transition
+            hover:bg-blue-100
             active:scale-[0.98]
-            dark:text-blue-400
           "
         >
           <Pencil className="h-4 w-4" />
@@ -1702,13 +1559,13 @@ function MemberCard({
             justify-center
             gap-1.5
             rounded-xl
-            bg-red-500/10
+            bg-red-50
             text-xs
             font-semibold
             text-red-700
             transition
+            hover:bg-red-100
             active:scale-[0.98]
-            dark:text-red-400
           "
         >
           <Trash2 className="h-4 w-4" />
@@ -1743,9 +1600,9 @@ export default function MemberList({
           border
           border-dashed
           border-slate-200
+          bg-white
           px-6
           text-center
-          dark:border-white/10
         "
       >
         <div>
@@ -1759,7 +1616,6 @@ export default function MemberList({
               justify-center
               rounded-2xl
               bg-slate-100
-              dark:bg-white/5
             "
           >
             <UserRound
@@ -1776,8 +1632,7 @@ export default function MemberList({
               mt-3
               text-sm
               font-semibold
-              text-slate-900
-              dark:text-white
+              text-black
             "
           >
             No members found
@@ -1787,8 +1642,7 @@ export default function MemberList({
             className="
               mt-1
               text-xs
-              text-slate-500
-              dark:text-slate-400
+              text-black/50
             "
           >
             Members will appear

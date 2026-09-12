@@ -266,10 +266,10 @@ function StatusBadge({
 }) {
   const className =
     status === "confirmed"
-      ? "bg-emerald-500/10 text-emerald-400"
+      ? "bg-emerald-50 text-emerald-600"
       : status === "pending"
-        ? "bg-yellow-500/10 text-yellow-400"
-        : "bg-red-500/10 text-red-400";
+        ? "bg-yellow-50 text-yellow-600"
+        : "bg-red-50 text-red-600";
 
   const label =
     status === "confirmed"
@@ -353,7 +353,7 @@ function LoadingRows() {
               colSpan={8}
               className="px-4 py-4"
             >
-              <div className="h-10 animate-pulse rounded-xl bg-white/[0.04]" />
+              <div className="h-10 animate-pulse rounded-xl bg-slate-100" />
             </td>
           </tr>
         )
@@ -376,18 +376,18 @@ function EmptyState() {
         colSpan={8}
         className="px-6 py-16 text-center"
       >
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow-500/10 text-yellow-400">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow-50 text-yellow-600">
           <Wallet
             size={21}
             strokeWidth={1.8}
           />
         </div>
 
-        <p className="mt-4 text-sm font-medium text-white/60">
+        <p className="mt-4 text-sm font-medium text-black/70">
           No savings transactions found
         </p>
 
-        <p className="mt-1 text-xs text-white/25">
+        <p className="mt-1 text-xs text-black/40">
           Transactions matching the current
           filters will appear here.
         </p>
@@ -456,10 +456,10 @@ function TransactionRow({
     <tr
       className="
         border-b
-        border-white/[0.04]
+        border-slate-100
         transition
         last:border-b-0
-        hover:bg-white/[0.015]
+        hover:bg-slate-50
       "
     >
 
@@ -481,8 +481,8 @@ function TransactionRow({
               rounded-xl
               ${
                 positive
-                  ? "bg-emerald-500/10 text-emerald-400"
-                  : "bg-red-500/10 text-red-400"
+                  ? "bg-emerald-50 text-emerald-600"
+                  : "bg-red-50 text-red-600"
               }
             `}
           >
@@ -493,13 +493,13 @@ function TransactionRow({
 
           <div className="min-w-0">
 
-            <p className="text-xs font-medium text-white">
+            <p className="text-xs font-medium text-black">
               {getTypeLabel(
                 transaction.type
               )}
             </p>
 
-            <p className="mt-0.5 max-w-[180px] truncate text-[10px] text-white/25">
+            <p className="mt-0.5 max-w-[180px] truncate text-[10px] text-black/40">
               ID:{" "}
               <span className="font-mono">
                 {transaction.id}
@@ -516,12 +516,12 @@ function TransactionRow({
 
       <td className="max-w-[180px] px-4 py-4">
 
-        <p className="truncate text-xs font-medium text-white/70">
+        <p className="truncate text-xs font-medium text-black/70">
           {transaction.memberName ||
             "Unknown member"}
         </p>
 
-        <p className="mt-0.5 truncate font-mono text-[10px] text-white/20">
+        <p className="mt-0.5 truncate font-mono text-[10px] text-black/35">
           {transaction.memberId}
         </p>
 
@@ -540,8 +540,8 @@ function TransactionRow({
             font-semibold
             ${
               positive
-                ? "text-emerald-400"
-                : "text-red-400"
+                ? "text-emerald-600"
+                : "text-red-600"
             }
           `}
         >
@@ -562,7 +562,7 @@ function TransactionRow({
 
       <td className="px-4 py-4">
 
-        <div className="inline-flex items-center gap-1.5 text-xs text-white/50">
+        <div className="inline-flex items-center gap-1.5 text-xs text-black/50">
 
           {getSourceIcon(
             transaction.source
@@ -588,12 +588,12 @@ function TransactionRow({
 
           <div>
 
-            <p className="truncate font-mono text-[10px] text-white/45">
+            <p className="truncate font-mono text-[10px] text-black/55">
               {transaction.reference}
             </p>
 
             {transaction.sourceReference && (
-              <p className="mt-1 truncate font-mono text-[9px] text-white/20">
+              <p className="mt-1 truncate font-mono text-[9px] text-black/35">
                 {transaction.sourceReference}
               </p>
             )}
@@ -602,7 +602,7 @@ function TransactionRow({
 
         ) : (
 
-          <span className="text-xs text-white/15">
+          <span className="text-xs text-black/20">
             —
           </span>
 
@@ -630,14 +630,14 @@ function TransactionRow({
 
       <td className="whitespace-nowrap px-4 py-4">
 
-        <p className="text-xs text-white/50">
+        <p className="text-xs text-black/50">
           {formatDate(
             transaction.transactionAt
           )}
         </p>
 
         {transaction.relatedTransactionId && (
-          <p className="mt-1 max-w-[150px] truncate font-mono text-[9px] text-white/20">
+          <p className="mt-1 max-w-[150px] truncate font-mono text-[9px] text-black/35">
             Related:{" "}
             {transaction.relatedTransactionId}
           </p>
@@ -674,13 +674,13 @@ function TransactionRow({
                 px-2.5
                 text-[11px]
                 font-medium
-                text-white/40
+                text-black/50
                 transition
-                hover:bg-white/[0.05]
-                hover:text-white
+                hover:bg-slate-100
+                hover:text-black
                 focus:outline-none
                 focus:ring-1
-                focus:ring-white/20
+                focus:ring-black/10
               "
               title="Create adjustment"
               aria-label={`Adjust transaction ${transaction.id}`}
@@ -717,13 +717,13 @@ function TransactionRow({
                 px-2.5
                 text-[11px]
                 font-medium
-                text-red-400/60
+                text-red-600/70
                 transition
-                hover:bg-red-500/[0.08]
-                hover:text-red-400
+                hover:bg-red-50
+                hover:text-red-600
                 focus:outline-none
                 focus:ring-1
-                focus:ring-red-500/30
+                focus:ring-red-500/20
               "
               title="Create reversal"
               aria-label={`Reverse transaction ${transaction.id}`}
@@ -745,7 +745,7 @@ function TransactionRow({
 
           {!adjustable &&
             !reversible && (
-              <span className="px-2.5 text-xs text-white/10">
+              <span className="px-2.5 text-xs text-black/20">
                 —
               </span>
             )}
@@ -788,8 +788,9 @@ export default function SavingsTable({
         overflow-hidden
         rounded-2xl
         border
-        border-white/[0.08]
-        bg-[#0b0b0b]
+        border-slate-200
+        bg-white
+        shadow-sm
       "
     >
 
@@ -800,24 +801,24 @@ export default function SavingsTable({
           scrolling area.
       ===================================================== */}
 
-      <div className="border-b border-white/[0.06] px-4 py-4 sm:px-5">
+      <div className="border-b border-slate-200 px-4 py-4 sm:px-5">
 
         <div className="flex items-center justify-between gap-3">
 
           <div>
 
-            <h2 className="text-sm font-semibold text-white">
+            <h2 className="text-sm font-semibold text-black">
               Transactions
             </h2>
 
-            <p className="mt-0.5 text-xs text-white/30">
+            <p className="mt-0.5 text-xs text-black/40">
               Immutable savings ledger
             </p>
 
           </div>
 
           {!loading && (
-            <span className="text-xs text-white/25">
+            <span className="text-xs text-black/40">
 
               {safeTransactions.length}{" "}
 
@@ -873,37 +874,37 @@ export default function SavingsTable({
 
             <thead>
 
-              <tr className="border-b border-white/[0.06]">
+              <tr className="border-b border-slate-200">
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black/40">
                   Transaction
                 </th>
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black/40">
                   Member
                 </th>
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black/40">
                   Amount
                 </th>
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black/40">
                   Source
                 </th>
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black/40">
                   Reference
                 </th>
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black/40">
                   Status
                 </th>
 
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black/40">
                   Date
                 </th>
 
-                <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-black/40">
                   Actions
                 </th>
 

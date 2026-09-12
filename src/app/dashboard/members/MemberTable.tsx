@@ -25,17 +25,20 @@ export default function MemberTable({
 }: MemberTableProps) {
   if (members.length === 0) {
     return (
-      <div className="hidden min-h-[300px] w-full min-w-0 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.025] p-6 lg:flex">
+      <div className="hidden min-h-[300px] w-full min-w-0 items-center justify-center rounded-2xl border border-slate-200 bg-white p-6 lg:flex">
         <div className="text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.03] text-white/25">
-            <UserRound size={21} strokeWidth={1.5} />
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-white text-black">
+            <UserRound
+              size={21}
+              strokeWidth={1.5}
+            />
           </div>
 
-          <p className="mt-4 text-sm font-medium text-white/50">
+          <p className="mt-4 text-sm font-medium text-black">
             No members found
           </p>
 
-          <p className="mt-2 text-xs text-white/25">
+          <p className="mt-2 text-xs text-black/50">
             Members matching your search will appear here.
           </p>
         </div>
@@ -44,24 +47,26 @@ export default function MemberTable({
   }
 
   return (
-    <div className="hidden w-full min-w-0 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] lg:block">
+    <div className="hidden w-full min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white lg:block">
       {/* HEADER */}
-      <div className="flex min-w-0 items-center justify-between border-b border-white/[0.07] px-4 py-4 xl:px-5">
+      <div className="flex min-w-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-4 xl:px-5">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-white">
+          <h2 className="text-sm font-semibold text-black">
             Member Directory
           </h2>
 
-          <p className="mt-1 text-xs text-white/30">
+          <p className="mt-1 text-xs text-black/50">
             {members.length.toLocaleString()}{" "}
-            {members.length === 1 ? "member" : "members"}
+            {members.length === 1
+              ? "member"
+              : "members"}
           </p>
         </div>
       </div>
 
       {/* TABLE SCROLL AREA */}
-      <div className="max-h-[260px] overflow-auto">
-        <table className="w-full min-w-[760px] table-fixed border-collapse text-left">
+      <div className="max-h-[260px] overflow-auto bg-white">
+        <table className="w-full min-w-[760px] table-fixed border-collapse bg-white text-left">
           <colgroup>
             <col className="w-[32%]" />
             <col className="w-[19%]" />
@@ -71,31 +76,31 @@ export default function MemberTable({
           </colgroup>
 
           {/* STICKY TABLE HEADER */}
-          <thead className="sticky top-0 z-10 bg-[#0b0b0b]">
-            <tr className="border-b border-white/[0.08]">
-              <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25 xl:px-5">
+          <thead className="sticky top-0 z-10 bg-white">
+            <tr className="border-b border-slate-200 bg-white">
+              <th className="px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black xl:px-5">
                 Member
               </th>
 
-              <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+              <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                 Membership No.
               </th>
 
-              <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+              <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                 Phone
               </th>
 
-              <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+              <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
                 Status
               </th>
 
-              <th className="px-3 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25 xl:px-5">
+              <th className="px-3 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-black xl:px-5">
                 Actions
               </th>
             </tr>
           </thead>
 
-          <tbody>
+          <tbody className="bg-white">
             {members.map((member) => {
               const fullName = [
                 member.firstName,
@@ -111,19 +116,19 @@ export default function MemberTable({
                     member._id ||
                     member.membershipNumber
                   }
-                  className="border-b border-white/[0.05] transition-colors last:border-b-0 hover:bg-white/[0.025]"
+                  className="border-b border-slate-100 bg-white transition-colors last:border-b-0 hover:bg-slate-50"
                 >
                   {/* MEMBER */}
-                  <td className="min-w-0 px-4 py-4 xl:px-5">
+                  <td className="min-w-0 bg-white px-4 py-4 xl:px-5">
                     <div className="flex min-w-0 items-center gap-3">
                       {member.profileImage ? (
                         <img
                           src={member.profileImage}
                           alt={fullName}
-                          className="h-9 w-9 shrink-0 rounded-xl object-cover ring-1 ring-white/10"
+                          className="h-9 w-9 shrink-0 rounded-xl object-cover ring-1 ring-slate-200"
                         />
                       ) : (
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-yellow-500/10 text-xs font-semibold text-yellow-400">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-yellow-50 text-xs font-semibold text-yellow-700 ring-1 ring-yellow-200">
                           {member.firstName
                             ?.charAt(0)
                             .toUpperCase()}
@@ -135,12 +140,12 @@ export default function MemberTable({
                       )}
 
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-white">
+                        <p className="truncate text-sm font-medium text-black">
                           {fullName ||
                             "Unnamed member"}
                         </p>
 
-                        <p className="mt-1 truncate text-[11px] text-white/30">
+                        <p className="mt-1 truncate text-[11px] text-black/50">
                           {member.email ||
                             "No email"}
                         </p>
@@ -149,29 +154,29 @@ export default function MemberTable({
                   </td>
 
                   {/* MEMBERSHIP NUMBER */}
-                  <td className="min-w-0 px-3 py-4">
-                    <span className="block truncate font-mono text-xs text-white/55">
+                  <td className="min-w-0 bg-white px-3 py-4">
+                    <span className="block truncate font-mono text-xs text-black">
                       {member.membershipNumber ||
                         "—"}
                     </span>
                   </td>
 
                   {/* PHONE */}
-                  <td className="min-w-0 px-3 py-4">
-                    <span className="block truncate text-xs text-white/50">
+                  <td className="min-w-0 bg-white px-3 py-4">
+                    <span className="block truncate text-xs text-black">
                       {member.phone || "—"}
                     </span>
                   </td>
 
                   {/* STATUS */}
-                  <td className="px-3 py-4">
+                  <td className="bg-white px-3 py-4">
                     <StatusBadge
                       status={member.status}
                     />
                   </td>
 
                   {/* ACTIONS */}
-                  <td className="px-3 py-4 xl:px-5">
+                  <td className="bg-white px-3 py-4 xl:px-5">
                     <div className="flex items-center justify-end gap-0.5">
                       <button
                         type="button"
@@ -179,7 +184,7 @@ export default function MemberTable({
                           onView?.(member)
                         }
                         disabled={!onView}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/30 transition hover:bg-white/[0.06] hover:text-white disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-white/30"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-black transition hover:bg-slate-100 hover:text-black disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-black"
                         aria-label={`View ${fullName}`}
                         title="View member"
                       >
@@ -195,7 +200,7 @@ export default function MemberTable({
                           onEdit?.(member)
                         }
                         disabled={!onEdit}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/30 transition hover:bg-yellow-500/10 hover:text-yellow-400 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-white/30"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-black transition hover:bg-yellow-50 hover:text-yellow-700 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-black"
                         aria-label={`Edit ${fullName}`}
                         title="Edit member"
                       >
@@ -211,7 +216,7 @@ export default function MemberTable({
                           onDelete?.(member)
                         }
                         disabled={!onDelete}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/30 transition hover:bg-red-500/10 hover:text-red-400 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-white/30"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-black transition hover:bg-red-50 hover:text-red-600 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-black"
                         aria-label={`Delete ${fullName}`}
                         title="Delete member"
                       >
@@ -223,7 +228,7 @@ export default function MemberTable({
 
                       <button
                         type="button"
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/25 transition hover:bg-white/[0.06] hover:text-white"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-black transition hover:bg-slate-100 hover:text-black"
                         aria-label={`More actions for ${fullName}`}
                         title="More actions"
                       >
@@ -255,13 +260,13 @@ function StatusBadge({
 }) {
   const styles: Record<Member["status"], string> = {
     active:
-      "bg-emerald-500/10 text-emerald-400 ring-emerald-500/10",
+      "bg-emerald-50 text-emerald-700 ring-emerald-200",
 
     inactive:
-      "bg-white/[0.06] text-white/45 ring-white/[0.06]",
+      "bg-slate-100 text-black ring-slate-200",
 
     suspended:
-      "bg-red-500/10 text-red-400 ring-red-500/10",
+      "bg-red-50 text-red-700 ring-red-200",
   };
 
   const labels: Record<Member["status"], string> = {
@@ -271,9 +276,9 @@ function StatusBadge({
   };
 
   const dots: Record<Member["status"], string> = {
-    active: "bg-emerald-400",
-    inactive: "bg-white/30",
-    suspended: "bg-red-400",
+    active: "bg-emerald-500",
+    inactive: "bg-black/40",
+    suspended: "bg-red-500",
   };
 
   return (

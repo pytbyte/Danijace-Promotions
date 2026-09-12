@@ -13,6 +13,7 @@ import {
 } from "@/lib/loans/service";
 
 import type {
+  CalendarDate,
   CreateLoanInput,
   LoanStatus,
   LoanType,
@@ -31,9 +32,7 @@ function successResponse<T>(
       success: true,
       data,
     },
-    {
-      status,
-    },
+    { status },
   );
 }
 
@@ -46,14 +45,12 @@ function errorResponse(
       success: false,
       error: message,
     },
-    {
-      status,
-    },
+    { status },
   );
 }
 
 /* =========================================================
-   SESSION USER
+   SESSION TYPES
 ========================================================= */
 
 type AuthenticatedSession = {
@@ -64,19 +61,19 @@ type AuthenticatedSession = {
 };
 
 /* =========================================================
-   ACTOR
+   SESSION ACTOR
 ========================================================= */
 
 function getSessionActor(
   session: AuthenticatedSession,
 ) {
   const name =
-    typeof session?.user?.name === "string"
+    typeof session.user?.name === "string"
       ? session.user.name.trim()
       : "";
 
   const email =
-    typeof session?.user?.email === "string"
+    typeof session.user?.email === "string"
       ? session.user.email.trim().toLowerCase()
       : "";
 
@@ -96,6 +93,16 @@ function getSessionActor(
    GENERIC HELPERS
 ========================================================= */
 
+function isRecord(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
 function getOptionalString(
   value: string | null,
 ): string | undefined {
@@ -109,35 +116,70 @@ function getOptionalString(
   return value.trim();
 }
 
-function isRecord(
-  value: unknown,
-): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
-  );
-}
-
 /* =========================================================
-   GUARANTOR VALIDATION
+   CALENDAR DATE
 ========================================================= */
 
 /**
- * We deliberately build the guarantor object field-by-field.
+ * Loan business dates are stored as:
  *
- * DO NOT cast:
+ * YYYY-MM-DD
  *
- *   guarantor as LoanGuarantor
- *
- * because request JSON is untrusted data.
- *
- * This also fixes:
- *
- * TS2352:
- * Conversion of type Record<string, unknown>
- * to type LoanGuarantor may be a mistake.
+ * They are NOT JavaScript Date objects.
  */
+function parseCalendarDate(
+  value: unknown,
+  fieldName: string,
+): CalendarDate {
+  if (typeof value !== "string") {
+    throw new Error(
+      `${fieldName} must be a valid date string.`,
+    );
+  }
+
+  const date = value.trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error(
+      `${fieldName} must use YYYY-MM-DD format.`,
+    );
+  }
+
+  const [year, month, day] =
+    date.split("-").map(Number);
+
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
+    throw new Error(
+      `Invalid ${fieldName.toLowerCase()}.`,
+    );
+  }
+
+  const daysInMonth = new Date(
+    Date.UTC(year, month, 0),
+  ).getUTCDate();
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInMonth
+  ) {
+    throw new Error(
+      `Invalid ${fieldName.toLowerCase()}.`,
+    );
+  }
+
+  return date as CalendarDate;
+}
+
+/* =========================================================
+   GUARANTOR
+========================================================= */
+
 function parseGuarantor(
   value: unknown,
 ): CreateLoanInput["guarantor"] {
@@ -169,34 +211,26 @@ function parseGuarantor(
     );
   }
 
-  return {
+  const guarantor: CreateLoanInput["guarantor"] = {
     name,
     phone,
   };
+
+  if (
+    typeof value.idNumber === "string" &&
+    value.idNumber.trim()
+  ) {
+    guarantor.idNumber =
+      value.idNumber.trim();
+  }
+
+  return guarantor;
 }
 
 /* =========================================================
    BACKGROUND FINE ACCRUAL
 ========================================================= */
 
-/**
- * Fine accrual must NEVER delay the loan-list response.
- *
- * Next.js `after()` schedules this work after the response
- * has been sent.
- *
- * This keeps:
- *
- *   GET /api/loans
- *
- * fast while still allowing the authoritative fine engine
- * to update overdue loans in the background.
- *
- * IMPORTANT:
- *
- * `accrueAllLoanFines()` remains the authoritative fine
- * calculation. We are only changing WHEN it executes.
- */
 function scheduleBackgroundFineAccrual() {
   after(async () => {
     try {
@@ -214,26 +248,10 @@ function scheduleBackgroundFineAccrual() {
    GET /api/loans
 ========================================================= */
 
-/**
- * List loans.
- *
- * Supported query parameters:
- *
- * page
- * limit
- * search
- * status
- * type
- * memberId
- */
 export async function GET(
   request: NextRequest,
 ) {
   try {
-    /* -------------------------------------------------------
-       AUTHENTICATION
-    ------------------------------------------------------- */
-
     const session =
       (await auth()) as AuthenticatedSession | null;
 
@@ -244,18 +262,14 @@ export async function GET(
       );
     }
 
-    /* -------------------------------------------------------
-       QUERY PARAMETERS
-    ------------------------------------------------------- */
-
-    const searchParams =
+    const params =
       request.nextUrl.searchParams;
 
     const pageParam =
-      searchParams.get("page");
+      params.get("page");
 
     const limitParam =
-      searchParams.get("limit");
+      params.get("limit");
 
     const page =
       pageParam === null ||
@@ -290,41 +304,32 @@ export async function GET(
       );
     }
 
-    /* -------------------------------------------------------
-       OPTIONAL FILTERS
-    ------------------------------------------------------- */
-
     const search =
       getOptionalString(
-        searchParams.get("search"),
+        params.get("search"),
       );
 
     const memberId =
       getOptionalString(
-        searchParams.get("memberId"),
+        params.get("memberId"),
       );
 
     const statusParam =
       getOptionalString(
-        searchParams.get("status"),
+        params.get("status"),
       );
 
     const typeParam =
       getOptionalString(
-        searchParams.get("type"),
+        params.get("type"),
       );
-
-    /* -------------------------------------------------------
-       STATUS VALIDATION
-    ------------------------------------------------------- */
 
     let status:
       | LoanStatus
       | undefined;
 
     if (statusParam) {
-      const validStatuses:
-        LoanStatus[] = [
+      const validStatuses: LoanStatus[] = [
         "pending",
         "active",
         "completed",
@@ -346,17 +351,12 @@ export async function GET(
         statusParam as LoanStatus;
     }
 
-    /* -------------------------------------------------------
-       TYPE VALIDATION
-    ------------------------------------------------------- */
-
     let type:
       | LoanType
       | undefined;
 
     if (typeParam) {
-      const validTypes:
-        LoanType[] = [
+      const validTypes: LoanType[] = [
         "emergency",
         "regular",
       ];
@@ -376,17 +376,6 @@ export async function GET(
         typeParam as LoanType;
     }
 
-    /* -------------------------------------------------------
-       GET LOANS IMMEDIATELY
-    ------------------------------------------------------- */
-
-    /**
-     * IMPORTANT:
-     *
-     * Fine accrual is intentionally NOT awaited here.
-     *
-     * The loan list is returned immediately.
-     */
     const result =
       await getLoans({
         page,
@@ -405,15 +394,7 @@ export async function GET(
           : {}),
       });
 
-    /* -------------------------------------------------------
-       SCHEDULE FINE ACCRUAL AFTER RESPONSE
-    ------------------------------------------------------- */
-
     scheduleBackgroundFineAccrual();
-
-    /* -------------------------------------------------------
-       RESPONSE
-    ------------------------------------------------------- */
 
     return NextResponse.json(
       {
@@ -453,39 +434,10 @@ export async function GET(
    POST /api/loans
 ========================================================= */
 
-/**
- * Create a loan.
- *
- * SECURITY / DATA INTEGRITY:
- *
- * The client is NOT trusted for:
- *
- * - loan number
- * - member name
- * - member number
- * - interest rate
- * - interest amount
- * - total due
- * - amount paid
- * - outstanding balance
- * - fines
- * - loan status
- * - authorization
- * - audit fields
- *
- * The service calculates and controls these values.
- *
- * The authenticated session user becomes the creator
- * and authorizer under the current workflow.
- */
 export async function POST(
   request: NextRequest,
 ) {
   try {
-    /* -------------------------------------------------------
-       AUTHENTICATION
-    ------------------------------------------------------- */
-
     const session =
       (await auth()) as AuthenticatedSession | null;
 
@@ -499,10 +451,6 @@ export async function POST(
     const actor =
       getSessionActor(session);
 
-    /* -------------------------------------------------------
-       READ JSON
-    ------------------------------------------------------- */
-
     let body: unknown;
 
     try {
@@ -515,10 +463,6 @@ export async function POST(
       );
     }
 
-    /* -------------------------------------------------------
-       BODY MUST BE OBJECT
-    ------------------------------------------------------- */
-
     if (!isRecord(body)) {
       return errorResponse(
         "Request body must be a JSON object.",
@@ -527,7 +471,7 @@ export async function POST(
     }
 
     /* -------------------------------------------------------
-       MEMBER ID
+       MEMBER
     ------------------------------------------------------- */
 
     const memberId =
@@ -580,12 +524,6 @@ export async function POST(
       );
     }
 
-    /*
-     * Reject absurd numeric values.
-     *
-     * This prevents Infinity / NaN / extremely large
-     * values from entering financial calculations.
-     */
     if (
       !Number.isSafeInteger(
         Math.round(principal * 100),
@@ -593,6 +531,40 @@ export async function POST(
     ) {
       return errorResponse(
         "Principal is outside the supported financial range.",
+        400,
+      );
+    }
+
+    /* -------------------------------------------------------
+       INSTALLMENT AMOUNT
+    ------------------------------------------------------- */
+
+    const installmentAmount =
+      typeof body.installmentAmount === "number"
+        ? body.installmentAmount
+        : NaN;
+
+    if (
+      !Number.isFinite(
+        installmentAmount,
+      ) ||
+      installmentAmount <= 0
+    ) {
+      return errorResponse(
+        "Installment amount must be a positive number.",
+        400,
+      );
+    }
+
+    if (
+      !Number.isSafeInteger(
+        Math.round(
+          installmentAmount * 100,
+        ),
+      )
+    ) {
+      return errorResponse(
+        "Installment amount is outside the supported financial range.",
         400,
       );
     }
@@ -619,114 +591,166 @@ export async function POST(
     }
 
     /* -------------------------------------------------------
-       DAILY FINE
+       LOAN DATES
     ------------------------------------------------------- */
 
-    let cleanDailyFine:
-      | number
+    let disbursementDate:
+      | CalendarDate
       | undefined;
 
-    if (
-      body.dailyFine !== undefined
-    ) {
-      if (
-        typeof body.dailyFine !==
-          "number" ||
-        !Number.isFinite(
-          body.dailyFine,
-        ) ||
-        body.dailyFine < 0
-      ) {
-        return errorResponse(
-          "Daily fine must be a valid non-negative number.",
-          400,
-        );
-      }
-
-      if (
-        !Number.isSafeInteger(
-          Math.round(
-            body.dailyFine * 100,
-          ),
-        )
-      ) {
-        return errorResponse(
-          "Daily fine is outside the supported financial range.",
-          400,
-        );
-      }
-
-      cleanDailyFine =
-        body.dailyFine;
-    }
-
-    /* -------------------------------------------------------
-       DISBURSEMENT DATE
-    ------------------------------------------------------- */
-
-    let cleanDisbursementDate:
-      | Date
+    let repaymentDate:
+      | CalendarDate
       | undefined;
+
+    let endDate:
+      | CalendarDate
+      | undefined;
+
+    /*
+     * IMPORTANT:
+     *
+     * These are calendar dates, not timestamps.
+     *
+     * We validate them but NEVER convert them to
+     * JavaScript Date objects.
+     *
+     * Example:
+     *
+     * "2026-09-11"
+     *
+     * remains:
+     *
+     * "2026-09-11"
+     */
 
     if (
       body.disbursementDate !==
       undefined
     ) {
-      if (
-        typeof body.disbursementDate !==
-        "string"
-      ) {
+      try {
+        disbursementDate =
+          parseCalendarDate(
+            body.disbursementDate,
+            "Disbursement date",
+          );
+      } catch (error) {
         return errorResponse(
-          "Disbursement date must be a valid date string.",
+          error instanceof Error
+            ? error.message
+            : "Invalid disbursement date.",
           400,
         );
       }
+    }
 
-      const parsed =
-        new Date(
-          body.disbursementDate,
-        );
-
-      if (
-        Number.isNaN(
-          parsed.getTime(),
-        )
-      ) {
+    if (
+      body.repaymentDate !==
+      undefined
+    ) {
+      try {
+        repaymentDate =
+          parseCalendarDate(
+            body.repaymentDate,
+            "Repayment date",
+          );
+      } catch (error) {
         return errorResponse(
-          "Invalid disbursement date.",
+          error instanceof Error
+            ? error.message
+            : "Invalid repayment date.",
           400,
         );
       }
+    }
 
-      cleanDisbursementDate =
-        parsed;
+    if (
+      body.endDate !==
+      undefined
+    ) {
+      try {
+        endDate =
+          parseCalendarDate(
+            body.endDate,
+            "End date",
+          );
+      } catch (error) {
+        return errorResponse(
+          error instanceof Error
+            ? error.message
+            : "Invalid end date.",
+          400,
+        );
+      }
     }
 
     /* -------------------------------------------------------
-       BUILD SAFE CREATE INPUT
+       DATE ORDER VALIDATION
+    ------------------------------------------------------- */
+
+    if (
+      disbursementDate &&
+      repaymentDate &&
+      repaymentDate < disbursementDate
+    ) {
+      return errorResponse(
+        "Repayment date cannot be before the disbursement date.",
+        400,
+      );
+    }
+
+    if (
+      repaymentDate &&
+      endDate &&
+      endDate < repaymentDate
+    ) {
+      return errorResponse(
+        "End date cannot be before the repayment date.",
+        400,
+      );
+    }
+
+    if (
+      disbursementDate &&
+      endDate &&
+      endDate < disbursementDate
+    ) {
+      return errorResponse(
+        "End date cannot be before the disbursement date.",
+        400,
+      );
+    }
+
+    /* -------------------------------------------------------
+       CREATE INPUT
     ------------------------------------------------------- */
 
     const input: CreateLoanInput = {
       memberId,
 
-      type: type as LoanType,
+      type:
+        type as LoanType,
 
       principal,
 
       guarantor,
 
-      ...(cleanDailyFine !==
-      undefined
+      installmentAmount,
+
+      ...(disbursementDate
         ? {
-            dailyFine:
-              cleanDailyFine,
+            disbursementDate,
           }
         : {}),
 
-      ...(cleanDisbursementDate
+      ...(repaymentDate
         ? {
-            disbursementDate:
-              cleanDisbursementDate,
+            repaymentDate,
+          }
+        : {}),
+
+      ...(endDate
+        ? {
+            endDate,
           }
         : {}),
     };
@@ -735,21 +759,6 @@ export async function POST(
        CREATE LOAN
     ------------------------------------------------------- */
 
-    /**
-     * IMPORTANT:
-     *
-     * createLoan() performs the authoritative member lookup.
-     *
-     * The service contains:
-     *
-     *   if (member.status !== "active") {
-     *     throw new Error(
-     *       "Only active members can receive loans."
-     *     );
-     *
-     * Therefore manipulating this API request cannot bypass
-     * the inactive-member restriction.
-     */
     const loan =
       await createLoan(
         input,
@@ -772,62 +781,28 @@ export async function POST(
         ? error.message
         : "Failed to create loan.";
 
-    /* -------------------------------------------------------
-       DOMAIN / VALIDATION ERRORS
-    ------------------------------------------------------- */
-
     const knownError =
-      message.includes(
-        "required",
-      ) ||
-      message.includes(
-        "Invalid",
-      ) ||
-      message.includes(
-        "not found",
-      ) ||
-      message.includes(
-        "disabled",
-      ) ||
-      message.includes(
-        "Only active members",
-      ) ||
-      message.includes(
-        "already has",
-      ) ||
-      message.includes(
-        "outstanding balance",
-      ) ||
-      message.includes(
-        "minimum savings",
-      ) ||
-      message.includes(
-        "cannot exceed",
-      ) ||
-      message.includes(
-        "does not have an active",
-      ) ||
-      message.includes(
-        "invalid balance",
-      ) ||
-      message.includes(
-        "valid actor",
-      ) ||
-      message.includes(
-        "cannot receive loans",
-      ) ||
-      message.includes(
-        "must be",
-      ) ||
+      message.includes("required") ||
+      message.includes("Invalid") ||
+      message.includes("not found") ||
+      message.includes("disabled") ||
+      message.includes("Only active members") ||
+      message.includes("already has") ||
+      message.includes("outstanding balance") ||
+      message.includes("minimum savings") ||
+      message.includes("cannot exceed") ||
+      message.includes("does not have an active") ||
+      message.includes("invalid balance") ||
+      message.includes("valid actor") ||
+      message.includes("cannot receive loans") ||
+      message.includes("must be") ||
       message.includes(
         "outside the supported financial range",
       );
 
     return errorResponse(
       message,
-      knownError
-        ? 400
-        : 500,
+      knownError ? 400 : 500,
     );
   }
 }

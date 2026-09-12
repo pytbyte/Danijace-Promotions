@@ -1,4 +1,8 @@
-import type { Member, MemberGender, MemberStatus } from "./types";
+import type {
+  Member,
+  MemberGender,
+  MemberStatus,
+} from "./types";
 
 export type MemberValidationErrors = Partial<
   Record<keyof Member, string>
@@ -9,14 +13,79 @@ export type MemberValidationResult = {
   errors: MemberValidationErrors;
 };
 
-const KENYAN_PHONE_REGEX = /^(?:\+254|254|0)7\d{8}$/;
-
-const EMAIL_REGEX =
-  /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/* =========================================================
+   HELPERS
+========================================================= */
 
 function clean(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
+
+/* =========================================================
+   PHONE VALIDATION
+========================================================= */
+
+/*
+ * Canonical Kenyan mobile format:
+ *
+ * 0712345678
+ * 0112345678
+ *
+ * We accept both 07 and 01 mobile prefixes after
+ * normalization.
+ */
+const KENYAN_PHONE_REGEX = /^(?:07|01)\d{8}$/;
+
+export function normalizePhone(phone: string): string {
+  const value = clean(phone).replace(/\s+/g, "");
+
+  /*
+   * +254712345678
+   *        ↓
+   * 0712345678
+   */
+  if (value.startsWith("+254")) {
+    return `0${value.slice(4)}`;
+  }
+
+  /*
+   * 254712345678
+   *       ↓
+   * 0712345678
+   */
+  if (value.startsWith("254")) {
+    return `0${value.slice(3)}`;
+  }
+
+  return value;
+}
+
+export function validatePhone(phone: string): boolean {
+  const normalized = normalizePhone(phone);
+
+  return KENYAN_PHONE_REGEX.test(normalized);
+}
+
+/* =========================================================
+   EMAIL VALIDATION
+========================================================= */
+
+const EMAIL_REGEX =
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function validateEmail(
+  email?: string
+): boolean {
+  const value = clean(email);
+
+  if (!value) return true;
+
+  return EMAIL_REGEX.test(value);
+}
+
+/* =========================================================
+   DATE VALIDATION
+========================================================= */
 
 function isValidDate(value: string): boolean {
   if (!value) return false;
@@ -37,37 +106,9 @@ function isFutureDate(value: string): boolean {
   return date > today;
 }
 
-export function normalizePhone(phone: string): string {
-  const value = clean(phone);
-
-  if (value.startsWith("+254")) {
-    return `0${value.slice(4)}`;
-  }
-
-  if (value.startsWith("254")) {
-    return `0${value.slice(3)}`;
-  }
-
-  return value;
-}
-
-export function validatePhone(
-  phone: string
-): boolean {
-  const normalized = normalizePhone(phone);
-
-  return /^07\d{8}$/.test(normalized);
-}
-
-export function validateEmail(
-  email?: string
-): boolean {
-  const value = clean(email);
-
-  if (!value) return true;
-
-  return EMAIL_REGEX.test(value);
-}
+/* =========================================================
+   MEMBER VALIDATION
+========================================================= */
 
 export function validateMember(
   member: Partial<Member>
@@ -77,9 +118,11 @@ export function validateMember(
   const firstName = clean(member.firstName);
   const middleName = clean(member.middleName);
   const lastName = clean(member.lastName);
+
   const membershipNumber = clean(
     member.membershipNumber
   );
+
   const phone = clean(member.phone);
   const email = clean(member.email);
   const nationalId = clean(member.nationalId);
@@ -129,12 +172,11 @@ export function validateMember(
 
   if (!phone) {
     errors.phone = "Phone number is required.";
-  } else if (!KENYAN_PHONE_REGEX.test(phone)) {
+  } else if (!validatePhone(phone)) {
     errors.phone =
       "Enter a valid Kenyan phone number.";
   }
 
-  
   /* ---------------------------------------------
      EMAIL
   --------------------------------------------- */
@@ -244,9 +286,7 @@ export function validateMember(
     if (!nextOfKinPhone) {
       errors.nextOfKinPhone =
         "Next of kin phone is required.";
-    } else if (
-      !KENYAN_PHONE_REGEX.test(nextOfKinPhone)
-    ) {
+    } else if (!validatePhone(nextOfKinPhone)) {
       errors.nextOfKinPhone =
         "Enter a valid Kenyan phone number.";
     }
@@ -279,14 +319,15 @@ export function normalizeMember(
 
     firstName: clean(member.firstName),
 
-    middleName: clean(member.middleName) || undefined,
+    middleName:
+      clean(member.middleName) || undefined,
 
     lastName: clean(member.lastName),
 
     phone: normalizePhone(
       clean(member.phone)
     ),
-    
+
     email:
       clean(member.email).toLowerCase() ||
       undefined,
