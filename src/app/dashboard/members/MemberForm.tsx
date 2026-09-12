@@ -357,7 +357,7 @@ export default function MemberForm({
                 Add Member
               </h2>
 
-              <p className="mt-0.5 truncate text-[11px] text-black/50">
+              <p className="mt-0.5 truncate text-[11px] text-black">
                 Register a new SACCO member and savings account
               </p>
             </div>
@@ -375,7 +375,7 @@ export default function MemberForm({
               items-center
               justify-center
               rounded-xl
-              text-black/40
+              text-black
               transition
               hover:bg-slate-100
               hover:text-black
@@ -764,7 +764,7 @@ export default function MemberForm({
             >
               <div>
 
-                <label className="mb-1.5 block text-[11px] font-medium text-black/60">
+                <label className="mb-1.5 block text-[11px] font-medium text-black">
                   Notes
                 </label>
 
@@ -792,7 +792,7 @@ export default function MemberForm({
                     text-sm
                     text-black
                     outline-none
-                    placeholder:text-black/30
+                    placeholder:text-black
                     focus:border-yellow-500/50
                     focus:ring-1
                     focus:ring-yellow-500/20
@@ -818,7 +818,7 @@ export default function MemberForm({
               gap-2
               border-t
               border-slate-200
-              bg-white/95
+              bg-white
               p-4
               backdrop-blur-xl
               sm:flex-row
@@ -840,7 +840,7 @@ export default function MemberForm({
                 px-5
                 text-sm
                 font-medium
-                text-black/60
+                text-black
                 transition
                 hover:bg-slate-50
                 hover:text-black
@@ -929,7 +929,7 @@ function FormSection({
           {icon}
         </span>
 
-        <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-black/60">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-black">
           {title}
         </h3>
 
@@ -962,7 +962,7 @@ function Input({
   return (
     <div>
 
-      <label className="mb-1.5 block text-[11px] font-medium text-black/60">
+      <label className="mb-1.5 block text-[11px] font-medium text-black">
         {label}
 
         {required && (
@@ -996,7 +996,7 @@ function Input({
           text-black
           outline-none
           transition
-          placeholder:text-black/30
+          placeholder:text-black
           focus:border-yellow-500/50
           focus:bg-white
           focus:ring-1
@@ -1029,7 +1029,7 @@ function Select({
   return (
     <div>
 
-      <label className="mb-1.5 block text-[11px] font-medium text-black/60">
+      <label className="mb-1.5 block text-[11px] font-medium text-black">
         {label}
       </label>
 

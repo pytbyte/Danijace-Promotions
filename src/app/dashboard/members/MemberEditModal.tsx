@@ -467,7 +467,7 @@ export default function MemberEditModal({
         flex
         items-end
         justify-center
-        bg-black/75
+        bg-black/40
         backdrop-blur-sm
         sm:items-center
         sm:p-4
@@ -490,9 +490,9 @@ export default function MemberEditModal({
           overflow-hidden
           rounded-t-3xl
           border
-          border-white/[0.08]
-          bg-[#0b0b0b]
-          shadow-[0_30px_100px_rgba(0,0,0,0.65)]
+          border-slate-200
+          bg-white
+          shadow-[0_30px_100px_rgba(15,23,42,0.20)]
           sm:max-w-3xl
           sm:rounded-3xl
         "
@@ -508,7 +508,8 @@ export default function MemberEditModal({
             items-center
             justify-between
             border-b
-            border-white/[0.08]
+            border-slate-200
+            bg-white
             px-5
             py-4
             sm:px-6
@@ -524,8 +525,8 @@ export default function MemberEditModal({
                 items-center
                 justify-center
                 rounded-xl
-                bg-yellow-500/10
-                text-yellow-400
+                bg-yellow-50
+                text-yellow-700
               "
             >
               <UserRoundPen
@@ -535,11 +536,11 @@ export default function MemberEditModal({
             </div>
 
             <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold text-white">
+              <h2 className="truncate text-sm font-semibold text-black">
                 Edit Member
               </h2>
 
-              <p className="mt-0.5 truncate text-[11px] text-white/30">
+              <p className="mt-0.5 truncate text-[11px] text-black">
                 Update member information
               </p>
             </div>
@@ -557,10 +558,10 @@ export default function MemberEditModal({
               items-center
               justify-center
               rounded-xl
-              text-white/35
+              text-black
               transition
-              hover:bg-white/[0.06]
-              hover:text-white
+              hover:bg-slate-100
+              hover:text-black
               disabled:cursor-not-allowed
               disabled:opacity-40
             "
@@ -593,16 +594,17 @@ export default function MemberEditModal({
 
             {error && (
               <div
+                role="alert"
                 className="
                   rounded-xl
                   border
-                  border-red-500/15
-                  bg-red-500/[0.05]
+                  border-red-200
+                  bg-red-50
                   px-4
                   py-3
                   text-xs
                   leading-5
-                  text-red-300
+                  text-red-700
                 "
               >
                 {error}
@@ -935,7 +937,7 @@ export default function MemberEditModal({
                     block
                     text-[11px]
                     font-medium
-                    text-white/45
+                    text-black
                   "
                 >
                   Notes
@@ -956,17 +958,17 @@ export default function MemberEditModal({
                     resize-none
                     rounded-xl
                     border
-                    border-white/[0.08]
-                    bg-black/20
+                    border-slate-200
+                    bg-white
                     px-3.5
                     py-3
                     text-sm
-                    text-white
+                    text-black
                     outline-none
-                    placeholder:text-white/20
-                    focus:border-yellow-500/30
+                    placeholder:text-black
+                    focus:border-yellow-500/50
                     focus:ring-1
-                    focus:ring-yellow-500/10
+                    focus:ring-yellow-500/20
                   "
                 />
 
@@ -988,8 +990,8 @@ export default function MemberEditModal({
               flex-col-reverse
               gap-2
               border-t
-              border-white/[0.08]
-              bg-[#0b0b0b]/95
+              border-slate-200
+              bg-white
               p-4
               backdrop-blur-xl
               sm:flex-row
@@ -1005,14 +1007,15 @@ export default function MemberEditModal({
                 h-11
                 rounded-xl
                 border
-                border-white/[0.08]
+                border-slate-200
+                bg-white
                 px-5
                 text-sm
                 font-medium
-                text-white/50
+                text-black
                 transition
-                hover:bg-white/[0.05]
-                hover:text-white
+                hover:bg-slate-50
+                hover:text-black
                 disabled:cursor-not-allowed
                 disabled:opacity-40
               "
@@ -1093,7 +1096,7 @@ function FormSection({
     <section>
       <div className="mb-4 flex items-center gap-2">
 
-        <span className="text-yellow-400">
+        <span className="text-yellow-600">
           {icon}
         </span>
 
@@ -1103,7 +1106,7 @@ function FormSection({
             font-semibold
             uppercase
             tracking-[0.16em]
-            text-white/50
+            text-black
           "
         >
           {title}
@@ -1144,13 +1147,13 @@ function Input({
           block
           text-[11px]
           font-medium
-          text-white/45
+          text-black
         "
       >
         {label}
 
         {required && (
-          <span className="ml-1 text-yellow-500">
+          <span className="ml-1 text-yellow-600">
             *
           </span>
         )}
@@ -1169,18 +1172,18 @@ function Input({
           w-full
           rounded-xl
           border
-          border-white/[0.08]
-          bg-black/20
+          border-slate-200
+          bg-white
           px-3.5
           text-sm
-          text-white
+          text-black
           outline-none
           transition
-          placeholder:text-white/20
-          focus:border-yellow-500/30
-          focus:bg-black/30
+          placeholder:text-black
+          focus:border-yellow-500/50
+          focus:bg-white
           focus:ring-1
-          focus:ring-yellow-500/10
+          focus:ring-yellow-500/20
         "
       />
 
@@ -1215,7 +1218,7 @@ function Select({
           block
           text-[11px]
           font-medium
-          text-white/45
+          text-black
         "
       >
         {label}
@@ -1232,23 +1235,23 @@ function Select({
           cursor-pointer
           rounded-xl
           border
-          border-white/[0.08]
-          bg-[#111]
+          border-slate-200
+          bg-white
           px-3.5
           text-sm
-          text-white/70
+          text-black
           outline-none
           transition
-          focus:border-yellow-500/30
+          focus:border-yellow-500/50
           focus:ring-1
-          focus:ring-yellow-500/10
+          focus:ring-yellow-500/20
         "
       >
         {options.map((option) => (
           <option
             key={option.value}
             value={option.value}
-            className="bg-[#111] text-white"
+            className="bg-white text-black"
           >
             {option.label}
           </option>

@@ -102,7 +102,7 @@ function SummaryCard({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-xs font-medium text-black/50">
+          <p className="truncate text-xs font-medium text-black">
             {label}
           </p>
 
@@ -110,7 +110,7 @@ function SummaryCard({
             {value.toLocaleString()}
           </p>
 
-          <p className="mt-2 truncate text-[10px] text-black/40 sm:text-[11px]">
+          <p className="mt-2 truncate text-[10px] text-black/60 sm:text-[11px]">
             {description}
           </p>
         </div>

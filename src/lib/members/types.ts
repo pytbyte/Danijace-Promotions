@@ -97,6 +97,8 @@ export type MemberFinancialSummary = {
     totalFines: number;
 
     outstandingBalance: number;
+    installmentAmount: number;
+    endDate: string;
 
     firstDueDate: string;
 
