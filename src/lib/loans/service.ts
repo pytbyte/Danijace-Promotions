@@ -217,8 +217,8 @@ export type LoanListOptions = {
   type?: Loan["type"];
   memberId?: string;
   repaymentStatus?: Loan["repaymentStatus"];
-  repaymentDate?: Date | string;
-  endDate?: Date | string;
+  repaymentDate?:  string;
+  endDate?:  string;
 };
 
 export type PaginatedLoans = {
@@ -5244,27 +5244,41 @@ export async function createLoanRepayment(
     );
   }
 
-  const transactionDate =
-    new Date(input.transactionDate);
+  /* =======================================================
+     FINANCIAL TRANSACTION DATE
 
-  if (!isValidDate(transactionDate)) {
-    throw new Error(
-      "Invalid transaction date.",
-    );
-  }
+     Financial dates are stored and compared as
+     canonical CalendarDate strings:
+
+       YYYY-MM-DD
+
+     Do NOT convert transactionDate into a JavaScript Date.
+  ======================================================= */
+
+  const transactionDate =
+    input.transactionDate;
+
+  assertCalendarDate(
+    transactionDate,
+    "transaction date",
+  );
 
   /* =======================================================
      FUTURE TRANSACTION PROTECTION
+
+     CalendarDate strings sort chronologically because they
+     use the YYYY-MM-DD format.
+
+     The current Kenyan calendar date is the authoritative
+     boundary for financial transaction dates.
   ======================================================= */
 
-  const now =
-    new Date();
+  const today =
+    dateToKenyanCalendarDate(
+      new Date(),
+    );
 
-  if (
-    transactionDate.getTime() >
-    now.getTime() +
-      FUTURE_TRANSACTION_TOLERANCE_MS
-  ) {
+  if (transactionDate > today) {
     throw new Error(
       "Repayment transaction date cannot be in the future.",
     );
@@ -5282,8 +5296,9 @@ export async function createLoanRepayment(
 
   /* =======================================================
      FAST IDEMPOTENCY CHECK
-     
+
      This is an optimization only.
+
      The unique MongoDB index remains the final
      concurrency protection.
   ======================================================= */
@@ -5342,7 +5357,7 @@ export async function createLoanRepayment(
         }> => {
           /* =================================================
              SECOND IDEMPOTENCY CHECK
-             
+
              Protects against concurrent requests.
           ================================================= */
 
@@ -5436,19 +5451,26 @@ export async function createLoanRepayment(
 
           /* =================================================
              SMS TEMPORAL PROTECTION
-             
-             A bank SMS must represent a transaction that
-             happened strictly AFTER the loan was disbursed.
-             
-             This prevents old SMS messages from being
-             attached to newly created loans.
-             
-             Same timestamp is intentionally rejected.
+
+             A bank SMS cannot represent a repayment that
+             occurred before the loan was disbursed.
+
+             Same-day repayment IS allowed.
+
+             Example:
+
+               disbursementDate = 2026-09-12
+               transactionDate   = 2026-09-12
+               RESULT            = allowed
+
+               disbursementDate = 2026-09-12
+               transactionDate   = 2026-09-11
+               RESULT            = rejected
           ================================================= */
 
           if (
             input.source === "sms" &&
-            dateToKenyanCalendarDate(transactionDate) <=
+            transactionDate <
               loan.disbursementDate
           ) {
             throw new Error(
@@ -5518,6 +5540,9 @@ export async function createLoanRepayment(
 
           /* =================================================
              REPAYMENT DOCUMENT
+
+             transactionDate is already a canonical
+             CalendarDate string and must remain a string.
           ================================================= */
 
           const repaymentDocument:
@@ -5542,10 +5567,9 @@ export async function createLoanRepayment(
             transactionReference:
               reference,
 
-            transactionDate: 
-              dateToKenyanCalendarDate(
-                transactionDate,
-              ),
+            transactionDate:
+              transactionDate,
+
             source:
               input.source,
 
@@ -5622,12 +5646,11 @@ export async function createLoanRepayment(
 
           /* =================================================
              UPDATE LOAN
-             
+
              Optimistic concurrency protection ensures that
              another repayment cannot silently overwrite
              this transaction's financial state.
           ================================================= */
-          
 
           const {
             loans,

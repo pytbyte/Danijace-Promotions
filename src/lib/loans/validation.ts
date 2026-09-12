@@ -622,17 +622,85 @@ export function validateLoanRepayment(
 
   /* -------------------------------------------------------
      TRANSACTION DATE
-     
-     This is intentionally still a Date because it represents
-     the actual moment the payment occurred.
+
+     Financial transaction dates are CalendarDate values:
+
+       YYYY-MM-DD
+
+     They are NOT JavaScript timestamps.
+
+     Do not use validateDate() here because that expects
+     a Date/timestamp.
   ------------------------------------------------------- */
 
-  errors.push(
-    ...validateDate(
-      input.transactionDate,
-      "Transaction date",
-    ),
-  );
+  if (
+    typeof input.transactionDate !==
+    "string"
+  ) {
+    errors.push(
+      "Transaction date must be a valid calendar date.",
+    );
+  } else {
+    const value =
+      input.transactionDate.trim();
+
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(
+        value,
+      )
+    ) {
+      errors.push(
+        "Transaction date must be a valid calendar date in YYYY-MM-DD format.",
+      );
+    } else {
+      const [
+        yearString,
+        monthString,
+        dayString,
+      ] = value.split("-");
+
+      const year =
+        Number(yearString);
+
+      const month =
+        Number(monthString);
+
+      const day =
+        Number(dayString);
+
+      /*
+       * Validate the actual calendar date.
+       *
+       * Date.UTC is used ONLY for validation here.
+       * The financial date itself remains the original
+       * YYYY-MM-DD string.
+       */
+      const date =
+        new Date(
+          Date.UTC(
+            year,
+            month - 1,
+            day,
+          ),
+        );
+
+      const isValidCalendarDate =
+        date.getUTCFullYear() ===
+          year &&
+        date.getUTCMonth() ===
+          month - 1 &&
+        date.getUTCDate() ===
+          day;
+
+      if (
+        !isValidCalendarDate
+      ) {
+        errors.push(
+          "Transaction date must be a valid calendar date.",
+        );
+      }
+    }
+  }
 
   /* -------------------------------------------------------
      SOURCE
