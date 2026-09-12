@@ -380,25 +380,20 @@ export default function LoanRepaymentModal({
        TRANSACTION REFERENCE
     ===================================================== */
 
+    /*
+     * Transaction reference is OPTIONAL.
+     *
+     * An empty reference is allowed for:
+     *
+     * - Manual repayments
+     * - SMS repayments
+     * - System repayments
+     *
+     * The server is responsible for generating a reference
+     * when one is not supplied.
+     */
     const reference =
       transactionReference.trim();
-
-    /*
-     * The server generates a reference for manual/system
-     * repayments when one is omitted.
-     *
-     * SMS repayments require the bank reference.
-     */
-    if (
-      source === "sms" &&
-      !reference
-    ) {
-      setError(
-        "Transaction reference is required for an SMS repayment.",
-      );
-
-      return;
-    }
 
     /* =====================================================
        TRANSACTION DATE
@@ -508,6 +503,12 @@ export default function LoanRepaymentModal({
         amount:
           normalizedAmount,
 
+        /*
+         * Optional transaction reference.
+         *
+         * This may be an empty string.
+         * The server can generate a reference when omitted.
+         */
         transactionReference:
           reference,
 
@@ -746,12 +747,6 @@ export default function LoanRepaymentModal({
                 className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200"
               >
                 Transaction Reference
-
-                {source === "sms" && (
-                  <span className="ml-1 text-red-500">
-                    *
-                  </span>
-                )}
               </label>
 
               <div className="relative">
@@ -775,16 +770,14 @@ export default function LoanRepaymentModal({
                     setError("");
                   }}
                   disabled={loading}
-                  placeholder="e.g. BANK123456"
+                  placeholder="Optional"
                   autoComplete="off"
                   className="w-full rounded-xl border border-slate-300 bg-white py-3 pl-10 pr-4 text-slate-900 uppercase outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:focus:border-slate-400 dark:focus:ring-slate-700"
                 />
               </div>
 
               <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-                {source === "sms"
-                  ? "This reference must uniquely identify the bank payment."
-                  : "Optional for manual payments. The server generates a reference when omitted."}
+                Optional. The server will generate a reference when omitted.
               </p>
             </div>
 
@@ -911,7 +904,7 @@ export default function LoanRepaymentModal({
                   disabled={loading}
                   rows={5}
                   placeholder="Paste the original bank SMS here..."
-                  className="w-full resize-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:focus:border-slate-400 dark:focus:ring-slate-700"
+                  className="w-full resize-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                 />
 
                 <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
