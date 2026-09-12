@@ -3821,49 +3821,26 @@ async function getPeriodPaymentTotal(
   period: AssessmentPeriod,
   session?: ClientSession,
 ): Promise<number> {
-  const { repayments } = await getCollections();
-
-  const transactionCalendarDate = {
-    $dateToString: {
-      date: "$transactionDate",
-      format: "%Y-%m-%d",
-      timezone: "Africa/Nairobi",
-    },
-  };
+  const { repayments } =
+    await getCollections();
 
   const dateMatch =
     period.periodNumber === 1
       ? {
-          $and: [
-            {
-              $gte: [
-                transactionCalendarDate,
-                period.periodStart,
-              ],
-            },
-            {
-              $lte: [
-                transactionCalendarDate,
-                period.periodEnd,
-              ],
-            },
-          ],
+          transactionDate: {
+            $gte:
+              period.periodStart,
+            $lte:
+              period.periodEnd,
+          },
         }
       : {
-          $and: [
-            {
-              $gt: [
-                transactionCalendarDate,
-                period.periodStart,
-              ],
-            },
-            {
-              $lte: [
-                transactionCalendarDate,
-                period.periodEnd,
-              ],
-            },
-          ],
+          transactionDate: {
+            $gt:
+              period.periodStart,
+            $lte:
+              period.periodEnd,
+          },
         };
 
   const result = await repayments
@@ -3875,11 +3852,7 @@ async function getPeriodPaymentTotal(
         {
           $match: {
             loanId,
-          },
-        },
-        {
-          $match: {
-            $expr: dateMatch,
+            ...dateMatch,
           },
         },
         {
@@ -3896,7 +3869,9 @@ async function getPeriodPaymentTotal(
     .toArray();
 
   return money(
-    Number(result[0]?.total || 0),
+    Number(
+      result[0]?.total || 0,
+    ),
   );
 }
 
@@ -5567,8 +5542,10 @@ export async function createLoanRepayment(
             transactionReference:
               reference,
 
-            transactionDate,
-
+            transactionDate: 
+              dateToKenyanCalendarDate(
+                transactionDate,
+              ),
             source:
               input.source,
 

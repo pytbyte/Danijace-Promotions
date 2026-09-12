@@ -58,6 +58,23 @@
  * payment.
  *
  * =========================================================
+ *
+ * DATE ARCHITECTURE
+ * ---------------------------------------------------------
+ *
+ * parser.ts currently exposes transactionDate as a Date.
+ *
+ * The financial system uses calendar-date strings:
+ *
+ *   YYYY-MM-DD
+ *
+ * Therefore this processor converts the parser Date once,
+ * at the boundary, before calling the financial services.
+ *
+ * Financial services never receive a JavaScript Date for
+ * financial transaction dates.
+ *
+ * =========================================================
  */
 
 import {
@@ -179,6 +196,179 @@ export type ProcessIncomingTransactionResult =
     };
 
 /* =========================================================
+   CALENDAR DATE HELPERS
+========================================================= */
+
+/**
+ * Determine whether a year is a leap year.
+ *
+ * No JavaScript Date is used here because financial dates
+ * are persisted as calendar strings.
+ */
+function isLeapYear(
+  year: number,
+): boolean {
+  return (
+    year % 4 === 0 &&
+    (year % 100 !== 0 ||
+      year % 400 === 0)
+  );
+}
+
+/**
+ * Return the number of days in a calendar month.
+ */
+function daysInMonth(
+  year: number,
+  month: number,
+): number {
+  switch (month) {
+    case 2:
+      return isLeapYear(year)
+        ? 29
+        : 28;
+
+    case 4:
+    case 6:
+    case 9:
+    case 11:
+      return 30;
+
+    default:
+      return 31;
+  }
+}
+
+/**
+ * Validate GEO-SHUA's canonical financial calendar date.
+ *
+ * Valid:
+ *
+ *   2026-09-11
+ *
+ * Invalid:
+ *
+ *   2026-9-11
+ *   11-09-2026
+ *   2026-02-30
+ *   Date object
+ *   timestamp
+ */
+function isValidCalendarDate(
+  value: unknown,
+): value is string {
+  if (
+    typeof value !== "string"
+  ) {
+    return false;
+  }
+
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})$/.exec(
+      value,
+    );
+
+  if (!match) {
+    return false;
+  }
+
+  const year =
+    Number(match[1]);
+
+  const month =
+    Number(match[2]);
+
+  const day =
+    Number(match[3]);
+
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
+    return false;
+  }
+
+  if (
+    month < 1 ||
+    month > 12
+  ) {
+    return false;
+  }
+
+  const maximumDay =
+    daysInMonth(
+      year,
+      month,
+    );
+
+  return (
+    day >= 1 &&
+    day <= maximumDay
+  );
+}
+
+/**
+ * Convert the parser's Date into GEO-SHUA's canonical
+ * financial calendar-date string.
+ *
+ * The parser boundary currently gives us a Date.
+ *
+ * The financial layer requires:
+ *
+ *   YYYY-MM-DD
+ *
+ * We therefore perform the conversion once here.
+ *
+ * NOTE:
+ *
+ * This uses the Date's calendar components rather than
+ * converting the financial date into a UTC timestamp.
+ */
+function toCalendarDate(
+  value: Date,
+): string {
+  if (
+    !(value instanceof Date) ||
+    Number.isNaN(
+      value.getTime(),
+    )
+  ) {
+    throw new Error(
+      "Bank transaction date is invalid.",
+    );
+  }
+
+  const year =
+    value.getFullYear();
+
+  const month =
+    String(
+      value.getMonth() + 1,
+    ).padStart(2, "0");
+
+  const day =
+    String(
+      value.getDate(),
+    ).padStart(2, "0");
+
+  const calendarDate =
+    `${year}-${month}-${day}`;
+
+  if (
+    !isValidCalendarDate(
+      calendarDate,
+    )
+  ) {
+    throw new Error(
+      "Bank transaction calendar date is invalid.",
+    );
+  }
+
+  return calendarDate;
+}
+
+/* =========================================================
    BANK DESTINATION CLASSIFICATION
 ========================================================= */
 
@@ -257,12 +447,10 @@ function classifyBankAccount(
 /**
  * Add the financial destination to the parsed transaction.
  *
- * The parser intentionally returns:
+ * The parser intentionally returns the bank destination
+ * without determining the financial domain.
  *
- *   transactionType = "unknown"
- *
- * The processor then classifies it using the BANK
- * destination account number.
+ * The processor classifies it here.
  */
 function classifyTransaction(
   parsed: ParsedBankSms,
@@ -736,57 +924,49 @@ async function resolveSavingsAccount(
 ========================================================= */
 
 /**
- * Resolve exactly one active loan for the member and verify
- * that the BANK transaction actually occurred after the
- * loan was disbursed.
+ * Resolve exactly one active loan for the member.
  *
- * IMPORTANT:
+ * IMPORTANT DATE ARCHITECTURE
+ * ---------------------------------------------------------
  *
- * We are scanning SMS messages that already exist in the
- * Android inbox.
+ * transactionDate is now a canonical calendar-date string:
  *
- * Therefore:
+ *     YYYY-MM-DD
  *
- *   smsDate
+ * loan.disbursementDate is also a canonical calendar-date
+ * string:
  *
- * tells us when Android received/stored the SMS.
+ *     YYYY-MM-DD
  *
- * It MUST NOT be used to determine whether the payment
- * belongs to the loan.
+ * No JavaScript Date objects are used for financial
+ * persistence or financial comparison.
  *
- * The authoritative temporal comparison is:
+ * Because YYYY-MM-DD is lexicographically sortable,
+ * direct string comparison is chronologically correct.
  *
- *   transactionDate > loan.disbursementDate
+ * Example:
  *
- * where transactionDate is the date/time reported by the
- * bank inside the SMS.
+ *   "2026-09-05" < "2026-09-11"
  *
- * Zero loans:
- *   block automatic processing.
+ * therefore:
  *
- * Multiple active loans:
- *   block automatic processing.
+ *   transactionDate < disbursementDate
  *
- * Transaction before or at disbursement:
- *   block automatic SMS repayment processing.
+ * is safe.
  *
- * We never guess where a payment belongs.
+ * =========================================================
  */
 async function resolveLoanForTransaction(
   member: ResolvedMember,
-  transactionDate: Date,
+  transactionDate: string,
 ): Promise<ResolvedLoan> {
   if (
-    !(
-      transactionDate instanceof
-      Date
-    ) ||
-    Number.isNaN(
-      transactionDate.getTime(),
+    !isValidCalendarDate(
+      transactionDate,
     )
   ) {
     throw new Error(
-      "Bank transaction date is invalid.",
+      "Bank transaction calendar date is invalid.",
     );
   }
 
@@ -867,13 +1047,12 @@ async function resolveLoanForTransaction(
      VALIDATE DISBURSEMENT DATE
   ------------------------------------------------------- */
 
+  const disbursementDate =
+    loan.disbursementDate;
+
   if (
-    !(
-      loan.disbursementDate instanceof
-      Date
-    ) ||
-    Number.isNaN(
-      loan.disbursementDate.getTime(),
+    !isValidCalendarDate(
+      disbursementDate,
     )
   ) {
     throw new Error(
@@ -886,37 +1065,18 @@ async function resolveLoanForTransaction(
   ------------------------------------------------------- */
 
   /**
-   * The bank transaction must have occurred STRICTLY
-   * AFTER the loan was disbursed.
+   * The bank transaction must occur STRICTLY AFTER the
+   * loan disbursement date.
    *
-   * This is deliberately NOT:
+   * We deliberately compare the BANK transaction date,
+   * not the Android SMS receipt date.
    *
-   *   smsDate > disbursementDate
-   *
-   * because the SMS may have remained in the Android inbox
-   * for days before GEO-SHUA processed it.
-   *
-   * Example:
-   *
-   * Loan:
-   *   Sep 1 08:00
-   *
-   * Android receives SMS:
-   *   Sep 6 10:00
-   *
-   * Bank transaction:
-   *   Sep 5 14:00
-   *
-   * Result:
-   *   VALID
-   *
-   * because:
-   *
-   *   Sep 5 14:00 > Sep 1 08:00
+   * This prevents an old payment from being attached to
+   * a loan that did not yet exist when the payment occurred.
    */
   if (
-    transactionDate.getTime() <=
-    loan.disbursementDate.getTime()
+    transactionDate <=
+    disbursementDate
   ) {
     throw new Error(
       "SMS_REPAYMENT_BEFORE_DISBURSEMENT",
@@ -984,6 +1144,17 @@ async function processSavingsTransaction(
       member,
     );
 
+  /**
+   * Convert the parser Date into the canonical financial
+   * calendar date before calling the savings service.
+   *
+   * This is the important Date → YYYY-MM-DD boundary.
+   */
+  const transactionAt =
+    toCalendarDate(
+      classified.transactionDate,
+    );
+
   const savingsTransaction =
     await createSavingsDeposit({
       savingsAccountId:
@@ -1030,11 +1201,11 @@ async function processSavingsTransaction(
         classified.destinationAccountNumber,
 
       /**
-       * Bank-reported transaction time.
+       * Financial transaction date.
+       *
+       * Must remain YYYY-MM-DD.
        */
-      transactionAt:
-        classified.transactionDate
-          .toISOString(),
+      transactionAt,
 
       ...(options.recordedBy
         ? {
@@ -1076,11 +1247,39 @@ async function processLoanTransaction(
 
   repayment: LoanRepayment;
 }> {
+  /**
+   * Convert the parser Date exactly once.
+   *
+   * Everything below uses the canonical financial
+   * calendar-date string.
+   */
+  const transactionDate =
+    toCalendarDate(
+      classified.transactionDate,
+    );
+
   const loan =
-  await resolveLoanForTransaction(
-    member,
-    classified.transactionDate,
-  );
+    await resolveLoanForTransaction(
+      member,
+      transactionDate,
+    );
+
+  /**
+   * Resolve the loan ID from the returned loan object.
+   *
+   * The current loan service exposes `id` as the public
+   * string identifier.
+   */
+  if (
+    typeof loan.id !==
+      "string" ||
+    loan.id.trim().length ===
+      0
+  ) {
+    throw new Error(
+      `Resolved loan "${loan.loanNumber}" has no valid loan ID.`,
+    );
+  }
 
   const repayment =
     await createLoanRepayment({
@@ -1096,8 +1295,12 @@ async function processLoanTransaction(
       transactionReference:
         classified.reference,
 
-      transactionDate:
-        classified.transactionDate,
+      /**
+       * Financial transaction date.
+       *
+       * Must remain YYYY-MM-DD.
+       */
+      transactionDate,
 
       source:
         "sms" as TransactionSource,
@@ -1218,6 +1421,17 @@ export async function processIncomingTransaction(
     );
   }
 
+  /**
+   * IMPORTANT:
+   *
+   * This Date validation is correct because this is the
+   * parser boundary.
+   *
+   * ParsedBankSms.transactionDate is currently a Date.
+   *
+   * It is converted to YYYY-MM-DD before entering the
+   * financial services.
+   */
   if (
     !(
       parsedTransaction.transactionDate instanceof
@@ -1347,25 +1561,15 @@ export async function processIncomingTransaction(
 }
 
 /* =========================================================
-   LEGACY RAW SMS COMPATIBILITY
+   RAW SMS COMPATIBILITY
 ========================================================= */
 
 /**
- * Compatibility helper for older callers that supply only
- * a raw SMS body.
+ * Compatibility helper for callers that supply only a raw
+ * SMS body.
  *
- * New code should preferably use:
- *
- *   parseBankSms()
- *       ↓
- *   processIncomingTransaction()
- *
- * because Android metadata such as:
- *
- * - address
- * - native SMS timestamp
- *
- * is otherwise unavailable.
+ * The parser remains responsible for creating the initial
+ * ParsedBankSms object.
  */
 export async function processBankSms(
   rawMessage: string,

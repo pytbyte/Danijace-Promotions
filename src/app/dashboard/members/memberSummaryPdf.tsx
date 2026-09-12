@@ -174,6 +174,8 @@ type LoanData = {
 
   principal: number;
 
+  installmentAmount: number;
+
   totalDue: number;
 
   amountPaid: number;
@@ -183,6 +185,8 @@ type LoanData = {
   outstandingBalance: number;
 
   firstDueDate: string;
+
+  endDate: string;
 
   fineStatus:
     | "active"
@@ -1698,6 +1702,12 @@ function getLoanFromMember(
     return null;
   }
 
+  const loanWithOptionalFields =
+    loan as typeof loan & {
+      installmentAmount?: unknown;
+      endDate?: unknown;
+    };
+
   return {
     loanNumber:
       safeString(
@@ -1712,6 +1722,14 @@ function getLoanFromMember(
       roundMoney(
         safeNumber(
           loan.principal,
+        ),
+      ),
+
+    installmentAmount:
+      roundMoney(
+        safeNumber(
+          loanWithOptionalFields
+            .installmentAmount,
         ),
       ),
 
@@ -1746,6 +1764,12 @@ function getLoanFromMember(
     firstDueDate:
       normalizeDate(
         loan.firstDueDate,
+      ),
+
+    endDate:
+      normalizeDate(
+        loanWithOptionalFields
+          .endDate,
       ),
 
     fineStatus:
@@ -3606,6 +3630,13 @@ function MemberAccountStatement({
                 />
 
                 <LoanRow
+                  label="Installment Amount"
+                  value={formatKES(
+                    loan.installmentAmount,
+                  )}
+                />
+
+                <LoanRow
                   label="Total Repayable"
                   value={formatKES(
                     loan.totalDue,
@@ -3635,9 +3666,9 @@ function MemberAccountStatement({
                 />
 
                 <LoanRow
-                  label="Next Due Date"
+                  label="Loan End Date"
                   value={formatDate(
-                    loan.firstDueDate,
+                    loan.endDate,
                   )}
                   last
                 />

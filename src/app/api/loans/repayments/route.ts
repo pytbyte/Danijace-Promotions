@@ -11,6 +11,7 @@ import {
 } from "@/lib/loans/service";
 
 import type {
+  CalendarDate,
   TransactionSource,
 } from "@/lib/loans/types";
 
@@ -131,6 +132,136 @@ function generateInternalReference(
         : "MAN";
 
   return `${prefix}-${Date.now()}-${randomUUID()}`;
+}
+
+/* =========================================================
+   CALENDAR DATE
+========================================================= */
+
+/**
+ * Validate a GEO-SHUA CalendarDate.
+ *
+ * Business dates are stored and passed through the
+ * application as YYYY-MM-DD strings.
+ *
+ * JavaScript Date is used here ONLY to validate that the
+ * supplied calendar date actually exists.
+ */
+function isValidCalendarDate(
+  value: string,
+): value is CalendarDate {
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(
+      value,
+    )
+  ) {
+    return false;
+  }
+
+  const [
+    yearString,
+    monthString,
+    dayString,
+  ] =
+    value.split("-");
+
+  const year =
+    Number(yearString);
+
+  const month =
+    Number(monthString);
+
+  const day =
+    Number(dayString);
+
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
+    return false;
+  }
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31
+  ) {
+    return false;
+  }
+
+  const parsed =
+    new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day,
+      ),
+    );
+
+  return (
+    parsed.getUTCFullYear() ===
+      year &&
+    parsed.getUTCMonth() ===
+      month - 1 &&
+    parsed.getUTCDate() ===
+      day
+  );
+}
+
+/**
+ * Return today's date using the Kenya timezone.
+ *
+ * The result remains a CalendarDate string.
+ */
+function getKenyanToday(): CalendarDate {
+  const formatter =
+    new Intl.DateTimeFormat(
+      "en-GB",
+      {
+        timeZone:
+          "Africa/Nairobi",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      },
+    );
+
+  const parts =
+    formatter.formatToParts(
+      new Date(),
+    );
+
+  const year =
+    parts.find(
+      (part) =>
+        part.type === "year",
+    )?.value;
+
+  const month =
+    parts.find(
+      (part) =>
+        part.type === "month",
+    )?.value;
+
+  const day =
+    parts.find(
+      (part) =>
+        part.type === "day",
+    )?.value;
+
+  if (
+    !year ||
+    !month ||
+    !day
+  ) {
+    throw new Error(
+      "Unable to determine the current Kenyan calendar date.",
+    );
+  }
+
+  return `${year}-${month}-${day}` as CalendarDate;
 }
 
 /* =========================================================
@@ -472,7 +603,7 @@ export async function POST(
 
     /* =====================================================
        TRANSACTION REFERENCE
-       
+
        OPTIONAL FOR MANUAL/SYSTEM
        REQUIRED FOR SMS
     ===================================================== */
@@ -546,18 +677,30 @@ export async function POST(
       );
     }
 
+    /*
+     * Keep transactionDate as a CalendarDate string.
+     *
+     * GEO-SHUA business dates use:
+     *
+     * YYYY-MM-DD
+     *
+     * Do NOT convert this value into a JavaScript Date
+     * before passing it to createLoanRepayment().
+     */
     const transactionDate =
-      new Date(
-        body.transactionDate,
-      );
+      body.transactionDate.trim();
+
+    /* -------------------------------------------------------
+       CALENDAR DATE VALIDATION
+    ------------------------------------------------------- */
 
     if (
-      Number.isNaN(
-        transactionDate.getTime(),
+      !isValidCalendarDate(
+        transactionDate,
       )
     ) {
       return errorResponse(
-        "Invalid transaction date.",
+        "Transaction date must be a valid date in YYYY-MM-DD format.",
         400,
       );
     }
@@ -566,13 +709,17 @@ export async function POST(
        FUTURE DATE PROTECTION
     ------------------------------------------------------- */
 
-    const futureTolerance =
-      5 * 60 * 1000;
+    const today =
+      getKenyanToday();
 
+    /*
+     * CalendarDate values use the fixed YYYY-MM-DD format,
+     * so lexical comparison correctly compares calendar
+     * order.
+     */
     if (
-      transactionDate.getTime() >
-      Date.now() +
-        futureTolerance
+      transactionDate >
+      today
     ) {
       return errorResponse(
         "Transaction date cannot be in the future.",
@@ -641,6 +788,9 @@ export async function POST(
 
         transactionReference,
 
+        /*
+         * transactionDate is already a CalendarDate string.
+         */
         transactionDate,
 
         source:
