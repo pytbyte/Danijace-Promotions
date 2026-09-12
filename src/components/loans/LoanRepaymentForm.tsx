@@ -21,28 +21,135 @@ import type {
   TransactionSource,
 } from "@/lib/loans/types";
 
+/* =========================================================
+   TYPES
+========================================================= */
+
 interface LoanRepaymentModalProps {
   loan: Loan | null;
   open: boolean;
   onClose: () => void;
 
   /**
-   * Called after UI validation succeeds.
+   * Financial transaction dates are calendar dates.
    *
-   * The parent/API/service layer remains responsible
-   * for authoritative financial validation.
+   * Format:
+   *
+   *     YYYY-MM-DD
+   *
+   * They are intentionally NOT JavaScript Date values.
    */
   onSubmit: (data: {
     loanId: string;
     amount: number;
     transactionReference: string;
-    transactionDate: Date;
+    transactionDate: string;
     source: TransactionSource;
     rawMessage?: string;
   }) => Promise<void> | void;
 
   loading?: boolean;
 }
+
+/* =========================================================
+   CALENDAR DATE
+========================================================= */
+
+/**
+ * Return today's calendar date in Kenya.
+ *
+ * Financial dates are business/calendar dates, not
+ * timestamps. Therefore we explicitly use Africa/Nairobi.
+ */
+function getKenyanToday(): string {
+  const formatter =
+    new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone: "Africa/Nairobi",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      },
+    );
+
+  return formatter.format(
+    new Date(),
+  );
+}
+
+/**
+ * Validate an actual YYYY-MM-DD calendar date.
+ *
+ * This does NOT convert the date to a timestamp.
+ * Date.UTC is used only to verify that the calendar
+ * combination actually exists.
+ */
+function isValidCalendarDate(
+  value: string,
+): boolean {
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(
+      value,
+    )
+  ) {
+    return false;
+  }
+
+  const [
+    yearString,
+    monthString,
+    dayString,
+  ] = value.split("-");
+
+  const year =
+    Number(yearString);
+
+  const month =
+    Number(monthString);
+
+  const day =
+    Number(dayString);
+
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
+    return false;
+  }
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31
+  ) {
+    return false;
+  }
+
+  const parsed =
+    new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day,
+      ),
+    );
+
+  return (
+    parsed.getUTCFullYear() ===
+      year &&
+    parsed.getUTCMonth() ===
+      month - 1 &&
+    parsed.getUTCDate() ===
+      day
+  );
+}
+
+/* =========================================================
+   COMPONENT
+========================================================= */
 
 export default function LoanRepaymentModal({
   loan,
@@ -51,20 +158,34 @@ export default function LoanRepaymentModal({
   onSubmit,
   loading = false,
 }: LoanRepaymentModalProps) {
-  const [amount, setAmount] = useState("");
-  const [transactionReference, setTransactionReference] =
+  const [amount, setAmount] =
     useState("");
-  const [transactionDate, setTransactionDate] =
-    useState("");
-  const [source, setSource] =
-    useState<TransactionSource>("manual");
-  const [rawMessage, setRawMessage] = useState("");
-  const [error, setError] = useState("");
 
-  /**
-   * Reset form whenever the modal is opened for
-   * a different loan.
-   */
+  const [
+    transactionReference,
+    setTransactionReference,
+  ] = useState("");
+
+  const [
+    transactionDate,
+    setTransactionDate,
+  ] = useState("");
+
+  const [source, setSource] =
+    useState<TransactionSource>(
+      "manual",
+    );
+
+  const [rawMessage, setRawMessage] =
+    useState("");
+
+  const [error, setError] =
+    useState("");
+
+  /* =======================================================
+     RESET FORM
+  ======================================================= */
+
   useEffect(() => {
     if (!open || !loan) {
       return;
@@ -76,40 +197,36 @@ export default function LoanRepaymentModal({
     setRawMessage("");
     setError("");
 
-    /**
-     * datetime-local expects:
+    /*
+     * Financial transaction dates are calendar dates.
      *
-     * YYYY-MM-DDTHH:mm
+     * The HTML date input expects:
      *
-     * Use the browser's local time rather than UTC.
+     *     YYYY-MM-DD
+     *
+     * We intentionally do NOT use:
+     *
+     *     new Date().toISOString()
+     *
+     * because that introduces UTC timestamp semantics.
      */
-    const now = new Date();
-
-    const localDate = new Date(
-      now.getTime() -
-        now.getTimezoneOffset() * 60_000,
-    )
-      .toISOString()
-      .slice(0, 16);
-
-    setTransactionDate(localDate);
+    setTransactionDate(
+      getKenyanToday(),
+    );
   }, [open, loan]);
 
-  /**
-   * Do not render the modal when closed or when
-   * there is no selected loan.
-   */
+  /* =======================================================
+     CLOSED STATE
+  ======================================================= */
+
   if (!open || !loan) {
     return null;
   }
 
-  /**
-   * Capture the narrowed loan in a stable local
-   * constant.
-   *
-   * This also makes TypeScript happy inside
-   * handleSubmit().
-   */
+  /* =======================================================
+     SELECTED LOAN
+  ======================================================= */
+
   const selectedLoan = loan;
 
   const outstanding =
@@ -120,10 +237,13 @@ export default function LoanRepaymentModal({
       ? selectedLoan.outstandingBalance
       : 0;
 
-  const parsedAmount = Number(amount);
+  const parsedAmount =
+    Number(amount);
 
   const validAmount =
-    Number.isFinite(parsedAmount) &&
+    Number.isFinite(
+      parsedAmount,
+    ) &&
     parsedAmount > 0;
 
   const amountWithinBalance =
@@ -134,14 +254,18 @@ export default function LoanRepaymentModal({
     amountWithinBalance
       ? Math.max(
           0,
-          outstanding - parsedAmount,
+          outstanding -
+            parsedAmount,
         )
       : outstanding;
 
-  /**
-   * Format monetary values consistently.
-   */
-  function formatMoney(value: number): string {
+  /* =======================================================
+     MONEY
+  ======================================================= */
+
+  function formatMoney(
+    value: number,
+  ): string {
     return value.toLocaleString(
       "en-KE",
       {
@@ -151,9 +275,10 @@ export default function LoanRepaymentModal({
     );
   }
 
-  /**
-   * Submit repayment.
-   */
+  /* =======================================================
+     SUBMIT
+  ======================================================= */
+
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
   ) {
@@ -165,23 +290,30 @@ export default function LoanRepaymentModal({
 
     setError("");
 
-    /*
-     * --------------------------------------------------
-     * LOAN VALIDATION
-     * --------------------------------------------------
-     */
+    /* =====================================================
+       LOAN VALIDATION
+    ===================================================== */
 
-    if (!selectedLoan.id) {
+    if (
+      typeof selectedLoan.id !==
+        "string" ||
+      !selectedLoan.id.trim()
+    ) {
       setError(
         "The selected loan does not have a valid ID.",
       );
+
       return;
     }
 
-    if (selectedLoan.status !== "active") {
+    if (
+      selectedLoan.status !==
+      "active"
+    ) {
       setError(
         "Repayment can only be recorded against an active loan.",
       );
+
       return;
     }
 
@@ -189,19 +321,19 @@ export default function LoanRepaymentModal({
       setError(
         "This loan has no outstanding balance.",
       );
+
       return;
     }
 
-    /*
-     * --------------------------------------------------
-     * AMOUNT VALIDATION
-     * --------------------------------------------------
-     */
+    /* =====================================================
+       AMOUNT VALIDATION
+    ===================================================== */
 
     if (!amount.trim()) {
       setError(
         "Repayment amount is required.",
       );
+
       return;
     }
 
@@ -209,24 +341,25 @@ export default function LoanRepaymentModal({
       setError(
         "Repayment amount must be greater than zero.",
       );
+
       return;
     }
 
-    /**
-     * Financial amounts are stored to two decimal
-     * places at the UI boundary.
-     */
     const normalizedAmount =
       Math.round(
         parsedAmount * 100,
       ) / 100;
 
     if (
+      !Number.isFinite(
+        normalizedAmount,
+      ) ||
       normalizedAmount <= 0
     ) {
       setError(
         "Repayment amount must be greater than zero.",
       );
+
       return;
     }
 
@@ -239,73 +372,99 @@ export default function LoanRepaymentModal({
           outstanding,
         )}.`,
       );
+
       return;
     }
 
-    /*
-     * --------------------------------------------------
-     * TRANSACTION REFERENCE
-     * --------------------------------------------------
-     */
+    /* =====================================================
+       TRANSACTION REFERENCE
+    ===================================================== */
 
     const reference =
       transactionReference.trim();
 
     /*
-     * --------------------------------------------------
-     * TRANSACTION DATE
-     * --------------------------------------------------
+     * The server generates a reference for manual/system
+     * repayments when one is omitted.
+     *
+     * SMS repayments require the bank reference.
      */
+    if (
+      source === "sms" &&
+      !reference
+    ) {
+      setError(
+        "Transaction reference is required for an SMS repayment.",
+      );
 
-    if (!transactionDate) {
+      return;
+    }
+
+    /* =====================================================
+       TRANSACTION DATE
+    ===================================================== */
+
+    const calendarDate =
+      transactionDate.trim();
+
+    if (!calendarDate) {
       setError(
         "Transaction date is required.",
       );
-      return;
-    }
 
-    const date =
-      new Date(transactionDate);
-
-    if (
-      Number.isNaN(
-        date.getTime(),
-      )
-    ) {
-      setError(
-        "Please enter a valid transaction date.",
-      );
-      return;
-    }
-
-    /**
-     * Prevent future transaction dates in the UI.
-     *
-     * A small tolerance allows for clock differences
-     * between selecting the date and submitting.
-     *
-     * The service/API must still perform authoritative
-     * validation.
-     */
-    const futureTolerance =
-      5 * 60 * 1000;
-
-    if (
-      date.getTime() >
-      Date.now() +
-        futureTolerance
-    ) {
-      setError(
-        "Transaction date cannot be in the future.",
-      );
       return;
     }
 
     /*
-     * --------------------------------------------------
-     * SOURCE VALIDATION
-     * --------------------------------------------------
+     * IMPORTANT:
+     *
+     * Do NOT do:
+     *
+     *     new Date(calendarDate)
+     *
+     * Do NOT do:
+     *
+     *     toISOString()
+     *
+     * Do NOT create a datetime-local value.
+     *
+     * The financial transaction date remains exactly:
+     *
+     *     YYYY-MM-DD
      */
+    if (
+      !isValidCalendarDate(
+        calendarDate,
+      )
+    ) {
+      setError(
+        "Transaction date must be a valid calendar date in YYYY-MM-DD format.",
+      );
+
+      return;
+    }
+
+    /* =====================================================
+       FUTURE DATE
+    ===================================================== */
+
+    const today =
+      getKenyanToday();
+
+    if (
+      calendarDate >
+      today
+    ) {
+      setError(
+        "Transaction date cannot be in the future.",
+      );
+
+      return;
+    }
+
+    /* =====================================================
+       SOURCE VALIDATION
+    ===================================================== */
 
     if (
       source !== "manual" &&
@@ -315,14 +474,13 @@ export default function LoanRepaymentModal({
       setError(
         "Invalid payment source.",
       );
+
       return;
     }
 
-    /*
-     * --------------------------------------------------
-     * SMS VALIDATION
-     * --------------------------------------------------
-     */
+    /* =====================================================
+       RAW SMS
+    ===================================================== */
 
     const normalizedRawMessage =
       rawMessage.trim();
@@ -334,18 +492,18 @@ export default function LoanRepaymentModal({
       setError(
         "Original SMS message is required for an SMS repayment.",
       );
+
       return;
     }
 
-    /*
-     * --------------------------------------------------
-     * SUBMIT
-     * --------------------------------------------------
-     */
+    /* =====================================================
+       SUBMIT
+    ===================================================== */
 
     try {
       await onSubmit({
-        loanId: selectedLoan.id,
+        loanId:
+          selectedLoan.id,
 
         amount:
           normalizedAmount,
@@ -353,8 +511,15 @@ export default function LoanRepaymentModal({
         transactionReference:
           reference,
 
+        /*
+         * Financial date remains a plain calendar string.
+         *
+         * Example:
+         *
+         *     "2026-09-12"
+         */
         transactionDate:
-          date,
+          calendarDate,
 
         source,
 
@@ -380,6 +545,10 @@ export default function LoanRepaymentModal({
     }
   }
 
+  /* =======================================================
+     RENDER
+  ======================================================= */
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
@@ -391,6 +560,7 @@ export default function LoanRepaymentModal({
         {/* =================================================
             HEADER
         ================================================= */}
+
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-700">
           <div className="min-w-0">
             <h2
@@ -419,6 +589,7 @@ export default function LoanRepaymentModal({
         {/* =================================================
             FORM
         ================================================= */}
+
         <form
           onSubmit={handleSubmit}
           className="max-h-[85vh] overflow-y-auto"
@@ -427,6 +598,7 @@ export default function LoanRepaymentModal({
             {/* =================================================
                 LOAN INFORMATION
             ================================================= */}
+
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
               <div className="flex items-start gap-3">
                 <div className="rounded-lg bg-slate-200 p-2 dark:bg-slate-700">
@@ -439,7 +611,9 @@ export default function LoanRepaymentModal({
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="font-semibold text-slate-900 dark:text-white">
-                      {selectedLoan.loanNumber}
+                      {
+                        selectedLoan.loanNumber
+                      }
                     </span>
 
                     <span className="text-slate-400">
@@ -447,12 +621,16 @@ export default function LoanRepaymentModal({
                     </span>
 
                     <span className="text-sm text-slate-600 dark:text-slate-300">
-                      {selectedLoan.memberNumber}
+                      {
+                        selectedLoan.memberNumber
+                      }
                     </span>
                   </div>
 
                   <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                    {selectedLoan.memberName}
+                    {
+                      selectedLoan.memberName
+                    }
                   </p>
                 </div>
               </div>
@@ -489,6 +667,7 @@ export default function LoanRepaymentModal({
             {/* =================================================
                 ERROR
             ================================================= */}
+
             {error && (
               <div
                 className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
@@ -501,12 +680,14 @@ export default function LoanRepaymentModal({
             {/* =================================================
                 AMOUNT
             ================================================= */}
+
             <div>
               <label
                 htmlFor="repayment-amount"
                 className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200"
               >
                 Amount Received
+
                 <span className="ml-1 text-red-500">
                   *
                 </span>
@@ -526,7 +707,9 @@ export default function LoanRepaymentModal({
                   step="0.01"
                   inputMode="decimal"
                   value={amount}
-                  onChange={(event) => {
+                  onChange={(
+                    event,
+                  ) => {
                     setAmount(
                       event.target.value,
                     );
@@ -556,15 +739,19 @@ export default function LoanRepaymentModal({
             {/* =================================================
                 TRANSACTION REFERENCE
             ================================================= */}
+
             <div>
               <label
                 htmlFor="repayment-reference"
                 className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200"
               >
                 Transaction Reference
-                <span className="ml-1 text-red-500">
-                  *
-                </span>
+
+                {source === "sms" && (
+                  <span className="ml-1 text-red-500">
+                    *
+                  </span>
+                )}
               </label>
 
               <div className="relative">
@@ -579,7 +766,9 @@ export default function LoanRepaymentModal({
                   value={
                     transactionReference
                   }
-                  onChange={(event) => {
+                  onChange={(
+                    event,
+                  ) => {
                     setTransactionReference(
                       event.target.value,
                     );
@@ -593,20 +782,23 @@ export default function LoanRepaymentModal({
               </div>
 
               <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-                This reference must uniquely identify
-                the payment.
+                {source === "sms"
+                  ? "This reference must uniquely identify the bank payment."
+                  : "Optional for manual payments. The server generates a reference when omitted."}
               </p>
             </div>
 
             {/* =================================================
                 DATE
             ================================================= */}
+
             <div>
               <label
                 htmlFor="repayment-date"
                 className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200"
               >
                 Transaction Date
+
                 <span className="ml-1 text-red-500">
                   *
                 </span>
@@ -620,11 +812,14 @@ export default function LoanRepaymentModal({
 
                 <input
                   id="repayment-date"
-                  type="datetime-local"
+                  type="date"
                   value={
                     transactionDate
                   }
-                  onChange={(event) => {
+                  max={getKenyanToday()}
+                  onChange={(
+                    event,
+                  ) => {
                     setTransactionDate(
                       event.target.value,
                     );
@@ -636,14 +831,14 @@ export default function LoanRepaymentModal({
               </div>
 
               <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-                Use the actual date and time the payment
-                occurred.
+                Use the actual calendar date the payment occurred.
               </p>
             </div>
 
             {/* =================================================
                 SOURCE
             ================================================= */}
+
             <div>
               <label
                 htmlFor="repayment-source"
@@ -655,7 +850,9 @@ export default function LoanRepaymentModal({
               <select
                 id="repayment-source"
                 value={source}
-                onChange={(event) => {
+                onChange={(
+                  event,
+                ) => {
                   setSource(
                     event.target
                       .value as TransactionSource,
@@ -682,6 +879,7 @@ export default function LoanRepaymentModal({
             {/* =================================================
                 RAW SMS
             ================================================= */}
+
             {source === "sms" && (
               <div>
                 <label
@@ -693,6 +891,7 @@ export default function LoanRepaymentModal({
                   />
 
                   Original SMS
+
                   <span className="text-red-500">
                     *
                   </span>
@@ -701,7 +900,9 @@ export default function LoanRepaymentModal({
                 <textarea
                   id="repayment-raw-sms"
                   value={rawMessage}
-                  onChange={(event) => {
+                  onChange={(
+                    event,
+                  ) => {
                     setRawMessage(
                       event.target.value,
                     );
@@ -714,8 +915,7 @@ export default function LoanRepaymentModal({
                 />
 
                 <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-                  Keep the original message for audit and
-                  reconciliation.
+                  Keep the original message for audit and reconciliation.
                 </p>
               </div>
             )}
@@ -724,6 +924,7 @@ export default function LoanRepaymentModal({
           {/* =================================================
               FOOTER
           ================================================= */}
+
           <div className="flex flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:justify-end dark:border-slate-700 dark:bg-slate-800/50">
             <button
               type="button"
@@ -765,3 +966,4 @@ export default function LoanRepaymentModal({
     </div>
   );
 }
+

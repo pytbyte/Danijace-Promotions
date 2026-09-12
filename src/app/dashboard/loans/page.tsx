@@ -511,133 +511,173 @@ export default function LoansPage() {
      REPAYMENT SUBMISSION
   ======================================================= */
 
+    /* =======================================================
+     REPAYMENT SUBMISSION
+  ======================================================= */
+
   const handleRepaymentSubmit = useCallback(
-    async (data: {
-      loanId: string;
-      amount: number;
-      transactionReference: string;
-      transactionDate: Date;
-      source: TransactionSource;
-      rawMessage?: string;
-    }) => {
-      const currentLoan = repaymentLoan;
+  async (data: {
+    loanId: string;
+    amount: number;
+    transactionReference: string;
+    transactionDate: string;
+    source: TransactionSource;
+    rawMessage?: string;
+  }) => {
+    const currentLoan = repaymentLoan;
 
-      if (!currentLoan) {
-        throw new Error(
-          "No repayment loan is selected.",
-        );
-      }
+    if (!currentLoan) {
+      throw new Error(
+        "No repayment loan is selected.",
+      );
+    }
 
-      if (currentLoan.id !== data.loanId) {
-        throw new Error(
-          "The selected loan has changed. Please reopen the repayment form.",
-        );
-      }
+    if (currentLoan.id !== data.loanId) {
+      throw new Error(
+        "The selected loan has changed. Please reopen the repayment form.",
+      );
+    }
 
-      if (
-        !Number.isFinite(data.amount) ||
-        data.amount <= 0
-      ) {
-        throw new Error(
-          "Repayment amount must be greater than zero.",
-        );
-      }
+    if (
+      !Number.isFinite(data.amount) ||
+      data.amount <= 0
+    ) {
+      throw new Error(
+        "Repayment amount must be greater than zero.",
+      );
+    }
 
-      setRepaymentLoading(true);
-      setError("");
+    if (
+      typeof data.transactionReference !== "string" ||
+      !data.transactionReference.trim()
+    ) {
+      throw new Error(
+        "Transaction reference is required.",
+      );
+    }
 
-      try {
-        const requestBody = {
-          loanId: data.loanId,
-          amount: data.amount,
+    /* =====================================================
+       CALENDAR DATE
+    ===================================================== */
 
-          ...(data.transactionReference?.trim()
-            ? {
-                transactionReference:
-                  data.transactionReference.trim(),
-              }
-            : {}),
+    const transactionDate =
+      typeof data.transactionDate === "string"
+        ? data.transactionDate.trim()
+        : "";
 
-          transactionDate:
-            data.transactionDate.toISOString(),
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(
+        transactionDate,
+      )
+    ) {
+      throw new Error(
+        "Transaction date must be a valid date in YYYY-MM-DD format.",
+      );
+    }
 
-          source: data.source,
+    const [
+      yearString,
+      monthString,
+      dayString,
+    ] = transactionDate.split("-");
 
-          ...(data.rawMessage?.trim()
-            ? {
-                rawMessage:
-                  data.rawMessage.trim(),
-              }
-            : {}),
-        };
+    const year = Number(yearString);
+    const month = Number(monthString);
+    const day = Number(dayString);
 
-        const response = await fetch(
-          REPAYMENT_API,
-          {
-            method: "POST",
-            credentials: "same-origin",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify(requestBody),
+    const calendarCheck = new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day,
+      ),
+    );
+
+    if (
+      calendarCheck.getUTCFullYear() !== year ||
+      calendarCheck.getUTCMonth() !== month - 1 ||
+      calendarCheck.getUTCDate() !== day
+    ) {
+      throw new Error(
+        "Transaction date must be a valid calendar date.",
+      );
+    }
+
+    /* =====================================================
+       SUBMIT
+    ===================================================== */
+
+    setRepaymentLoading(true);
+
+    try {
+      const response = await fetch(
+        "/api/loans/repayments",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
+          body: JSON.stringify({
+            loanId: data.loanId,
+            amount: data.amount,
+            transactionReference:
+              data.transactionReference.trim(),
+
+            /*
+             * Financial dates are calendar dates.
+             *
+             * Example:
+             *   "2026-09-12"
+             *
+             * Never convert this to:
+             *   new Date(...)
+             *
+             * Never send:
+             *   "2026-09-12T00:00:00.000Z"
+             */
+            transactionDate,
+
+            source: data.source,
+
+            ...(data.rawMessage !== undefined
+              ? {
+                  rawMessage: data.rawMessage,
+                }
+              : {}),
+          }),
+        },
+      );
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(
+          result.error ||
+            result.message ||
+            "Failed to record loan repayment.",
         );
-
-        const rawResponse =
-          await response.text();
-
-        let result: RepaymentResponse | null =
-          null;
-
-        try {
-          result =
-            JSON.parse(
-              rawResponse,
-            ) as RepaymentResponse;
-        } catch {
-          throw new Error(
-            `The repayment server returned an invalid response (${response.status}).`,
-          );
-        }
-
-        if (!response.ok || !result?.success) {
-          throw new Error(
-            result?.error ||
-              `Unable to record repayment. Server returned ${response.status}.`,
-          );
-        }
-
-        setRepaymentOpen(false);
-        setRepaymentLoan(null);
-
-        try {
-          await loadLoans(true);
-        } catch (refreshError) {
-          console.error(
-            "Repayment succeeded but loan refresh failed:",
-            refreshError,
-          );
-
-          setError(
-            "Repayment was recorded successfully, but the loan list could not be refreshed. Please refresh the page.",
-          );
-        }
-      } catch (err) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Something went wrong while recording the repayment.";
-
-        setError(message);
-
-        throw err;
-      } finally {
-        setRepaymentLoading(false);
       }
-    },
-    [repaymentLoan, loadLoans],
-  );
+
+      setRepaymentOpen(false);
+      setRepaymentLoan(null);
+
+      await loadLoans(true);
+    } catch (error) {
+      console.error(
+        "Failed to record loan repayment:",
+        error,
+      );
+
+      throw error;
+    } finally {
+      setRepaymentLoading(false);
+    }
+  },
+  [
+    repaymentLoan,
+    loadLoans,
+  ],
+);
 
   /* =======================================================
      STATISTICS

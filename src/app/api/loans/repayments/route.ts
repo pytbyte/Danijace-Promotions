@@ -68,17 +68,13 @@ function getSessionActor(
   session: AuthenticatedSession,
 ) {
   const name =
-    typeof session?.user?.name ===
-    "string"
+    typeof session?.user?.name === "string"
       ? session.user.name.trim()
       : "";
 
   const email =
-    typeof session?.user?.email ===
-    "string"
-      ? session.user.email
-          .trim()
-          .toLowerCase()
+    typeof session?.user?.email === "string"
+      ? session.user.email.trim().toLowerCase()
       : "";
 
   if (!name || !email) {
@@ -110,17 +106,6 @@ type RepaymentRequest = {
    REFERENCE
 ========================================================= */
 
-/**
- * Generate an internal reference when a manual/system
- * repayment does not provide one.
- *
- * IMPORTANT:
- *
- * The reference is still stored because the financial
- * service requires a unique transaction identity.
- *
- * The user does NOT have to type it.
- */
 function generateInternalReference(
   source: TransactionSource,
 ): string {
@@ -138,15 +123,6 @@ function generateInternalReference(
    CALENDAR DATE
 ========================================================= */
 
-/**
- * Validate a GEO-SHUA CalendarDate.
- *
- * Business dates are stored and passed through the
- * application as YYYY-MM-DD strings.
- *
- * JavaScript Date is used here ONLY to validate that the
- * supplied calendar date actually exists.
- */
 function isValidCalendarDate(
   value: string,
 ): value is CalendarDate {
@@ -162,17 +138,11 @@ function isValidCalendarDate(
     yearString,
     monthString,
     dayString,
-  ] =
-    value.split("-");
+  ] = value.split("-");
 
-  const year =
-    Number(yearString);
-
-  const month =
-    Number(monthString);
-
-  const day =
-    Number(dayString);
+  const year = Number(yearString);
+  const month = Number(monthString);
+  const day = Number(dayString);
 
   if (
     !Number.isInteger(year) ||
@@ -191,37 +161,27 @@ function isValidCalendarDate(
     return false;
   }
 
-  const parsed =
-    new Date(
-      Date.UTC(
-        year,
-        month - 1,
-        day,
-      ),
-    );
+  const parsed = new Date(
+    Date.UTC(
+      year,
+      month - 1,
+      day,
+    ),
+  );
 
   return (
-    parsed.getUTCFullYear() ===
-      year &&
-    parsed.getUTCMonth() ===
-      month - 1 &&
-    parsed.getUTCDate() ===
-      day
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
   );
 }
 
-/**
- * Return today's date using the Kenya timezone.
- *
- * The result remains a CalendarDate string.
- */
 function getKenyanToday(): CalendarDate {
   const formatter =
     new Intl.DateTimeFormat(
       "en-GB",
       {
-        timeZone:
-          "Africa/Nairobi",
+        timeZone: "Africa/Nairobi",
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
@@ -268,26 +228,10 @@ function getKenyanToday(): CalendarDate {
    GET /api/loans/repayments?loanId=...
 ========================================================= */
 
-/**
- * Return the immutable repayment ledger for one loan.
- *
- * This endpoint ONLY reads repayment history.
- *
- * It does not:
- *
- * - modify the loan
- * - create repayments
- * - change balances
- * - recalculate financial state
- */
 export async function GET(
   request: Request,
 ) {
   try {
-    /* -------------------------------------------------------
-       AUTHENTICATION
-    ------------------------------------------------------- */
-
     const session =
       (await auth()) as AuthenticatedSession | null;
 
@@ -297,10 +241,6 @@ export async function GET(
         401,
       );
     }
-
-    /* -------------------------------------------------------
-       LOAN ID
-    ------------------------------------------------------- */
 
     const url =
       new URL(request.url);
@@ -317,10 +257,6 @@ export async function GET(
       );
     }
 
-    /* -------------------------------------------------------
-       VERIFY LOAN EXISTS
-    ------------------------------------------------------- */
-
     const loan =
       await getLoanById(
         loanId,
@@ -333,64 +269,35 @@ export async function GET(
       );
     }
 
-    /* -------------------------------------------------------
-       GET REPAYMENTS
-    ------------------------------------------------------- */
-
     const repayments =
       await getLoanRepayments(
         loanId,
       );
 
-    /* -------------------------------------------------------
-       RESPONSE
-    ------------------------------------------------------- */
-
     return NextResponse.json(
       {
         success: true,
 
-        data:
-          repayments,
+        data: repayments,
 
         loan: {
-          id:
-            loan.id,
-
-          loanNumber:
-            loan.loanNumber,
-
-          memberId:
-            loan.memberId,
-
-          memberName:
-            loan.memberName,
-
-          principal:
-            loan.principal,
-
-          totalDue:
-            loan.totalDue,
-
-          amountPaid:
-            loan.amountPaid,
-
-          totalFines:
-            loan.totalFines,
-
+          id: loan.id,
+          loanNumber: loan.loanNumber,
+          memberId: loan.memberId,
+          memberName: loan.memberName,
+          principal: loan.principal,
+          totalDue: loan.totalDue,
+          amountPaid: loan.amountPaid,
+          totalFines: loan.totalFines,
           outstandingBalance:
             loan.outstandingBalance,
-
-          status:
-            loan.status,
+          status: loan.status,
         },
 
-        count:
-          repayments.length,
+        count: repayments.length,
       },
       {
         status: 200,
-
         headers: {
           "Cache-Control":
             "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -416,20 +323,6 @@ export async function GET(
    POST /api/loans/repayments
 ========================================================= */
 
-/**
- * Record a new immutable loan repayment.
- *
- * REFERENCE RULE
- * ---------------------------------------------------------
- *
- * Manual/system:
- *   reference is optional.
- *   The server generates one when missing.
- *
- * SMS:
- *   reference is required because it comes from the bank
- *   and is the real external transaction identity.
- */
 export async function POST(
   request: Request,
 ) {
@@ -464,8 +357,7 @@ export async function POST(
         await request.json();
 
       if (
-        typeof parsed !==
-          "object" ||
+        typeof parsed !== "object" ||
         parsed === null ||
         Array.isArray(parsed)
       ) {
@@ -489,8 +381,7 @@ export async function POST(
     ===================================================== */
 
     if (
-      typeof body.loanId !==
-        "string" ||
+      typeof body.loanId !== "string" ||
       !body.loanId.trim()
     ) {
       return errorResponse(
@@ -507,10 +398,8 @@ export async function POST(
     ===================================================== */
 
     if (
-      body.amount ===
-        undefined ||
-      body.amount ===
-        null ||
+      body.amount === undefined ||
+      body.amount === null ||
       body.amount === ""
     ) {
       return errorResponse(
@@ -520,17 +409,12 @@ export async function POST(
     }
 
     const amount =
-      typeof body.amount ===
-        "number"
+      typeof body.amount === "number"
         ? body.amount
-        : Number(
-            body.amount,
-          );
+        : Number(body.amount);
 
     if (
-      !Number.isFinite(
-        amount,
-      ) ||
+      !Number.isFinite(amount) ||
       amount <= 0
     ) {
       return errorResponse(
@@ -538,10 +422,6 @@ export async function POST(
         400,
       );
     }
-
-    /* -------------------------------------------------------
-       TWO DECIMAL PLACES
-    ------------------------------------------------------- */
 
     const normalizedAmount =
       Math.round(
@@ -559,10 +439,6 @@ export async function POST(
         400,
       );
     }
-
-    /* -------------------------------------------------------
-       SAFE FINANCIAL RANGE
-    ------------------------------------------------------- */
 
     if (
       !Number.isSafeInteger(
@@ -582,8 +458,7 @@ export async function POST(
     ===================================================== */
 
     const source =
-      body.source ===
-      undefined
+      body.source === undefined
         ? "manual"
         : body.source;
 
@@ -603,9 +478,6 @@ export async function POST(
 
     /* =====================================================
        TRANSACTION REFERENCE
-
-       OPTIONAL FOR MANUAL/SYSTEM
-       REQUIRED FOR SMS
     ===================================================== */
 
     let transactionReference =
@@ -633,12 +505,8 @@ export async function POST(
           .toUpperCase();
     }
 
-    /*
-     * SMS payments MUST preserve the bank reference.
-     */
     if (
-      transactionSource ===
-        "sms" &&
+      transactionSource === "sms" &&
       !transactionReference
     ) {
       return errorResponse(
@@ -647,15 +515,7 @@ export async function POST(
       );
     }
 
-    /*
-     * Manual/system repayments do not require the user
-     * to enter a reference.
-     *
-     * The server creates an internal unique identity.
-     */
-    if (
-      !transactionReference
-    ) {
+    if (!transactionReference) {
       transactionReference =
         generateInternalReference(
           transactionSource,
@@ -668,8 +528,7 @@ export async function POST(
 
     if (
       typeof body.transactionDate !==
-        "string" ||
-      !body.transactionDate.trim()
+      "string"
     ) {
       return errorResponse(
         "Transaction date is required.",
@@ -677,22 +536,15 @@ export async function POST(
       );
     }
 
-    /*
-     * Keep transactionDate as a CalendarDate string.
-     *
-     * GEO-SHUA business dates use:
-     *
-     * YYYY-MM-DD
-     *
-     * Do NOT convert this value into a JavaScript Date
-     * before passing it to createLoanRepayment().
-     */
     const transactionDate =
       body.transactionDate.trim();
 
-    /* -------------------------------------------------------
-       CALENDAR DATE VALIDATION
-    ------------------------------------------------------- */
+    if (!transactionDate) {
+      return errorResponse(
+        "Transaction date is required.",
+        400,
+      );
+    }
 
     if (
       !isValidCalendarDate(
@@ -700,25 +552,23 @@ export async function POST(
       )
     ) {
       return errorResponse(
-        "Transaction date must be a valid date in YYYY-MM-DD format.",
+        "Transaction date must be a valid calendar date in YYYY-MM-DD format.",
         400,
       );
     }
 
-    /* -------------------------------------------------------
+    const calendarTransactionDate =
+      transactionDate as CalendarDate;
+
+    /* =====================================================
        FUTURE DATE PROTECTION
-    ------------------------------------------------------- */
+    ===================================================== */
 
     const today =
       getKenyanToday();
 
-    /*
-     * CalendarDate values use the fixed YYYY-MM-DD format,
-     * so lexical comparison correctly compares calendar
-     * order.
-     */
     if (
-      transactionDate >
+      calendarTransactionDate >
       today
     ) {
       return errorResponse(
@@ -760,13 +610,8 @@ export async function POST(
       }
     }
 
-    /*
-     * SMS repayments must preserve the original bank
-     * message for auditability.
-     */
     if (
-      transactionSource ===
-        "sms" &&
+      transactionSource === "sms" &&
       !rawMessage
     ) {
       return errorResponse(
@@ -788,18 +633,12 @@ export async function POST(
 
         transactionReference,
 
-        /*
-         * transactionDate is already a CalendarDate string.
-         */
-        transactionDate,
+        transactionDate:
+          calendarTransactionDate,
 
         source:
           transactionSource,
 
-        /*
-         * Actor always comes from the authenticated
-         * server session.
-         */
         recordedBy:
           actor,
 
@@ -833,10 +672,6 @@ export async function POST(
       const lower =
         message.toLowerCase();
 
-      /* ---------------------------------------------------
-         NOT FOUND
-      --------------------------------------------------- */
-
       if (
         lower.includes(
           "not found",
@@ -850,10 +685,6 @@ export async function POST(
           404,
         );
       }
-
-      /* ---------------------------------------------------
-         DUPLICATE
-      --------------------------------------------------- */
 
       if (
         lower.includes(
@@ -874,10 +705,6 @@ export async function POST(
           409,
         );
       }
-
-      /* ---------------------------------------------------
-         VALIDATION / DOMAIN
-      --------------------------------------------------- */
 
       if (
         lower.includes(
@@ -920,10 +747,6 @@ export async function POST(
         );
       }
     }
-
-    /* ---------------------------------------------------
-       GENERIC SERVER ERROR
-    --------------------------------------------------- */
 
     return errorResponse(
       "Unable to record the loan repayment.",
