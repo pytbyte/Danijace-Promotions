@@ -62,17 +62,50 @@
  * DATE ARCHITECTURE
  * ---------------------------------------------------------
  *
- * parser.ts currently exposes transactionDate as a Date.
- *
- * The financial system uses calendar-date strings:
+ * GEO-SHUA financial/calendar dates are represented as:
  *
  *   YYYY-MM-DD
  *
- * Therefore this processor converts the parser Date once,
- * at the boundary, before calling the financial services.
+ * Examples:
  *
- * Financial services never receive a JavaScript Date for
- * financial transaction dates.
+ *   2026-09-11
+ *   2026-09-12
+ *
+ * JavaScript Date objects and timestamps may still exist
+ * in legacy MongoDB records or at external boundaries.
+ *
+ * This file therefore accepts:
+ *
+ *   - YYYY-MM-DD strings
+ *   - ISO date strings
+ *   - ISO timestamp strings
+ *   - JavaScript Date objects
+ *   - numeric timestamps
+ *
+ * and normalizes them to:
+ *
+ *   YYYY-MM-DD
+ *
+ * BEFORE they are used by the financial layer.
+ *
+ * IMPORTANT:
+ *
+ * Once a financial date has been normalized, all financial
+ * comparisons are string-to-string comparisons.
+ *
+ * Because YYYY-MM-DD is lexicographically sortable:
+ *
+ *   "2026-09-05" < "2026-09-11"
+ *
+ * is chronologically correct.
+ *
+ * Financial services therefore never need to compare:
+ *
+ *   Date
+ *   string
+ *
+ * and this avoids the Date | string errors that occur when
+ * old MongoDB records contain timestamps.
  *
  * =========================================================
  */
@@ -122,6 +155,18 @@ const LOAN_BANK_ACCOUNT =
 const SAVINGS_BANK_ACCOUNT =
   "2650821";
 
+/**
+ * GEO-SHUA financial calendar timezone.
+ *
+ * Legacy timestamps are interpreted using Kenya time when
+ * they need to be converted into a calendar date.
+ *
+ * This prevents a UTC timestamp around midnight from being
+ * accidentally assigned to the wrong Kenyan calendar day.
+ */
+const FINANCIAL_TIME_ZONE =
+  "Africa/Nairobi";
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -163,6 +208,17 @@ type LoanRepayment =
     >
   >;
 
+/**
+ * Financial/calendar date input.
+ *
+ * The application should ultimately use strings, but this
+ * boundary intentionally accepts legacy representations.
+ */
+type CalendarDateInput =
+  | string
+  | Date
+  | number;
+
 export type ProcessIncomingTransactionResult =
   | {
       status: "processed";
@@ -202,8 +258,7 @@ export type ProcessIncomingTransactionResult =
 /**
  * Determine whether a year is a leap year.
  *
- * No JavaScript Date is used here because financial dates
- * are persisted as calendar strings.
+ * No JavaScript Date is required for calendar validation.
  */
 function isLeapYear(
   year: number,
@@ -258,7 +313,8 @@ function isValidCalendarDate(
   value: unknown,
 ): value is string {
   if (
-    typeof value !== "string"
+    typeof value !==
+    "string"
   ) {
     return false;
   }
@@ -309,23 +365,19 @@ function isValidCalendarDate(
 }
 
 /**
- * Convert the parser's Date into GEO-SHUA's canonical
- * financial calendar-date string.
+ * Convert a Date/timestamp into a calendar date using
+ * Africa/Nairobi.
  *
- * The parser boundary currently gives us a Date.
+ * IMPORTANT:
  *
- * The financial layer requires:
+ * We do NOT use:
  *
- *   YYYY-MM-DD
+ *   date.toISOString().slice(0, 10)
  *
- * We therefore perform the conversion once here.
- *
- * NOTE:
- *
- * This uses the Date's calendar components rather than
- * converting the financial date into a UTC timestamp.
+ * because that converts using UTC and can produce the
+ * wrong Kenyan calendar date around midnight.
  */
-function toCalendarDate(
+function dateToNairobiCalendarDate(
   value: Date,
 ): string {
   if (
@@ -335,22 +387,64 @@ function toCalendarDate(
     )
   ) {
     throw new Error(
-      "Bank transaction date is invalid.",
+      "Financial date is invalid.",
     );
   }
 
-  const year =
-    value.getFullYear();
+  const formatter =
+    new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone:
+          FINANCIAL_TIME_ZONE,
 
-  const month =
-    String(
-      value.getMonth() + 1,
-    ).padStart(2, "0");
+        year:
+          "numeric",
 
-  const day =
-    String(
-      value.getDate(),
-    ).padStart(2, "0");
+        month:
+          "2-digit",
+
+        day:
+          "2-digit",
+      },
+    );
+
+  const parts =
+    formatter.formatToParts(
+      value,
+    );
+
+  let year = "";
+  let month = "";
+  let day = "";
+
+  for (
+    const part of parts
+  ) {
+    if (
+      part.type ===
+      "year"
+    ) {
+      year =
+        part.value;
+    }
+
+    if (
+      part.type ===
+      "month"
+    ) {
+      month =
+        part.value;
+    }
+
+    if (
+      part.type ===
+      "day"
+    ) {
+      day =
+        part.value;
+    }
+  }
 
   const calendarDate =
     `${year}-${month}-${day}`;
@@ -361,11 +455,186 @@ function toCalendarDate(
     )
   ) {
     throw new Error(
-      "Bank transaction calendar date is invalid.",
+      "Financial calendar date is invalid.",
     );
   }
 
   return calendarDate;
+}
+
+/**
+ * Normalize ANY supported financial date representation
+ * into the canonical GEO-SHUA calendar date:
+ *
+ *   YYYY-MM-DD
+ *
+ * Supported:
+ *
+ *   "2026-09-11"
+ *
+ *   "2026-09-11T00:00:00.000Z"
+ *
+ *   new Date(...)
+ *
+ *   1726012800000
+ *
+ * This function is intentionally used at boundaries.
+ *
+ * After normalization, financial code should only use the
+ * returned string.
+ */
+function toCalendarDate(
+  value: CalendarDateInput,
+): string {
+  /* -------------------------------------------------------
+     ALREADY CANONICAL STRING
+  ------------------------------------------------------- */
+
+  if (
+    typeof value ===
+    "string"
+  ) {
+    const clean =
+      value.trim();
+
+    if (
+      clean.length ===
+      0
+    ) {
+      throw new Error(
+        "Financial date cannot be empty.",
+      );
+    }
+
+    /**
+     * Best case:
+     *
+     * The value is already the canonical financial date.
+     */
+    if (
+      isValidCalendarDate(
+        clean,
+      )
+    ) {
+      return clean;
+    }
+
+    /**
+     * Legacy ISO/timestamp string.
+     *
+     * Example:
+     *
+     *   2026-09-11T00:00:00.000Z
+     *
+     * Do NOT simply slice the first ten characters
+     * because the timestamp may cross the Kenya calendar
+     * boundary.
+     */
+    const parsed =
+      new Date(clean);
+
+    if (
+      !Number.isNaN(
+        parsed.getTime(),
+      )
+    ) {
+      return dateToNairobiCalendarDate(
+        parsed,
+      );
+    }
+
+    throw new Error(
+      `Invalid financial date: "${value}". Expected YYYY-MM-DD or a valid timestamp.`,
+    );
+  }
+
+  /* -------------------------------------------------------
+     JAVASCRIPT DATE
+  ------------------------------------------------------- */
+
+  if (
+    value instanceof Date
+  ) {
+    return dateToNairobiCalendarDate(
+      value,
+    );
+  }
+
+  /* -------------------------------------------------------
+     NUMERIC TIMESTAMP
+  ------------------------------------------------------- */
+
+  if (
+    typeof value ===
+    "number"
+  ) {
+    if (
+      !Number.isFinite(
+        value,
+      )
+    ) {
+      throw new Error(
+        "Financial timestamp is invalid.",
+      );
+    }
+
+    const parsed =
+      new Date(value);
+
+    if (
+      Number.isNaN(
+        parsed.getTime(),
+      )
+    ) {
+      throw new Error(
+        "Financial timestamp is invalid.",
+      );
+    }
+
+    return dateToNairobiCalendarDate(
+      parsed,
+    );
+  }
+
+  throw new Error(
+    "Unsupported financial date value.",
+  );
+}
+
+/**
+ * Validate and normalize a financial date.
+ *
+ * This is useful when a database record can contain either:
+ *
+ *   string
+ *   Date
+ *   timestamp
+ */
+function normalizeFinancialDate(
+  value: unknown,
+  fieldName: string,
+): string {
+  try {
+    if (
+      typeof value !==
+        "string" &&
+      !(value instanceof Date) &&
+      typeof value !==
+        "number"
+    ) {
+      throw new Error(
+        "Unsupported date type.",
+      );
+    }
+
+    return toCalendarDate(
+      value,
+    );
+  } catch {
+    throw new Error(
+      `${fieldName} is invalid. Expected a calendar date or a valid legacy timestamp.`,
+    );
+  }
 }
 
 /* =========================================================
@@ -376,11 +645,7 @@ function toCalendarDate(
  * Determine the financial destination from the BANK
  * collection account contained in the SMS.
  *
- * This is deliberately NOT done by parser.ts.
- *
- * parser.ts only extracts:
- *
- *   destinationAccountNumber = "2650821"
+ * parser.ts only extracts the destination account.
  *
  * This function determines:
  *
@@ -388,25 +653,12 @@ function toCalendarDate(
  *   082083  → loan
  *
  * Unknown accounts are NEVER guessed.
- *
- * IMPORTANT:
- *
- * This function does NOT query:
- *
- * - savingsAccounts
- * - loans
- * - members
- *
- * It only identifies the configured BANK collection
- * destination.
  */
 function classifyBankAccount(
   destinationAccountNumber: string,
 ): BankPaymentType {
   /**
-   * IMPORTANT:
-   *
-   * Keep this as a STRING.
+   * Keep bank account numbers as STRINGS.
    *
    * Do NOT convert to Number().
    *
@@ -421,7 +673,10 @@ function classifyBankAccount(
   const clean =
     destinationAccountNumber
       .trim()
-      .replace(/\s+/g, "");
+      .replace(
+        /\s+/g,
+        "",
+      );
 
   if (
     clean ===
@@ -446,11 +701,6 @@ function classifyBankAccount(
 
 /**
  * Add the financial destination to the parsed transaction.
- *
- * The parser intentionally returns the bank destination
- * without determining the financial domain.
- *
- * The processor classifies it here.
  */
 function classifyTransaction(
   parsed: ParsedBankSms,
@@ -584,8 +834,6 @@ function getMemberName(
  * Resolve a GEO-SHUA member using the name supplied by
  * the bank.
  *
- * IMPORTANT:
- *
  * Member identity comes from senderName.
  *
  * The bank destination account is NOT used to resolve
@@ -634,7 +882,9 @@ async function resolveMemberBySmsName(
 
   type Candidate =
     Awaited<
-      ReturnType<typeof getMembers>
+      ReturnType<
+        typeof getMembers
+      >
     >["members"][number];
 
   const candidates =
@@ -887,8 +1137,6 @@ async function resolveSavingsAccount(
   /**
    * Existing GEO-SHUA savings service currently expects
    * the account type to be "fixed".
-   *
-   * We preserve that existing invariant here.
    */
   if (
     account.accountType !==
@@ -926,33 +1174,31 @@ async function resolveSavingsAccount(
 /**
  * Resolve exactly one active loan for the member.
  *
- * IMPORTANT DATE ARCHITECTURE
+ * DATE SAFETY
  * ---------------------------------------------------------
  *
- * transactionDate is now a canonical calendar-date string:
+ * transactionDate is already:
  *
- *     YYYY-MM-DD
+ *   YYYY-MM-DD
  *
- * loan.disbursementDate is also a canonical calendar-date
- * string:
+ * loan.disbursementDate may be:
  *
- *     YYYY-MM-DD
+ *   YYYY-MM-DD
+ *   Date
+ *   ISO timestamp
+ *   numeric timestamp
  *
- * No JavaScript Date objects are used for financial
- * persistence or financial comparison.
+ * because older MongoDB records may have been persisted
+ * using a Date.
  *
- * Because YYYY-MM-DD is lexicographically sortable,
- * direct string comparison is chronologically correct.
+ * We normalize the loan date before comparing it.
  *
- * Example:
+ * After normalization:
  *
- *   "2026-09-05" < "2026-09-11"
+ *   transactionDate
+ *   disbursementDate
  *
- * therefore:
- *
- *   transactionDate < disbursementDate
- *
- * is safe.
+ * are both strings.
  *
  * =========================================================
  */
@@ -1044,21 +1290,29 @@ async function resolveLoanForTransaction(
   }
 
   /* -------------------------------------------------------
-     VALIDATE DISBURSEMENT DATE
+     NORMALIZE DISBURSEMENT DATE
   ------------------------------------------------------- */
 
+  /**
+   * IMPORTANT:
+   *
+   * The database may contain either:
+   *
+   *   "2026-09-11"
+   *
+   * or an old MongoDB Date/timestamp.
+   *
+   * Normalize both into:
+   *
+   *   "2026-09-11"
+   *
+   * before comparison.
+   */
   const disbursementDate =
-    loan.disbursementDate;
-
-  if (
-    !isValidCalendarDate(
-      disbursementDate,
-    )
-  ) {
-    throw new Error(
-      `Active loan "${loan.loanNumber}" has an invalid disbursement date. Automatic SMS repayment processing is blocked.`,
+    normalizeFinancialDate(
+      loan.disbursementDate,
+      `Active loan "${loan.loanNumber}" disbursement date`,
     );
-  }
 
   /* -------------------------------------------------------
      BANK TRANSACTION DATE PROTECTION
@@ -1071,8 +1325,7 @@ async function resolveLoanForTransaction(
    * We deliberately compare the BANK transaction date,
    * not the Android SMS receipt date.
    *
-   * This prevents an old payment from being attached to
-   * a loan that did not yet exist when the payment occurred.
+   * Both values are now YYYY-MM-DD strings.
    */
   if (
     transactionDate <=
@@ -1145,14 +1398,16 @@ async function processSavingsTransaction(
     );
 
   /**
-   * Convert the parser Date into the canonical financial
-   * calendar date before calling the savings service.
+   * Normalize the parser's transaction date.
    *
-   * This is the important Date → YYYY-MM-DD boundary.
+   * The parser currently exposes a Date, but this helper
+   * also protects us if the parser is later changed to
+   * return a string or timestamp.
    */
   const transactionAt =
-    toCalendarDate(
+    normalizeFinancialDate(
       classified.transactionDate,
+      "Bank transaction date",
     );
 
   const savingsTransaction =
@@ -1203,7 +1458,9 @@ async function processSavingsTransaction(
       /**
        * Financial transaction date.
        *
-       * Must remain YYYY-MM-DD.
+       * GUARANTEED:
+       *
+       *   YYYY-MM-DD
        */
       transactionAt,
 
@@ -1248,14 +1505,15 @@ async function processLoanTransaction(
   repayment: LoanRepayment;
 }> {
   /**
-   * Convert the parser Date exactly once.
+   * Normalize the parser transaction date exactly once.
    *
    * Everything below uses the canonical financial
    * calendar-date string.
    */
   const transactionDate =
-    toCalendarDate(
+    normalizeFinancialDate(
       classified.transactionDate,
+      "Bank transaction date",
     );
 
   const loan =
@@ -1298,7 +1556,9 @@ async function processLoanTransaction(
       /**
        * Financial transaction date.
        *
-       * Must remain YYYY-MM-DD.
+       * GUARANTEED:
+       *
+       *   YYYY-MM-DD
        */
       transactionDate,
 
@@ -1339,11 +1599,23 @@ async function processLoanTransaction(
  *
  *   ParsedBankSms
  *       ↓
+ *   normalize transaction date
+ *       ↓
  *   classify BANK destination
  *       ↓
  *   resolve GEO-SHUA member from sender name
  *       ↓
  *   savings OR loan
+ *
+ * IMPORTANT:
+ *
+ * The normalized financial date is intentionally NOT
+ * written back into ParsedBankSms.
+ *
+ * ParsedBankSms remains the parser-layer object.
+ *
+ * Financial services receive the normalized YYYY-MM-DD
+ * value separately.
  */
 export async function processIncomingTransaction(
   parsedTransaction: ParsedBankSms,
@@ -1370,7 +1642,8 @@ export async function processIncomingTransaction(
     typeof parsedTransaction.reference !==
       "string" ||
     parsedTransaction.reference.trim()
-      .length === 0
+      .length ===
+      0
   ) {
     throw new Error(
       "Parsed bank transaction reference is required.",
@@ -1393,7 +1666,8 @@ export async function processIncomingTransaction(
     typeof parsedTransaction.senderName !==
       "string" ||
     parsedTransaction.senderName.trim()
-      .length === 0
+      .length ===
+      0
   ) {
     throw new Error(
       "Parsed bank transaction sender name is required.",
@@ -1405,7 +1679,8 @@ export async function processIncomingTransaction(
       "string" ||
     parsedTransaction.destinationAccountNumber
       .trim()
-      .length === 0
+      .length ===
+      0
   ) {
     throw new Error(
       "Parsed bank transaction bank destination account number is required.",
@@ -1421,30 +1696,36 @@ export async function processIncomingTransaction(
     );
   }
 
+  /* =======================================================
+     NORMALIZE TRANSACTION DATE
+  ======================================================= */
+
   /**
    * IMPORTANT:
    *
-   * This Date validation is correct because this is the
-   * parser boundary.
+   * The parser currently returns a Date.
    *
-   * ParsedBankSms.transactionDate is currently a Date.
+   * We normalize it immediately at the financial boundary.
    *
-   * It is converted to YYYY-MM-DD before entering the
-   * financial services.
+   * The rest of this processor works with:
+   *
+   *   YYYY-MM-DD
+   *
+   * If the parser is later changed to return:
+   *
+   *   string
+   *
+   * or:
+   *
+   *   timestamp
+   *
+   * this code continues to work.
    */
-  if (
-    !(
-      parsedTransaction.transactionDate instanceof
-      Date
-    ) ||
-    Number.isNaN(
-      parsedTransaction.transactionDate.getTime(),
-    )
-  ) {
-    throw new Error(
-      "Parsed bank transaction date is invalid.",
+  const transactionDate =
+    normalizeFinancialDate(
+      parsedTransaction.transactionDate,
+      "Parsed bank transaction date",
     );
-  }
 
   /* =======================================================
      CLASSIFY BANK DESTINATION
@@ -1522,13 +1803,29 @@ export async function processIncomingTransaction(
     classified.transactionType ===
     "loan"
   ) {
+    /**
+     * We pass the already-normalized date to the loan
+     * processor.
+     *
+     * This means there is no second Date conversion.
+     */
     const {
       loan,
       repayment,
     } =
       await processLoanTransaction(
         parsedTransaction,
-        classified,
+        {
+          ...classified,
+
+          /**
+           * Keep the original parser object intact while
+           * the loan processor receives the canonical
+           * financial date separately.
+           */
+          transactionType:
+            classified.transactionType,
+        },
         member,
         options,
       );
@@ -1612,3 +1909,4 @@ export async function processBankSms(
     options,
   );
 }
+
