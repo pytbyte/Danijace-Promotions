@@ -112,6 +112,17 @@ function getSessionActor(
    ALLOWED SETTINGS
 ========================================================= */
 
+/**
+ * These are the only loan settings that can be changed
+ * through the API.
+ *
+ * IMPORTANT:
+ *
+ * - defaultDailyFine is obsolete.
+ * - defaultdailyfine is obsolete.
+ * - fineRate is the current percentage-based fine setting.
+ * - repaymentCycleDays controls the repayment cycle.
+ */
 const ALLOWED_FIELDS = [
   "regularInterestRate",
   "emergencyInterestRate",
@@ -119,7 +130,7 @@ const ALLOWED_FIELDS = [
   "regularSavingsMultiplier",
   "repaymentGraceDays",
   "repaymentCycleDays",
-  "defaultdailyfine",
+  "fineRate",
   "emergencyLoansEnabled",
   "regularLoansEnabled",
 ] as const;
@@ -158,9 +169,11 @@ function extractChanges(
       unknown
     >;
 
-  const changes: Record<
-    string,
-    unknown
+  const changes: Partial<
+    Record<
+      AllowedField,
+      unknown
+    >
   > = {};
 
   for (
@@ -217,7 +230,6 @@ function isClientError(
     "cycle",
     "interest",
     "multiplier",
-    "defaultdailyfine",
   ];
 
   return knownTerms.some(
@@ -292,6 +304,10 @@ export async function PATCH(
       );
     }
 
+    /*
+     * The actor comes exclusively from the authenticated
+     * session. It is never accepted from the request body.
+     */
     const actor =
       getSessionActor(session);
 
@@ -354,11 +370,14 @@ export async function PATCH(
         ? error.message
         : "Failed to update loan settings.";
 
+    const clientError =
+      isClientError(message);
+
     return errorResponse(
-      isClientError(message)
+      clientError
         ? message
         : "Failed to update loan settings.",
-      isClientError(message)
+      clientError
         ? 400
         : 500,
     );
