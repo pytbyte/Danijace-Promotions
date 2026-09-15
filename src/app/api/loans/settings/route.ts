@@ -119,7 +119,7 @@ const ALLOWED_FIELDS = [
   "regularSavingsMultiplier",
   "repaymentGraceDays",
   "repaymentCycleDays",
-  "fineRate",
+  "defaultdailyfine",
   "emergencyLoansEnabled",
   "regularLoansEnabled",
 ] as const;
@@ -217,6 +217,7 @@ function isClientError(
     "cycle",
     "interest",
     "multiplier",
+    "defaultdailyfine",
   ];
 
   return knownTerms.some(
