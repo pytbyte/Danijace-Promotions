@@ -32,19 +32,18 @@ interface LoanSettingsFormProps {
 
 type LoanSettingsFormState = {
   /*
-   * IMPORTANT:
-   *
-   * Interest rates are stored in MongoDB as decimal
-   * fractions:
+   * Interest rates and fine rate are stored by the API
+   * as decimal fractions:
    *
    * 30% = 0.30
-   * 15% = 0.15
+   * 10% = 0.10
    *
-   * BUT the admin interface uses normal percentages:
+   * The administrator enters normal percentages:
    *
-   * 30% -> "30"
-   * 15% -> "15"
+   * 30
+   * 10
    */
+
   regularInterestRate: string;
   emergencyInterestRate: string;
 
@@ -52,7 +51,8 @@ type LoanSettingsFormState = {
   regularSavingsMultiplier: string;
 
   repaymentGraceDays: string;
-  defaultDailyFine: string;
+  repaymentCycleDays: string;
+  fineRate: string;
 
   emergencyLoansEnabled: boolean;
   regularLoansEnabled: boolean;
@@ -70,7 +70,8 @@ const DEFAULT_FORM: LoanSettingsFormState = {
   regularSavingsMultiplier: "",
 
   repaymentGraceDays: "",
-  defaultDailyFine: "",
+  repaymentCycleDays: "",
+  fineRate: "",
 
   emergencyLoansEnabled: false,
   regularLoansEnabled: false,
@@ -81,16 +82,16 @@ const DEFAULT_FORM: LoanSettingsFormState = {
 ========================================================= */
 
 /**
- * Convert database settings into values suitable for
- * the administrator-facing form.
+ * Convert database settings into values suitable for the
+ * administrator-facing form.
  *
  * Database:
  *
- * 0.30
+ *   0.30
  *
  * Form:
  *
- * 30
+ *   30
  */
 function settingsToForm(
   settings: LoanSettings,
@@ -141,12 +142,21 @@ function settingsToForm(
           )
         : "",
 
-    defaultDailyFine:
+    repaymentCycleDays:
+      Number.isFinite(
+        settings.repaymentCycleDays,
+      )
+        ? String(
+            settings.repaymentCycleDays,
+          )
+        : "",
+
+    fineRate:
       Number.isFinite(
         settings.fineRate,
       )
         ? String(
-            settings.fineRate,
+            settings.fineRate * 100,
           )
         : "",
 
@@ -163,16 +173,16 @@ function settingsToForm(
 }
 
 /**
- * Convert the administrator-facing form into the
+ * Convert administrator-facing form values into the
  * database/API representation.
  *
- * Admin enters:
+ * Admin:
  *
- * 30
+ *   30%
  *
- * API receives:
+ * API:
  *
- * 0.30
+ *   0.30
  */
 function formToPayload(
   form: LoanSettingsFormState,
@@ -193,8 +203,11 @@ function formToPayload(
     repaymentGraceDays:
       Number(form.repaymentGraceDays),
 
-    defaultDailyFine:
-      Number(form.defaultDailyFine),
+    repaymentCycleDays:
+      Number(form.repaymentCycleDays),
+
+    fineRate:
+      Number(form.fineRate) / 100,
 
     emergencyLoansEnabled:
       form.emergencyLoansEnabled,
@@ -222,27 +235,6 @@ function formatKES(
       maximumFractionDigits: 2,
     },
   )}`;
-}
-
-/* =========================================================
-   PERCENTAGE FORMAT
-========================================================= */
-
-function formatPercentage(
-  decimal: number,
-): string {
-  if (!Number.isFinite(decimal)) {
-    return "0%";
-  }
-
-  const percentage = decimal * 100;
-
-  return `${percentage.toLocaleString(
-    "en-KE",
-    {
-      maximumFractionDigits: 2,
-    },
-  )}%`;
 }
 
 /* =========================================================
@@ -550,10 +542,6 @@ export default function LoanSettingsForm({
           result =
             await response.json();
         } catch {
-          /*
-           * This can happen when the API route returns
-           * HTML, a proxy error, or an empty response.
-           */
           throw new Error(
             "The server returned an invalid response.",
           );
@@ -563,17 +551,6 @@ export default function LoanSettingsForm({
           return;
         }
 
-        /*
-         * IMPORTANT:
-         *
-         * A settings document may not exist yet.
-         *
-         * That is not necessarily a fatal UI condition.
-         *
-         * If your API returns 404 because settings have
-         * never been created, we leave the form empty so
-         * the administrator can create them.
-         */
         if (response.status === 404) {
           setForm(
             DEFAULT_FORM,
@@ -612,11 +589,6 @@ export default function LoanSettingsForm({
           ).data;
 
         if (!settings) {
-          /*
-           * Treat an empty settings document as a new
-           * configuration rather than making the modal
-           * unusable.
-           */
           setForm(
             DEFAULT_FORM,
           );
@@ -741,8 +713,12 @@ export default function LoanSettingsForm({
         payload.repaymentGraceDays,
       ],
       [
-        "Default daily fine",
-        payload.defaultDailyFine,
+        "Repayment cycle days",
+        payload.repaymentCycleDays,
+      ],
+      [
+        "Fine rate",
+        payload.fineRate,
       ],
     ] as const;
 
@@ -761,16 +737,6 @@ export default function LoanSettingsForm({
     /* =====================================================
        INTEREST
     ===================================================== */
-
-    /*
-     * Payload is already converted:
-     *
-     * Admin 30
-     *
-     * becomes
-     *
-     * API 0.30
-     */
 
     if (
       payload.regularInterestRate < 0 ||
@@ -830,14 +796,31 @@ export default function LoanSettingsForm({
     }
 
     /* =====================================================
-       DAILY FINE
+       REPAYMENT CYCLE
     ===================================================== */
 
     if (
-      payload.defaultDailyFine < 0
+      !Number.isInteger(
+        payload.repaymentCycleDays,
+      ) ||
+      payload.repaymentCycleDays < 1 ||
+      payload.repaymentCycleDays > 3650
     ) {
       throw new Error(
-        "Default daily fine cannot be negative.",
+        "Repayment cycle must be a whole number between 1 and 3650 days.",
+      );
+    }
+
+    /* =====================================================
+       FINE RATE
+    ===================================================== */
+
+    if (
+      payload.fineRate < 0 ||
+      payload.fineRate > 1
+    ) {
+      throw new Error(
+        "Fine rate must be between 0% and 100%.",
       );
     }
   }
@@ -864,10 +847,6 @@ export default function LoanSettingsForm({
         formToPayload(form);
 
       validateForm(payload);
-
-      /* =================================================
-         SAVE TO API
-      ================================================= */
 
       const response =
         await fetch(
@@ -931,10 +910,10 @@ export default function LoanSettingsForm({
       }
 
       /*
-       * Database is authoritative.
+       * The database/API response is authoritative.
        *
-       * Convert the returned decimal rates back to
-       * administrator-facing percentages.
+       * Convert decimal rates back into administrator-
+       * facing percentages.
        */
       setForm(
         settingsToForm(
@@ -1235,6 +1214,7 @@ export default function LoanSettingsForm({
                       step="0.01"
                       suffix="%"
                       placeholder="30"
+                      disabled={saving}
                     />
 
                     <NumberField
@@ -1253,7 +1233,8 @@ export default function LoanSettingsForm({
                       max="100"
                       step="0.01"
                       suffix="%"
-                      placeholder="30"
+                      placeholder="40"
+                      disabled={saving}
                     />
                   </div>
 
@@ -1328,7 +1309,8 @@ export default function LoanSettingsForm({
                       min="0"
                       step="0.01"
                       prefix="KES"
-                      placeholder="1000"
+                      placeholder="10000"
+                      disabled={saving}
                     />
 
                     <NumberField
@@ -1347,6 +1329,7 @@ export default function LoanSettingsForm({
                       step="0.1"
                       suffix="×"
                       placeholder="2"
+                      disabled={saving}
                     />
                   </div>
 
@@ -1398,16 +1381,36 @@ export default function LoanSettingsForm({
                     </h3>
 
                     <p className="mt-1 text-xs leading-5 text-white/30">
-                      Configure when repayment becomes due
-                      and the default daily fine for overdue
-                      loans.
+                      Configure the repayment cycle, grace
+                      period and percentage fine applied to
+                      an unpaid installment shortfall.
                     </p>
                   </div>
 
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
                     <NumberField
+                      label="Repayment Cycle"
+                      description="Number of days in one repayment cycle."
+                      value={
+                        form.repaymentCycleDays
+                      }
+                      onChange={(value) =>
+                        updateField(
+                          "repaymentCycleDays",
+                          value,
+                        )
+                      }
+                      min="1"
+                      max="3650"
+                      step="1"
+                      suffix="days"
+                      placeholder="7"
+                      disabled={saving}
+                    />
+
+                    <NumberField
                       label="Repayment Grace Days"
-                      description="Number of days allowed before a repayment becomes overdue."
+                      description="Additional days allowed before repayment becomes overdue."
                       value={
                         form.repaymentGraceDays
                       }
@@ -1420,26 +1423,58 @@ export default function LoanSettingsForm({
                       min="0"
                       step="1"
                       suffix="days"
-                      placeholder="30"
+                      placeholder="7"
+                      disabled={saving}
                     />
 
                     <NumberField
-                      label="Default Daily Fine"
-                      description="Default amount charged for each overdue day."
+                      label="Fine Rate"
+                      description="Percentage charged on the unpaid portion of the expected installment."
                       value={
-                        form.defaultDailyFine
+                        form.fineRate
                       }
                       onChange={(value) =>
                         updateField(
-                          "defaultDailyFine",
+                          "fineRate",
                           value,
                         )
                       }
                       min="0"
+                      max="100"
                       step="0.01"
-                      prefix="KES"
-                      placeholder="50"
+                      suffix="%"
+                      placeholder="10"
+                      disabled={saving}
                     />
+                  </div>
+
+                  <div
+                    className="
+                      mt-4
+                      rounded-xl
+                      border
+                      border-yellow-500/10
+                      bg-yellow-500/[0.035]
+                      px-3
+                      py-2.5
+                    "
+                  >
+                    <p className="text-[11px] leading-5 text-white/35">
+                      Example: with a{" "}
+                      <span className="text-yellow-400">
+                        KES 5,000
+                      </span>{" "}
+                      weekly installment and{" "}
+                      <span className="text-yellow-400">
+                        10%
+                      </span>{" "}
+                      fine rate, paying only KES 3,000 leaves
+                      a KES 2,000 shortfall, producing a{" "}
+                      <span className="font-semibold text-yellow-400">
+                        KES 200
+                      </span>{" "}
+                      fine.
+                    </p>
                   </div>
                 </section>
 
@@ -1524,14 +1559,8 @@ export default function LoanSettingsForm({
                     <SummaryItem
                       label="Regular Rate"
                       value={
-                        Number.isFinite(
-                          Number(
-                            form.regularInterestRate,
-                          ),
-                        )
-                          ? `${Number(
-                              form.regularInterestRate,
-                            ) || 0}%`
+                        form.regularInterestRate
+                          ? `${form.regularInterestRate}%`
                           : "—"
                       }
                     />
@@ -1539,14 +1568,8 @@ export default function LoanSettingsForm({
                     <SummaryItem
                       label="Emergency Rate"
                       value={
-                        Number.isFinite(
-                          Number(
-                            form.emergencyInterestRate,
-                          ),
-                        )
-                          ? `${Number(
-                              form.emergencyInterestRate,
-                            ) || 0}%`
+                        form.emergencyInterestRate
+                          ? `${form.emergencyInterestRate}%`
                           : "—"
                       }
                     />
@@ -1574,6 +1597,15 @@ export default function LoanSettingsForm({
                     />
 
                     <SummaryItem
+                      label="Repayment Cycle"
+                      value={
+                        form.repaymentCycleDays
+                          ? `${form.repaymentCycleDays} days`
+                          : "—"
+                      }
+                    />
+
+                    <SummaryItem
                       label="Grace Period"
                       value={
                         form.repaymentGraceDays
@@ -1583,14 +1615,10 @@ export default function LoanSettingsForm({
                     />
 
                     <SummaryItem
-                      label="Daily Fine"
+                      label="Fine Rate"
                       value={
-                        form.defaultDailyFine
-                          ? formatKES(
-                              Number(
-                                form.defaultDailyFine,
-                              ),
-                            )
+                        form.fineRate
+                          ? `${form.fineRate}%`
                           : "—"
                       }
                     />
@@ -1791,7 +1819,10 @@ function StatusBadge({
         `}
       />
 
-      {label}: {enabled ? "Enabled" : "Disabled"}
+      {label}:{" "}
+      {enabled
+        ? "Enabled"
+        : "Disabled"}
     </span>
   );
 }
