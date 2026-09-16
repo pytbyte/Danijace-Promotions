@@ -24,18 +24,16 @@ import com.getcapacitor.annotation.PermissionCallback;
  * FOREGROUND SMS READER
  * =========================================================
  *
- * This plugin intentionally reads SMS only when the
- * GEO-SHUA application is open and JavaScript explicitly
- * calls readInbox().
+ * Reads ONLY SMS received within the last 24 hours.
  *
- * There is:
+ * Important:
  *
- *      NO BroadcastReceiver
- *      NO SMS_RECEIVED listener
- *      NO background SMS processing
- *      NO boot recovery
- *      NO periodic sweep
- *      NO background HTTP processing
+ * - No BroadcastReceiver
+ * - No SMS_RECEIVED listener
+ * - No background SMS processing
+ * - No boot recovery
+ * - No periodic sweep
+ * - No background HTTP processing
  *
  * Flow:
  *
@@ -48,6 +46,8 @@ import com.getcapacitor.annotation.PermissionCallback;
  *      READ_SMS permission
  *           ↓
  *      Android SMS inbox
+ *           ↓
+ *      LAST 24 HOURS ONLY
  *           ↓
  *      JavaScript receives messages
  *           ↓
@@ -75,6 +75,13 @@ public class SmsReaderPlugin extends Plugin {
 
     private static final String SMS_INBOX_URI =
         "content://sms/inbox";
+
+    /*
+     * SMS timestamps returned by Android are milliseconds
+     * since Unix epoch.
+     */
+    private static final long TWENTY_FOUR_HOURS_MS =
+        24L * 60L * 60L * 1000L;
 
 
     /* =========================================================
@@ -144,9 +151,8 @@ public class SmsReaderPlugin extends Plugin {
         /*
          * Only READ_SMS is required.
          *
-         * RECEIVE_SMS is deliberately NOT checked or
-         * requested because GEO-SHUA no longer listens
-         * for incoming SMS broadcasts.
+         * RECEIVE_SMS is deliberately NOT requested because
+         * GEO-SHUA does not listen for incoming SMS broadcasts.
          */
         if (!readGranted) {
 
@@ -314,8 +320,7 @@ public class SmsReaderPlugin extends Plugin {
         }
 
 
-        Cursor cursor =
-            null;
+        Cursor cursor = null;
 
         try {
 
@@ -324,12 +329,34 @@ public class SmsReaderPlugin extends Plugin {
                     SMS_INBOX_URI
                 );
 
+
+            /* =================================================
+               24-HOUR WINDOW
+            ================================================= */
+
+            long now =
+                System.currentTimeMillis();
+
+            long cutoff =
+                now - TWENTY_FOUR_HOURS_MS;
+
+
             Log.d(
                 TAG,
-                "Querying URI: "
-                    + inboxUri
+                "Current time: "
+                    + now
             );
 
+            Log.d(
+                TAG,
+                "24-hour cutoff: "
+                    + cutoff
+            );
+
+
+            /* =================================================
+               PROJECTION
+            ================================================= */
 
             String[] projection = {
                 "_id",
@@ -339,14 +366,36 @@ public class SmsReaderPlugin extends Plugin {
             };
 
 
+            /*
+             * IMPORTANT:
+             *
+             * The 24-hour filter is applied directly by the
+             * Android SMS ContentProvider.
+             *
+             * This means Android does NOT return the old
+             * messages to GEO-SHUA in the first place.
+             *
+             * date >= cutoff
+             * date <= now
+             */
+            String selection =
+                "date >= ? AND date <= ?";
+
+
+            String[] selectionArgs = {
+                String.valueOf(cutoff),
+                String.valueOf(now)
+            };
+
+
             cursor =
                 context
                     .getContentResolver()
                     .query(
                         inboxUri,
                         projection,
-                        null,
-                        null,
+                        selection,
+                        selectionArgs,
                         "date DESC"
                     );
 
@@ -430,9 +479,8 @@ public class SmsReaderPlugin extends Plugin {
             /*
              * Body and date are required.
              *
-             * _id and address are useful but are not
-             * considered fatal if a provider does not expose
-             * them.
+             * _id and address are useful but are not considered
+             * fatal if a provider does not expose them.
              */
             if (
                 bodyIndex < 0 ||
@@ -551,6 +599,9 @@ public class SmsReaderPlugin extends Plugin {
 
                 /*
                  * Ignore malformed timestamps.
+                 *
+                 * Normally this should never happen because
+                 * the query itself filters the date.
                  */
                 if (date <= 0L) {
 
@@ -599,7 +650,7 @@ public class SmsReaderPlugin extends Plugin {
 
             Log.d(
                 TAG,
-                "SMS messages successfully read: "
+                "SMS messages read from last 24 hours: "
                     + count
             );
 
@@ -627,6 +678,24 @@ public class SmsReaderPlugin extends Plugin {
             diagnostic.put(
                 "count",
                 count
+            );
+
+
+            diagnostic.put(
+                "windowHours",
+                24
+            );
+
+
+            diagnostic.put(
+                "cutoff",
+                cutoff
+            );
+
+
+            diagnostic.put(
+                "now",
+                now
             );
 
 
