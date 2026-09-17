@@ -67,6 +67,11 @@ type DashboardStats = {
 
   loans: number;
   outstandingLoans: number;
+
+  /**
+   * Dashboard "Defaulters" count is based on
+   * members whose status is "suspended".
+   */
   defaulters: number;
 };
 
@@ -401,6 +406,26 @@ function normalizeStatus(
 }
 
 /* =========================================================
+   SUSPENDED MEMBER
+========================================================= */
+
+/**
+ * A dashboard defaulter is a member whose
+ * actual database status is "suspended".
+ *
+ * This is intentionally independent of loan status.
+ */
+function isSuspendedMember(
+  member: MemberRecord,
+): boolean {
+  return (
+    normalizeStatus(
+      member.status,
+    ) === "suspended"
+  );
+}
+
+/* =========================================================
    ACTIVE LOAN
 ========================================================= */
 
@@ -419,9 +444,16 @@ function isActiveLoan(
 }
 
 /* =========================================================
-   DEFAULTER
+   LOAN DEFAULTER
 ========================================================= */
 
+/**
+ * Retained for loan activity display only.
+ *
+ * IMPORTANT:
+ * This does NOT determine the dashboard
+ * "Defaulters" statistic.
+ */
 function isDefaulter(
   loan: LoanRecord,
 ): boolean {
@@ -888,6 +920,25 @@ export default function DashboardPage() {
                 )
               : [];
 
+          /*
+           * IMPORTANT:
+           *
+           * Dashboard Defaulters are members
+           * whose actual member status is
+           * "suspended".
+           *
+           * This is intentionally calculated
+           * from the members list and is not
+           * derived from loan status.
+           */
+          const suspendedMembers =
+            members.filter(
+              isSuspendedMember,
+            );
+
+          const suspendedMemberCount =
+            suspendedMembers.length;
+
           let nextStats: DashboardStats;
 
           setStats(
@@ -979,6 +1030,17 @@ export default function DashboardPage() {
                     activeMembers,
                     totalMembers,
                   );
+
+                /*
+                 * THIS is the dashboard
+                 * Defaulters count.
+                 *
+                 * It represents the number
+                 * of members whose status is
+                 * exactly "suspended".
+                 */
+                nextStats.defaulters =
+                  suspendedMemberCount;
               }
 
               if (
@@ -994,8 +1056,6 @@ export default function DashboardPage() {
 
                 let outstandingLoans =
                   0;
-
-                let defaulters = 0;
 
                 for (const loan of activeLoans) {
                   const outstanding =
@@ -1014,21 +1074,19 @@ export default function DashboardPage() {
                     outstandingLoans +=
                       outstanding;
                   }
-
-                  if (
-                    isDefaulter(
-                      loan,
-                    )
-                  ) {
-                    defaulters += 1;
-                  }
                 }
 
                 nextStats.outstandingLoans =
                   outstandingLoans;
 
-                nextStats.defaulters =
-                  defaulters;
+                /*
+                 * DO NOT set nextStats.defaulters
+                 * here.
+                 *
+                 * Loan default status does not
+                 * determine the dashboard
+                 * Defaulters count.
+                 */
               }
 
               return nextStats;
@@ -1453,14 +1511,14 @@ export default function DashboardPage() {
               <StatCard
                 title="Defaulters"
                 value={stats.defaulters}
-                subtitle="Members requiring attention"
+                subtitle="Suspended members"
                 icon={
                   <Bell
                     size={19}
                     strokeWidth={1.8}
                   />
                 }
-                href="/dashboard/loans"
+                href="/dashboard/members"
                 onNavigate={router.push}
               />
             </section>
