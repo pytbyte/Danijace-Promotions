@@ -15,7 +15,7 @@
  * amountPaid           = sum of recorded repayments.
  * totalFines           = sum of cycle-based fines.
  * outstandingBalance   = principal + interest + effective fines - amountPaid.
- *
+ 
  * INSTALLMENT FINE
  * ---------------------------------------------------------------
  * At the end of each completed repayment cycle:
@@ -377,9 +377,6 @@ type LoanCollections = {
 };
 
 
-
-
-
 async function calculateCurrentInstallmentBalance(
   loan: LoanDocument,
 ): Promise<number> {
@@ -400,21 +397,6 @@ async function calculateCurrentInstallmentBalance(
       loan.repaymentCycleDays,
     );
 
-  const elapsedDays =
-    differenceInCalendarDays(
-      loan.disbursementDate,
-      today,
-    );
-
-  if (elapsedDays < cycleDays) {
-    return 0;
-  }
-
-  const completedCycles =
-    Math.floor(
-      elapsedDays / cycleDays,
-    );
-
   const installmentAmount =
     money(
       Number(
@@ -427,16 +409,66 @@ async function calculateCurrentInstallmentBalance(
   }
 
   let totalUnpaidBalance = 0;
+  let periodNumber = 1;
 
-  for (
-    let periodNumber = 1;
-    periodNumber <= completedCycles;
-    periodNumber += 1
-  ) {
+  while (true) {
     const period =
       getAssessmentPeriod(
         loan,
         periodNumber,
+      );
+
+    /*
+     * Only completed repayment cycles count.
+     *
+     * The cycle whose periodEnd is today is still
+     * considered open until the calendar date has passed.
+     */
+    if (
+      period.periodEnd >= today
+    ) {
+      break;
+    }
+
+    /*
+     * Determine how much of the core loan was already
+     * paid before this repayment period began.
+     */
+    const amountPaidBeforePeriod =
+      await getLoanPaidTotalAsOf(
+        loan._id,
+        period.periodStart,
+      );
+
+    const remainingCoreBalance =
+      money(
+        Math.max(
+          0,
+          loan.principal +
+            loan.interestAmount -
+            amountPaidBeforePeriod,
+        ),
+      );
+
+    /*
+     * Nothing remains to be paid on the core loan.
+     */
+    if (
+      remainingCoreBalance <= 0
+    ) {
+      break;
+    }
+
+    /*
+     * The expected amount for this specific cycle can
+     * never exceed the remaining core loan balance.
+     */
+    const amountDue =
+      money(
+        Math.min(
+          installmentAmount,
+          remainingCoreBalance,
+        ),
       );
 
     const paymentsDuringPeriod =
@@ -445,9 +477,18 @@ async function calculateCurrentInstallmentBalance(
         period,
       );
 
+    /*
+     * This is the exact installment shortfall for
+     * THIS repayment cycle.
+     *
+     * It is also the amount that the fine calculation
+     * should use:
+     *
+     * fine = unpaidInstallment × fineRate
+     */
     const unpaidInstallment =
       calculateUnpaidInstallment(
-        installmentAmount,
+        amountDue,
         paymentsDuringPeriod,
       );
 
@@ -462,7 +503,7 @@ async function calculateCurrentInstallmentBalance(
         periodEnd:
           period.periodEnd,
         expected:
-          installmentAmount,
+          amountDue,
         paid:
           paymentsDuringPeriod,
         unpaid:
@@ -475,12 +516,16 @@ async function calculateCurrentInstallmentBalance(
         totalUnpaidBalance +
           unpaidInstallment,
       );
+
+    periodNumber += 1;
   }
 
   return money(
     totalUnpaidBalance,
   );
 }
+
+
 
 async function getCollections(): Promise<LoanCollections> {
   const client =
