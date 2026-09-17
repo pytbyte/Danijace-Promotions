@@ -560,30 +560,30 @@ export default function LoanCard({
       </div>
 
       <div className="bg-white px-5 pb-5">
-  <div className="rounded-[22px] border border-red-200 bg-red-50 p-4">
-    <div className="flex items-start justify-between gap-4">
-      <div className="min-w-0">
-        <p className="text-xs font-medium text-red-600/70">
-          Weekly installment balance
-        </p>
+        <div className="rounded-[22px] border border-red-200 bg-red-50 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-red-600/70">
+                Weekly installment balance
+              </p>
 
-        <p className="mt-1 text-[26px] font-bold tracking-tight text-red-600">
-          {formatKES(
-            Math.max(0, loan.currentInstallmentBalance ?? 0),
-          )}
-        </p>
+              <p className="mt-1 text-[26px] font-bold tracking-tight text-red-600">
+                {formatKES(
+                  Math.max(0, loan.currentInstallmentBalance ?? 0),
+                )}
+              </p>
 
-        <p className="mt-1 text-[11px] text-red-600/70">
-          Amount remaining for the current repayment cycle
-        </p>
+              <p className="mt-1 text-[11px] text-red-600/70">
+                Unpaid balance from completed repayment weeks
+              </p>
+            </div>
+
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-red-200 bg-white text-red-600">
+              <Banknote className="h-5 w-5" />
+            </div>
+          </div>
+        </div>
       </div>
-
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-red-200 bg-white text-red-600">
-        <Banknote className="h-5 w-5" />
-      </div>
-    </div>
-  </div>
-</div>
 
       {/* =====================================================
           FINANCIAL SUMMARY

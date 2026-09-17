@@ -12,6 +12,7 @@ import {
 
 import {
   type ChangeEvent,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -59,22 +60,33 @@ function getFullName(
     member.middleName,
     member.lastName,
   ]
-    .filter(Boolean)
-    .join(" ");
+    .filter(
+      (value): value is string =>
+        typeof value === "string" &&
+        value.trim().length > 0,
+    )
+    .join(" ")
+    .trim();
 }
 
 function getInitials(
   member: Member,
 ): string {
   const first =
-    member.firstName
-      ?.charAt(0)
-      .toUpperCase() ?? "";
+    typeof member.firstName === "string"
+      ? member.firstName
+          .trim()
+          .charAt(0)
+          .toUpperCase()
+      : "";
 
   const last =
-    member.lastName
-      ?.charAt(0)
-      .toUpperCase() ?? "";
+    typeof member.lastName === "string"
+      ? member.lastName
+          .trim()
+          .charAt(0)
+          .toUpperCase()
+      : "";
 
   return `${first}${last}` || "M";
 }
@@ -86,14 +98,9 @@ function formatDate(
     return "—";
   }
 
-  const date =
-    new Date(value);
+  const date = new Date(value);
 
-  if (
-    Number.isNaN(
-      date.getTime(),
-    )
-  ) {
+  if (Number.isNaN(date.getTime())) {
     return "—";
   }
 
@@ -110,7 +117,11 @@ function formatDate(
 function formatCurrency(
   value: number,
 ): string {
-  return `KES ${value.toLocaleString(
+  const amount = Number.isFinite(value)
+    ? value
+    : 0;
+
+  return `KES ${amount.toLocaleString(
     "en-KE",
     {
       minimumFractionDigits: 0,
@@ -127,7 +138,10 @@ function getProfileImageUrl(
   membershipNumber?: string,
   cacheBust?: string | number,
 ): string | null {
-  if (!membershipNumber) {
+  if (
+    typeof membershipNumber !== "string" ||
+    !membershipNumber.trim()
+  ) {
     return null;
   }
 
@@ -136,9 +150,7 @@ function getProfileImageUrl(
       membershipNumber,
     )}`;
 
-  if (
-    cacheBust === undefined
-  ) {
+  if (cacheBust === undefined) {
     return baseUrl;
   }
 
@@ -160,19 +172,14 @@ async function compressProfileImage(
   const SIZE = 512;
   const QUALITY = 0.78;
 
-  if (
-    file.size >
-    MAX_INPUT_SIZE
-  ) {
+  if (file.size > MAX_INPUT_SIZE) {
     throw new Error(
       "Image must be smaller than 5 MB.",
     );
   }
 
   if (
-    !file.type.startsWith(
-      "image/",
-    )
+    !file.type.startsWith("image/")
   ) {
     throw new Error(
       "Please select a valid image.",
@@ -192,9 +199,7 @@ async function compressProfileImage(
 
   try {
     bitmap =
-      await createImageBitmap(
-        file,
-      );
+      await createImageBitmap(file);
   } catch {
     throw new Error(
       "This image format cannot be processed on this device. Please use a JPEG or PNG photo.",
@@ -241,17 +246,14 @@ async function compressProfileImage(
       );
 
     const sourceX =
-      (sourceWidth -
-        sourceSize) /
+      (sourceWidth - sourceSize) /
       2;
 
     const sourceY =
-      (sourceHeight -
-        sourceSize) /
+      (sourceHeight - sourceSize) /
       2;
 
-    context.fillStyle =
-      "#ffffff";
+    context.fillStyle = "#ffffff";
 
     context.fillRect(
       0,
@@ -289,9 +291,7 @@ async function compressProfileImage(
       );
     }
 
-    if (
-      blob.size === 0
-    ) {
+    if (blob.size === 0) {
       throw new Error(
         "The compressed image is empty.",
       );
@@ -320,98 +320,46 @@ function base64ToFile(
   base64: string,
   fileName: string,
 ): File {
+  const cleanBase64 =
+    base64.includes(",")
+      ? base64.slice(
+          base64.indexOf(",") + 1,
+        )
+      : base64;
+
   const byteCharacters =
-    atob(base64);
+    atob(cleanBase64);
 
-  const CHUNK_SIZE =
-    1024;
-
-  const byteArrays: number[][] =
-    [];
-
-  for (
-    let offset = 0;
-    offset <
-    byteCharacters.length;
-    offset += CHUNK_SIZE
-  ) {
-    const slice =
-      byteCharacters.slice(
-        offset,
-        offset +
-          CHUNK_SIZE,
-      );
-
-    const byteNumbers =
-      new Array<number>(
-        slice.length,
-      );
-
-    for (
-      let index = 0;
-      index <
-      slice.length;
-      index++
-    ) {
-      byteNumbers[index] =
-        slice.charCodeAt(
-          index,
-        );
-    }
-
-    byteArrays.push(
-      byteNumbers,
-    );
-  }
-
-  const totalLength =
-    byteArrays.reduce(
-      (
-        total,
-        chunk,
-      ) =>
-        total +
-        chunk.length,
-      0,
-    );
-
+  /*
+   * Build one ArrayBuffer rather than passing
+   * Uint8Array<ArrayBufferLike>[] directly to Blob.
+   *
+   * This avoids the TypeScript incompatibility between
+   * ArrayBufferLike and BlobPart's ArrayBuffer requirement.
+   */
   const buffer =
     new ArrayBuffer(
-      totalLength,
+      byteCharacters.length,
     );
 
-  const view =
-    new Uint8Array(
-      buffer,
-    );
+  const bytes =
+    new Uint8Array(buffer);
 
-  let offset = 0;
-
-  for (const chunk of byteArrays) {
-    view.set(
-      chunk,
-      offset,
-    );
-
-    offset +=
-      chunk.length;
+  for (
+    let index = 0;
+    index < byteCharacters.length;
+    index += 1
+  ) {
+    bytes[index] =
+      byteCharacters.charCodeAt(index);
   }
 
-  const blob =
-    new Blob(
-      [buffer],
-      {
-        type: "image/jpeg",
-      },
-    );
-
   return new File(
-    [blob],
+    [buffer],
     fileName,
     {
       type: "image/jpeg",
-      lastModified:
-        Date.now(),
+      lastModified: Date.now(),
     },
   );
 }
@@ -440,9 +388,9 @@ function ProfileImage({
       : null;
 
   const [preview, setPreview] =
-    useState<
-      string | null
-    >(initialImageUrl);
+    useState<string | null>(
+      initialImageUrl,
+    );
 
   const [
     uploading,
@@ -458,6 +406,69 @@ function ProfileImage({
     useState<string | null>(
       null,
     );
+
+  /*
+   * Browser timers return numbers.
+   * Explicitly use number instead of ReturnType<typeof setTimeout>
+   * so this remains compatible with DOM typings even when Node
+   * types are also present in the project.
+   */
+  const successTimerRef =
+    useRef<number | null>(null);
+
+  /*
+   * Keep the image synchronized if the parent refreshes
+   * the member object after an upload/update.
+   */
+  useEffect(() => {
+    if (!uploading) {
+      setPreview(
+        member.profileImage
+          ? getProfileImageUrl(
+              member.membershipNumber,
+            )
+          : null,
+      );
+    }
+  }, [
+    member.profileImage,
+    member.membershipNumber,
+    uploading,
+  ]);
+
+  /*
+   * Clean up the success timer when the component unmounts.
+   */
+  useEffect(() => {
+    return () => {
+      if (
+        successTimerRef.current !==
+        null
+      ) {
+        window.clearTimeout(
+          successTimerRef.current,
+        );
+
+        successTimerRef.current =
+          null;
+      }
+    };
+  }, []);
+
+  /*
+   * Clean up the preview URL when this component
+   * unmounts in the middle of an upload.
+   */
+  useEffect(() => {
+    return () => {
+      /*
+       * Object URLs created during upload are revoked
+       * immediately after a successful upload or failure.
+       *
+       * No persistent object URL is intentionally retained here.
+       */
+    };
+  }, []);
 
   /* =======================================================
      UPLOAD IMAGE
@@ -497,12 +508,10 @@ function ProfileImage({
             )}`,
             {
               method: "POST",
-
               headers: {
                 "Content-Type":
                   "image/jpeg",
               },
-
               body: compressed,
             },
           );
@@ -553,18 +562,25 @@ function ProfileImage({
             temporaryPreview,
           );
 
-          temporaryPreview =
-            null;
+          temporaryPreview = null;
         }
 
-        window.setTimeout(
-          () => {
-            setUploaded(
-              false,
-            );
-          },
-          1800,
-        );
+        if (
+          successTimerRef.current !==
+          null
+        ) {
+          window.clearTimeout(
+            successTimerRef.current,
+          );
+        }
+
+        successTimerRef.current =
+          window.setTimeout(() => {
+            setUploaded(false);
+
+            successTimerRef.current =
+              null;
+          }, 1800);
       } catch (uploadError) {
         console.error(
           "[PROFILE IMAGE UPLOAD]",
@@ -589,13 +605,10 @@ function ProfileImage({
             temporaryPreview,
           );
 
-          temporaryPreview =
-            null;
+          temporaryPreview = null;
         }
       } finally {
-        setUploading(
-          false,
-        );
+        setUploading(false);
       }
     };
 
@@ -750,8 +763,7 @@ function ProfileImage({
       const file =
         event.target.files?.[0];
 
-      event.target.value =
-        "";
+      event.target.value = "";
 
       if (!file) {
         return;
@@ -768,10 +780,6 @@ function ProfileImage({
 
   return (
     <div className="relative shrink-0">
-      {/* =================================================
-          HIDDEN GALLERY INPUT
-      ================================================= */}
-
       <input
         ref={inputRef}
         type="file"
@@ -780,17 +788,18 @@ function ProfileImage({
           handleImageChange
         }
         className="hidden"
+        aria-hidden="true"
       />
-
-      {/* =================================================
-          PROFILE PHOTO
-      ================================================= */}
 
       <button
         type="button"
         onClick={
           handleOpenCamera
         }
+        onContextMenu={(event) => {
+          event.preventDefault();
+          handleSelectFromGallery();
+        }}
         disabled={uploading}
         aria-label={
           uploading
@@ -826,10 +835,10 @@ function ProfileImage({
               w-full
               object-cover
             "
+            loading="lazy"
+            decoding="async"
             onError={() => {
-              setPreview(
-                null,
-              );
+              setPreview(null);
             }}
           />
         ) : (
@@ -848,15 +857,9 @@ function ProfileImage({
               text-blue-700
             "
           >
-            {getInitials(
-              member,
-            )}
+            {getInitials(member)}
           </div>
         )}
-
-        {/* =================================================
-            UPLOADING
-        ================================================= */}
 
         {uploading && (
           <div
@@ -881,10 +884,6 @@ function ProfileImage({
           </div>
         )}
 
-        {/* =================================================
-            SUCCESS
-        ================================================= */}
-
         {!uploading &&
           uploaded && (
             <div
@@ -906,10 +905,6 @@ function ProfileImage({
               />
             </div>
           )}
-
-        {/* =================================================
-            CAMERA INDICATOR
-        ================================================= */}
 
         {!uploading &&
           !uploaded && (
@@ -941,12 +936,9 @@ function ProfileImage({
           )}
       </button>
 
-      {/* =================================================
-          ERROR
-      ================================================= */}
-
       {error && (
         <div
+          role="alert"
           className="
             absolute
             left-0
@@ -961,6 +953,7 @@ function ProfileImage({
             font-medium
             leading-tight
             text-red-600
+            shadow-sm
           "
         >
           {error}
@@ -979,7 +972,20 @@ function StatusBadge({
 }: {
   status: Member["status"];
 }) {
-  const config = {
+  /*
+   * Runtime database values are not guaranteed to match
+   * the compile-time Member["status"] union.
+   *
+   * Always provide a safe fallback.
+   */
+  const config: Record<
+    string,
+    {
+      label: string;
+      badge: string;
+      dot: string;
+    }
+  > = {
     active: {
       label: "Active",
       badge:
@@ -995,22 +1001,30 @@ function StatusBadge({
     },
 
     blacklisted: {
-      label: "blacklisted",
+      label: "Blacklisted",
       badge:
         "bg-amber-50 text-amber-700",
       dot: "bg-amber-500",
     },
-  } satisfies Record<
-    Member["status"],
-    {
-      label: string;
-      badge: string;
-      dot: string;
-    }
-  >;
+
+    unknown: {
+      label: "Unknown",
+      badge:
+        "bg-slate-100 text-slate-600",
+      dot: "bg-slate-400",
+    },
+  };
+
+  const normalizedStatus =
+    typeof status === "string"
+      ? status
+          .trim()
+          .toLowerCase()
+      : "";
 
   const item =
-    config[status];
+    config[normalizedStatus] ??
+    config.unknown;
 
   return (
     <span
@@ -1063,20 +1077,17 @@ function MemberCard({
 
   const savingsBalance =
     Number(
-      financial?.savingsBalance ??
-        0,
+      financial?.savingsBalance ?? 0,
     );
 
   const totalDeposits =
     Number(
-      financial?.totalDeposits ??
-        0,
+      financial?.totalDeposits ?? 0,
     );
 
   const totalWithdrawals =
     Number(
-      financial?.totalWithdrawals ??
-        0,
+      financial?.totalWithdrawals ?? 0,
     );
 
   const loan =
@@ -1084,8 +1095,7 @@ function MemberCard({
 
   const loanOutstanding =
     Number(
-      loan?.outstandingBalance ??
-        0,
+      loan?.outstandingBalance ?? 0,
     );
 
   return (
@@ -1129,7 +1139,10 @@ function MemberCard({
         >
           <ProfileImage
             member={member}
-            fullName={fullName}
+            fullName={
+              fullName ||
+              "Unnamed member"
+            }
           />
 
           <div className="min-w-0">
@@ -1140,6 +1153,10 @@ function MemberCard({
                 font-bold
                 text-black
               "
+              title={
+                fullName ||
+                "Unnamed member"
+              }
             >
               {fullName ||
                 "Unnamed member"}
@@ -1153,9 +1170,8 @@ function MemberCard({
                 text-black/50
               "
             >
-              {
-                member.membershipNumber
-              }
+              {member.membershipNumber ||
+                "No membership number"}
             </p>
 
             <div className="mt-1.5">
@@ -1181,8 +1197,6 @@ function MemberCard({
           gap-2
         "
       >
-        {/* SAVINGS */}
-
         <div
           className="
             rounded-2xl
@@ -1214,8 +1228,6 @@ function MemberCard({
             )}
           </p>
         </div>
-
-        {/* LOAN */}
 
         <div
           className="
@@ -1264,8 +1276,6 @@ function MemberCard({
           gap-2
         "
       >
-        {/* DEPOSITS */}
-
         <div
           className="
             rounded-2xl
@@ -1297,8 +1307,6 @@ function MemberCard({
             )}
           </p>
         </div>
-
-        {/* WITHDRAWALS */}
 
         <div
           className="
@@ -1344,8 +1352,6 @@ function MemberCard({
           space-y-3
         "
       >
-        {/* PHONE */}
-
         <div
           className="
             flex
@@ -1371,13 +1377,14 @@ function MemberCard({
               font-semibold
               text-black
             "
+            title={
+              member.phone ||
+              undefined
+            }
           >
-            {member.phone ||
-              "—"}
+            {member.phone || "—"}
           </span>
         </div>
-
-        {/* GENDER */}
 
         <div
           className="
@@ -1404,12 +1411,9 @@ function MemberCard({
               text-black
             "
           >
-            {member.gender ||
-              "—"}
+            {member.gender || "—"}
           </span>
         </div>
-
-        {/* JOINED */}
 
         <div
           className="
@@ -1440,8 +1444,6 @@ function MemberCard({
             )}
           </span>
         </div>
-
-        {/* ACTIVE LOAN */}
 
         {loan && (
           <div
@@ -1474,10 +1476,9 @@ function MemberCard({
                 font-semibold
                 text-black
               "
+              title={`${loan.loanNumber} · ${loan.status}`}
             >
-              {
-                loan.loanNumber
-              }
+              {loan.loanNumber}
               {" · "}
               {loan.status}
             </span>
@@ -1499,9 +1500,7 @@ function MemberCard({
       >
         <button
           type="button"
-          onClick={
-            onView
-          }
+          onClick={onView}
           className="
             flex
             h-10
@@ -1524,9 +1523,7 @@ function MemberCard({
 
         <button
           type="button"
-          onClick={
-            onEdit
-          }
+          onClick={onEdit}
           className="
             flex
             h-10
@@ -1549,9 +1546,7 @@ function MemberCard({
 
         <button
           type="button"
-          onClick={
-            onDelete
-          }
+          onClick={onDelete}
           className="
             flex
             h-10
@@ -1587,7 +1582,8 @@ export default function MemberList({
   onDelete,
 }: MemberListProps) {
   if (
-    !members.length
+    !Array.isArray(members) ||
+    members.length === 0
   ) {
     return (
       <div
@@ -1683,23 +1679,15 @@ export default function MemberList({
                 member.membershipNumber ||
                 member._id
               }
-              member={
-                member
-              }
+              member={member}
               onView={() =>
-                onView?.(
-                  member,
-                )
+                onView?.(member)
               }
               onEdit={() =>
-                onEdit?.(
-                  member,
-                )
+                onEdit?.(member)
               }
               onDelete={() =>
-                onDelete?.(
-                  member,
-                )
+                onDelete?.(member)
               }
             />
           ),

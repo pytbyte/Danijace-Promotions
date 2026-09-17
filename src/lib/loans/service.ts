@@ -278,73 +278,84 @@ export async function getCurrentInstallmentBalance(
   );
 
   /*
-   * Number of fully completed repayment cycles.
+   * Only completed repayment cycles are included.
    *
-   * Example with a 7-day cycle:
-   *
-   * Day 0–6  → 0 completed cycles
-   * Day 7    → 1 completed cycle
-   * Day 14   → 2 completed cycles
+   * The current/open cycle is deliberately excluded.
    */
   const completedCycles = Math.floor(
     elapsedDays / cycleDays,
   );
 
-  /*
-   * The balance we want to display is:
-   *
-   * 1. The current cycle if it is still open.
-   * 2. The most recently completed cycle if a cycle
-   *    has just ended.
-   *
-   * At a cycle boundary, the previous cycle is the one
-   * that must be evaluated.
-   */
-  const isCycleBoundary =
-    elapsedDays > 0 &&
-    elapsedDays % cycleDays === 0;
-
-  const periodNumber = isCycleBoundary
-    ? completedCycles
-    : completedCycles + 1;
-
-  /*
-   * Before the first cycle there is no installment
-   * balance to display.
-   */
-  if (periodNumber < 1) {
+  if (completedCycles <= 0) {
     return 0;
   }
 
-  const period = getAssessmentPeriod(
-    loan,
-    periodNumber,
-  );
+  let totalUnpaidBalance = 0;
 
-  const amountPaidBeforePeriod =
-    await getLoanPaidTotalAsOf(
-      loan._id!,
-      period.periodStart,
+  for (
+    let periodNumber = 1;
+    periodNumber <= completedCycles;
+    periodNumber += 1
+  ) {
+    const period = getAssessmentPeriod(
+      loan,
+      periodNumber,
     );
 
-  const expectedInstallment =
-    calculateLoanAmountDue(
-      loan.installmentAmount,
-      loan.principal,
-      loan.interestAmount,
-      amountPaidBeforePeriod,
+    /*
+     * Determine how much of the core loan was already
+     * paid before this installment period began.
+     */
+    const amountPaidBeforePeriod =
+      await getLoanPaidTotalAsOf(
+        loan._id!,
+        period.periodStart,
+      );
+
+    /*
+     * The installment for this period is normally the
+     * configured installment amount. If the remaining
+     * principal + interest is less than that amount,
+     * only the remaining amount is due.
+     */
+    const remainingCoreBalance = Math.max(
+      0,
+      money(
+        loan.principal +
+          loan.interestAmount -
+          amountPaidBeforePeriod,
+      ),
     );
 
-  const paymentsDuringPeriod =
-    await getPeriodPaymentTotal(
-      loan._id!,
-      period,
-  );
+    const expectedInstallment = money(
+      Math.min(
+        Math.max(0, loan.installmentAmount),
+        remainingCoreBalance,
+      ),
+    );
 
-  return calculateUnpaidInstallment(
-    expectedInstallment,
-    paymentsDuringPeriod,
-  );
+    /*
+     * IMPORTANT:
+     *
+     * This is the amount actually paid during THIS
+     * repayment period.
+     */
+    const paymentsDuringPeriod =
+      await getPeriodPaymentTotal(
+        loan._id!,
+        period,
+      );
+
+    const unpaidInstallment =
+      calculateUnpaidInstallment(
+        expectedInstallment,
+        paymentsDuringPeriod,
+      );
+
+    totalUnpaidBalance += unpaidInstallment;
+  }
+
+  return money(totalUnpaidBalance);
 }
 /* =========================================================
    COLLECTIONS
@@ -365,6 +376,8 @@ type LoanCollections = {
   counters: Collection<CounterDocument>;
 };
 
+
+
 async function calculateCurrentInstallmentBalance(
   loan: LoanDocument,
 ): Promise<number> {
@@ -372,75 +385,163 @@ async function calculateCurrentInstallmentBalance(
     return 0;
   }
 
-  // Historical/legacy records must not break the entire loans API.
   if (
     typeof loan.disbursementDate !== "string" ||
     !/^\d{4}-\d{2}-\d{2}$/.test(
       loan.disbursementDate,
     )
   ) {
+    console.error(
+      "INSTALLMENT DEBUG: invalid disbursement date",
+      {
+        loanId: loan._id.toString(),
+        loanNumber: loan.loanNumber,
+        disbursementDate:
+          loan.disbursementDate,
+      },
+    );
+
     return 0;
   }
 
-  const today = dateToKenyanCalendarDate(new Date());
+  const today =
+    dateToKenyanCalendarDate(
+      new Date(),
+    );
 
-  const elapsedDays = differenceInCalendarDays(
-    loan.disbursementDate,
-    today,
+  const elapsedDays =
+    differenceInCalendarDays(
+      loan.disbursementDate,
+      today,
+    );
+
+  const cycleDays =
+    normalizeCycleDays(
+      loan.repaymentCycleDays,
+    );
+
+  const completedCycles =
+    Math.floor(
+      elapsedDays / cycleDays,
+    );
+
+  console.log(
+    "INSTALLMENT DEBUG: loan",
+    {
+      loanId: loan._id.toString(),
+      loanNumber: loan.loanNumber,
+      disbursementDate:
+        loan.disbursementDate,
+      today,
+      elapsedDays,
+      cycleDays,
+      completedCycles,
+      installmentAmount:
+        loan.installmentAmount,
+    },
   );
 
-  // Loan has not reached its first repayment period yet.
   if (elapsedDays < 0) {
     return 0;
   }
 
-  const cycleDays = normalizeCycleDays(
-    loan.repaymentCycleDays,
-  );
-
-  const periodNumber =
-    Math.floor(elapsedDays / cycleDays) + 1;
-
-  const period = getAssessmentPeriod(
-    loan,
-    periodNumber,
-  );
-
-  /*
-   * Amount already paid before this installment period.
-   * This allows the final installment to be reduced automatically
-   * when the remaining principal + interest is less than the normal
-   * installment amount.
-   */
-  const amountPaidBeforePeriod =
-    await getLoanPaidTotalAsOf(
-      loan._id,
-      period.periodStart,
-    );
-
-  const expectedInstallment =
-    calculateLoanAmountDue(
-      loan.installmentAmount,
-      loan.principal,
-      loan.interestAmount,
-      amountPaidBeforePeriod,
-    );
-
-  if (expectedInstallment <= 0) {
+  if (completedCycles <= 0) {
     return 0;
   }
 
-  const paymentsDuringPeriod =
-    await getPeriodPaymentTotal(
-      loan._id,
-      period,
+  let totalUnpaidBalance = 0;
+
+  for (
+    let periodNumber = 1;
+    periodNumber <= completedCycles;
+    periodNumber += 1
+  ) {
+    const period =
+      getAssessmentPeriod(
+        loan,
+        periodNumber,
+      );
+
+    const amountPaidBeforePeriod =
+      await getLoanPaidTotalAsOf(
+        loan._id,
+        period.periodStart,
+      );
+
+    const expectedInstallment =
+      calculateLoanAmountDue(
+        loan.installmentAmount,
+        loan.principal,
+        loan.interestAmount,
+        amountPaidBeforePeriod,
+      );
+
+    const paymentsDuringPeriod =
+      await getPeriodPaymentTotal(
+        loan._id,
+        period,
+      );
+
+    const unpaidInstallment =
+      calculateUnpaidInstallment(
+        expectedInstallment,
+        paymentsDuringPeriod,
+      );
+
+    console.log(
+      "INSTALLMENT DEBUG: period",
+      {
+        loanId:
+          loan._id.toString(),
+        loanNumber:
+          loan.loanNumber,
+
+        periodNumber:
+          period.periodNumber,
+
+        periodStart:
+          period.periodStart,
+
+        periodEnd:
+          period.periodEnd,
+
+        amountPaidBeforePeriod,
+
+        expectedInstallment,
+
+        paymentsDuringPeriod,
+
+        unpaidInstallment,
+      },
     );
 
-  return calculateUnpaidInstallment(
-    expectedInstallment,
-    paymentsDuringPeriod,
+    totalUnpaidBalance =
+      money(
+        totalUnpaidBalance +
+          unpaidInstallment,
+      );
+  }
+
+  console.log(
+    "INSTALLMENT DEBUG: FINAL",
+    {
+      loanId:
+        loan._id.toString(),
+
+      loanNumber:
+        loan.loanNumber,
+
+      totalUnpaidBalance,
+    },
+  );
+
+  return money(
+    totalUnpaidBalance,
   );
 }
+
+
+
 
 async function getCollections(): Promise<LoanCollections> {
   const client =
