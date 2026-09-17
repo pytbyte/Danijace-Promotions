@@ -265,6 +265,10 @@ export async function GET(
     const params =
       request.nextUrl.searchParams;
 
+    /* -------------------------------------------------------
+       PAGINATION
+    ------------------------------------------------------- */
+
     const pageParam =
       params.get("page");
 
@@ -304,6 +308,10 @@ export async function GET(
       );
     }
 
+    /* -------------------------------------------------------
+       FILTERS
+    ------------------------------------------------------- */
+
     const search =
       getOptionalString(
         params.get("search"),
@@ -323,6 +331,10 @@ export async function GET(
       getOptionalString(
         params.get("type"),
       );
+
+    /* -------------------------------------------------------
+       STATUS
+    ------------------------------------------------------- */
 
     let status:
       | LoanStatus
@@ -351,6 +363,10 @@ export async function GET(
         statusParam as LoanStatus;
     }
 
+    /* -------------------------------------------------------
+       TYPE
+    ------------------------------------------------------- */
+
     let type:
       | LoanType
       | undefined;
@@ -376,6 +392,20 @@ export async function GET(
         typeParam as LoanType;
     }
 
+    /* -------------------------------------------------------
+       GET LOANS
+       
+       IMPORTANT:
+       Current-installment calculations belong inside the
+       loan service/query layer, not here.
+
+       This prevents:
+       - N+1 database queries
+       - server logic leaking into the client
+       - duplicated financial calculations
+       - inconsistent installment balances
+    ------------------------------------------------------- */
+
     const result =
       await getLoans({
         page,
@@ -394,21 +424,47 @@ export async function GET(
           : {}),
       });
 
+    /* -------------------------------------------------------
+       BACKGROUND FINE ACCRUAL
+    ------------------------------------------------------- */
+
     scheduleBackgroundFineAccrual();
+
+    /* -------------------------------------------------------
+       RESPONSE
+    ------------------------------------------------------- */
 
     return NextResponse.json(
       {
         success: true,
+
+        /*
+         * `getLoans()` is the source of truth for the
+         * returned Loan objects.
+         *
+         * If the service adds:
+         *
+         * currentInstallmentBalance
+         *
+         * it automatically becomes available here and
+         * therefore becomes available to the frontend.
+         */
         data: result.loans,
+
         count: result.loans.length,
+
         total: result.total,
+
         page: result.page,
+
         limit: result.limit,
+
         totalPages:
           result.totalPages,
       },
       {
         status: 200,
+
         headers: {
           "Cache-Control":
             "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -450,6 +506,10 @@ export async function POST(
 
     const actor =
       getSessionActor(session);
+
+    /* -------------------------------------------------------
+       REQUEST BODY
+    ------------------------------------------------------- */
 
     let body: unknown;
 
@@ -607,20 +667,11 @@ export async function POST(
       | undefined;
 
     /*
-     * IMPORTANT:
+     * These are financial calendar dates.
      *
-     * These are calendar dates, not timestamps.
+     * They remain YYYY-MM-DD strings throughout the request.
      *
-     * We validate them but NEVER convert them to
-     * JavaScript Date objects.
-     *
-     * Example:
-     *
-     * "2026-09-11"
-     *
-     * remains:
-     *
-     * "2026-09-11"
+     * DO NOT convert them to JavaScript Date objects.
      */
 
     if (

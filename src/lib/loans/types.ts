@@ -285,6 +285,8 @@ export interface Loan {
 
   loanNumber: string;
 
+  currentInstallmentBalance?: number;
+
   memberId: string;
 
   memberNumber: string;

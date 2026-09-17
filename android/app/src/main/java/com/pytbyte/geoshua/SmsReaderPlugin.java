@@ -24,6 +24,7 @@ import com.getcapacitor.annotation.PermissionCallback;
  * FOREGROUND SMS READER
  * =========================================================
  *
+<<<<<<< HEAD
  * Reads ONLY SMS received within the last 24 hours.
  *
  * Important:
@@ -34,6 +35,9 @@ import com.getcapacitor.annotation.PermissionCallback;
  * - No boot recovery
  * - No periodic sweep
  * - No background HTTP processing
+=======
+ * Reads ONLY SMS received during the previous 24 hours.
+>>>>>>> 028000f (update sms reader 24hr lookback)
  *
  * Flow:
  *
@@ -47,7 +51,11 @@ import com.getcapacitor.annotation.PermissionCallback;
  *           ↓
  *      Android SMS inbox
  *           ↓
+<<<<<<< HEAD
  *      LAST 24 HOURS ONLY
+=======
+ *      ONLY last 24 hours
+>>>>>>> 028000f (update sms reader 24hr lookback)
  *           ↓
  *      JavaScript receives messages
  *           ↓
@@ -77,8 +85,12 @@ public class SmsReaderPlugin extends Plugin {
         "content://sms/inbox";
 
     /*
+<<<<<<< HEAD
      * SMS timestamps returned by Android are milliseconds
      * since Unix epoch.
+=======
+     * Exactly 24 hours in milliseconds.
+>>>>>>> 028000f (update sms reader 24hr lookback)
      */
     private static final long TWENTY_FOUR_HOURS_MS =
         24L * 60L * 60L * 1000L;
@@ -148,12 +160,15 @@ public class SmsReaderPlugin extends Plugin {
         );
 
 
+<<<<<<< HEAD
         /*
          * Only READ_SMS is required.
          *
          * RECEIVE_SMS is deliberately NOT requested because
          * GEO-SHUA does not listen for incoming SMS broadcasts.
          */
+=======
+>>>>>>> 028000f (update sms reader 24hr lookback)
         if (!readGranted) {
 
             Log.d(
@@ -337,25 +352,42 @@ public class SmsReaderPlugin extends Plugin {
             long now =
                 System.currentTimeMillis();
 
+<<<<<<< HEAD
             long cutoff =
+=======
+            long twentyFourHoursAgo =
+>>>>>>> 028000f (update sms reader 24hr lookback)
                 now - TWENTY_FOUR_HOURS_MS;
 
 
             Log.d(
                 TAG,
+<<<<<<< HEAD
                 "Current time: "
+=======
+                "Current timestamp: "
+>>>>>>> 028000f (update sms reader 24hr lookback)
                     + now
             );
 
             Log.d(
                 TAG,
+<<<<<<< HEAD
                 "24-hour cutoff: "
                     + cutoff
+=======
+                "Reading SMS since: "
+                    + twentyFourHoursAgo
+>>>>>>> 028000f (update sms reader 24hr lookback)
             );
 
 
             /* =================================================
+<<<<<<< HEAD
                PROJECTION
+=======
+               SMS PROJECTION
+>>>>>>> 028000f (update sms reader 24hr lookback)
             ================================================= */
 
             String[] projection = {
@@ -369,6 +401,7 @@ public class SmsReaderPlugin extends Plugin {
             /*
              * IMPORTANT:
              *
+<<<<<<< HEAD
              * The 24-hour filter is applied directly by the
              * Android SMS ContentProvider.
              *
@@ -377,14 +410,36 @@ public class SmsReaderPlugin extends Plugin {
              *
              * date >= cutoff
              * date <= now
+=======
+             * The filtering happens inside the Android
+             * ContentResolver query.
+             *
+             * Android therefore does NOT return the entire
+             * SMS inbox to GEO-SHUA.
+             *
+             * Only messages where:
+             *
+             *     date >= now - 24 hours
+             *
+             * are returned.
+>>>>>>> 028000f (update sms reader 24hr lookback)
              */
             String selection =
                 "date >= ? AND date <= ?";
 
 
             String[] selectionArgs = {
+<<<<<<< HEAD
                 String.valueOf(cutoff),
                 String.valueOf(now)
+=======
+                String.valueOf(
+                    twentyFourHoursAgo
+                ),
+                String.valueOf(
+                    now
+                )
+>>>>>>> 028000f (update sms reader 24hr lookback)
             };
 
 
@@ -478,9 +533,12 @@ public class SmsReaderPlugin extends Plugin {
 
             /*
              * Body and date are required.
+<<<<<<< HEAD
              *
              * _id and address are useful but are not considered
              * fatal if a provider does not expose them.
+=======
+>>>>>>> 028000f (update sms reader 24hr lookback)
              */
             if (
                 bodyIndex < 0 ||
@@ -708,6 +766,24 @@ public class SmsReaderPlugin extends Plugin {
             diagnostic.put(
                 "skippedInvalidDate",
                 skippedInvalidDate
+            );
+
+
+            diagnostic.put(
+                "windowHours",
+                24
+            );
+
+
+            diagnostic.put(
+                "fromTimestamp",
+                twentyFourHoursAgo
+            );
+
+
+            diagnostic.put(
+                "toTimestamp",
+                now
             );
 
 

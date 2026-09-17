@@ -89,16 +89,13 @@ type LoanTransactionModalProps = {
    CONSTANTS
 ========================================================= */
 
-const WAIVERS_API =
-  "/api/loans/waivers";
+const WAIVERS_API = "/api/loans/waivers";
 
 /* =========================================================
    HELPERS
 ========================================================= */
 
-function formatKES(
-  value: unknown,
-): string {
+function formatKES(value: unknown): string {
   const amount =
     typeof value === "number"
       ? value
@@ -108,18 +105,63 @@ function formatKES(
     return "KES 0.00";
   }
 
-  return `KES ${amount.toLocaleString(
-    "en-KE",
-    {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    },
-  )}`;
+  return `KES ${amount.toLocaleString("en-KE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
-function formatDate(
-  value: unknown,
-): string {
+/**
+ * GEO-SHUA financial dates are CalendarDate strings:
+ * YYYY-MM-DD.
+ *
+ * Do not convert these to JavaScript Date objects.
+ */
+function formatCalendarDate(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value)
+  ) {
+    return "";
+  }
+
+  const [year, month, day] = value.split("-");
+
+  const parsedYear = Number(year);
+  const parsedMonth = Number(month);
+  const parsedDay = Number(day);
+
+  if (
+    !Number.isInteger(parsedYear) ||
+    !Number.isInteger(parsedMonth) ||
+    !Number.isInteger(parsedDay) ||
+    parsedMonth < 1 ||
+    parsedMonth > 12 ||
+    parsedDay < 1 ||
+    parsedDay > 31
+  ) {
+    return "";
+  }
+
+  const monthNames = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+
+  return `${monthNames[parsedMonth - 1]} ${parsedDay}, ${parsedYear}`;
+}
+
+function formatTimestamp(value: unknown): string {
   if (
     typeof value !== "string" &&
     !(value instanceof Date)
@@ -136,13 +178,28 @@ function formatDate(
     return "Unknown date";
   }
 
-  return new Intl.DateTimeFormat(
-    "en-KE",
-    {
-      dateStyle: "medium",
-      timeStyle: "short",
-    },
-  ).format(date);
+  return new Intl.DateTimeFormat("en-KE", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function formatTransactionDate(value: unknown): string {
+  if (typeof value === "string") {
+    const calendarDate = formatCalendarDate(value);
+
+    if (calendarDate) {
+      return calendarDate;
+    }
+
+    return formatTimestamp(value);
+  }
+
+  if (value instanceof Date) {
+    return formatTimestamp(value);
+  }
+
+  return "Unknown date";
 }
 
 function getReference(
@@ -155,9 +212,7 @@ function getReference(
   );
 }
 
-function getSourceLabel(
-  source: unknown,
-): string {
+function getSourceLabel(source: unknown): string {
   if (
     typeof source !== "string" ||
     !source.trim()
@@ -165,11 +220,7 @@ function getSourceLabel(
     return "Unknown";
   }
 
-  switch (
-    source
-      .trim()
-      .toLowerCase()
-  ) {
+  switch (source.trim().toLowerCase()) {
     case "sms":
       return "SMS";
 
@@ -184,9 +235,7 @@ function getSourceLabel(
   }
 }
 
-function getStatusLabel(
-  status: unknown,
-): string {
+function getStatusLabel(status: unknown): string {
   if (
     typeof status !== "string" ||
     !status.trim()
@@ -194,11 +243,7 @@ function getStatusLabel(
     return "Confirmed";
   }
 
-  switch (
-    status
-      .trim()
-      .toLowerCase()
-  ) {
+  switch (status.trim().toLowerCase()) {
     case "confirmed":
       return "Confirmed";
 
@@ -213,20 +258,12 @@ function getStatusLabel(
   }
 }
 
-function getStatusClass(
-  status: unknown,
-): string {
-  if (
-    typeof status !== "string"
-  ) {
+function getStatusClass(status: unknown): string {
+  if (typeof status !== "string") {
     return "bg-emerald-500/10 text-emerald-400";
   }
 
-  switch (
-    status
-      .trim()
-      .toLowerCase()
-  ) {
+  switch (status.trim().toLowerCase()) {
     case "pending":
       return "bg-yellow-500/10 text-yellow-400";
 
@@ -242,9 +279,7 @@ function getStatusClass(
 function getWaiverAmount(
   waiver: LoanWaiver,
 ): number {
-  const amount = Number(
-    waiver.amount,
-  );
+  const amount = Number(waiver.amount);
 
   return Number.isFinite(amount)
     ? Math.max(0, amount)
@@ -254,8 +289,7 @@ function getWaiverAmount(
 function createWaiverReference(): string {
   if (
     typeof crypto === "undefined" ||
-    typeof crypto.randomUUID !==
-      "function"
+    typeof crypto.randomUUID !== "function"
   ) {
     throw new Error(
       "Secure waiver reference generation is unavailable on this device.",
@@ -279,336 +313,255 @@ export default function LoanTransactionModal({
      REPAYMENT STATE
   ======================================================= */
 
-  const [
-    transactions,
-    setTransactions,
-  ] = useState<
-    LoanTransaction[]
-  >([]);
+  const [transactions, setTransactions] =
+    useState<LoanTransaction[]>([]);
 
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
+  const [loading, setLoading] =
+    useState(false);
 
-  const [
-    error,
-    setError,
-  ] = useState("");
+  const [error, setError] =
+    useState("");
 
   /* =======================================================
      WAIVER STATE
   ======================================================= */
 
-  const [
-    waivers,
-    setWaivers,
-  ] = useState<LoanWaiver[]>([]);
+  const [waivers, setWaivers] =
+    useState<LoanWaiver[]>([]);
 
-  const [
-    waiversLoading,
-    setWaiversLoading,
-  ] = useState(false);
+  const [waiversLoading, setWaiversLoading] =
+    useState(false);
 
-  const [
-    waiverSubmitting,
-    setWaiverSubmitting,
-  ] = useState(false);
+  const [waiverSubmitting, setWaiverSubmitting] =
+    useState(false);
 
-  const [
-    waiverError,
-    setWaiverError,
-  ] = useState("");
+  const [waiverError, setWaiverError] =
+    useState("");
 
-  const [
-    waiverSuccess,
-    setWaiverSuccess,
-  ] = useState("");
+  const [waiverSuccess, setWaiverSuccess] =
+    useState("");
 
-  const [
-    waiverAmount,
-    setWaiverAmount,
-  ] = useState("");
+  const [waiverAmount, setWaiverAmount] =
+    useState("");
 
-  const [
-    waiverReason,
-    setWaiverReason,
-  ] = useState("");
+  const [waiverReason, setWaiverReason] =
+    useState("");
 
-  /*
-   * IMPORTANT:
-   *
-   * This reference is kept after a failed request.
-   *
-   * Therefore a retry can safely submit the same
-   * financial operation to the backend.
-   */
   const [
     pendingWaiverReference,
     setPendingWaiverReference,
-  ] = useState<
-    string | null
-  >(null);
+  ] = useState<string | null>(null);
 
-  /*
-   * The form is deliberately hidden by default.
-   *
-   * The administrator must explicitly click
-   * "Add Fine Waiver".
-   */
-  const [
-    waiverFormOpen,
-    setWaiverFormOpen,
-  ] = useState(false);
+  const [waiverFormOpen, setWaiverFormOpen] =
+    useState(false);
 
   /* =======================================================
      LOAD TRANSACTIONS
   ======================================================= */
 
-  const loadTransactions =
-    useCallback(
-      async () => {
-        if (!loan) {
-          return;
-        }
+  const loadTransactions = useCallback(
+    async () => {
+      if (!loan) {
+        return;
+      }
 
-        const loanId =
-          typeof loan.id ===
-          "string"
-            ? loan.id.trim()
-            : "";
+      const loanId =
+        typeof loan.id === "string"
+          ? loan.id.trim()
+          : "";
 
-        if (!loanId) {
-          setTransactions([]);
-          setError(
-            "This loan does not have a valid ID.",
-          );
-          return;
-        }
+      if (!loanId) {
+        setTransactions([]);
+        setError(
+          "This loan does not have a valid ID.",
+        );
+        return;
+      }
 
-        setLoading(true);
-        setError("");
+      setLoading(true);
+      setError("");
+
+      try {
+        const params = new URLSearchParams();
+
+        params.set("loanId", loanId);
+
+        const response = await fetch(
+          `/api/loans/repayments?${params.toString()}`,
+          {
+            method: "GET",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+            },
+          },
+        );
+
+        const rawResponse =
+          await response.text();
+
+        let result:
+          | LoanTransactionResponse
+          | null = null;
 
         try {
-          const params =
-            new URLSearchParams();
-
-          params.set(
-            "loanId",
-            loanId,
-          );
-
-          const response =
-            await fetch(
-              `/api/loans/repayments?${params.toString()}`,
-              {
-                method: "GET",
-                credentials:
-                  "same-origin",
-                cache:
-                  "no-store",
-                headers: {
-                  Accept:
-                    "application/json",
-                },
-              },
-            );
-
-          const rawResponse =
-            await response.text();
-
-          let result:
-            | LoanTransactionResponse
-            | null =
-            null;
-
-          try {
-            result =
-              JSON.parse(
-                rawResponse,
-              ) as LoanTransactionResponse;
-          } catch {
-            result = null;
-          }
-
-          if (!response.ok) {
-            throw new Error(
-              result?.error ||
-                `Failed to load loan transactions (${response.status}).`,
-            );
-          }
-
-          if (
-            result?.success ===
-            false
-          ) {
-            throw new Error(
-              result.error ||
-                "Failed to load loan transactions.",
-            );
-          }
-
-          const records =
-            Array.isArray(
-              result?.data,
-            )
-              ? result.data
-              : Array.isArray(
-                    result?.transactions,
-                  )
-                ? result.transactions
-                : [];
-
-          setTransactions(
-            records,
-          );
-        } catch (
-          requestError
-        ) {
-          console.error(
-            "Loan transaction history error:",
-            requestError,
-          );
-
-          setTransactions([]);
-
-          setError(
-            requestError instanceof Error
-              ? requestError.message
-              : "Failed to load loan transaction history.",
-          );
-        } finally {
-          setLoading(false);
+          result =
+            JSON.parse(
+              rawResponse,
+            ) as LoanTransactionResponse;
+        } catch {
+          result = null;
         }
-      },
-      [loan],
-    );
+
+        if (!response.ok) {
+          throw new Error(
+            result?.error ||
+              `Failed to load loan transactions (${response.status}).`,
+          );
+        }
+
+        if (result?.success === false) {
+          throw new Error(
+            result.error ||
+              "Failed to load loan transactions.",
+          );
+        }
+
+        const records =
+          Array.isArray(result?.data)
+            ? result.data
+            : Array.isArray(
+                  result?.transactions,
+                )
+              ? result.transactions
+              : [];
+
+        setTransactions(records);
+      } catch (requestError) {
+        console.error(
+          "Loan transaction history error:",
+          requestError,
+        );
+
+        setTransactions([]);
+
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Failed to load loan transaction history.",
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loan],
+  );
 
   /* =======================================================
      LOAD WAIVERS
   ======================================================= */
 
-  const loadWaivers =
-    useCallback(
-      async () => {
-        if (!loan) {
-          return;
-        }
+  const loadWaivers = useCallback(
+    async () => {
+      if (!loan) {
+        return;
+      }
 
-        const loanId =
-          typeof loan.id ===
-          "string"
-            ? loan.id.trim()
-            : "";
+      const loanId =
+        typeof loan.id === "string"
+          ? loan.id.trim()
+          : "";
 
-        if (!loanId) {
-          setWaivers([]);
-          setWaiverError(
-            "This loan does not have a valid ID.",
-          );
-          return;
-        }
+      if (!loanId) {
+        setWaivers([]);
+        setWaiverError(
+          "This loan does not have a valid ID.",
+        );
+        return;
+      }
 
-        setWaiversLoading(true);
-        setWaiverError("");
+      setWaiversLoading(true);
+      setWaiverError("");
+
+      try {
+        const params = new URLSearchParams();
+
+        params.set("loanId", loanId);
+
+        const response = await fetch(
+          `${WAIVERS_API}?${params.toString()}`,
+          {
+            method: "GET",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+            },
+          },
+        );
+
+        const rawResponse =
+          await response.text();
+
+        let result:
+          | LoanWaiverResponse
+          | null = null;
 
         try {
-          const params =
-            new URLSearchParams();
-
-          params.set(
-            "loanId",
-            loanId,
-          );
-
-          const response =
-            await fetch(
-              `${WAIVERS_API}?${params.toString()}`,
-              {
-                method: "GET",
-                credentials:
-                  "same-origin",
-                cache:
-                  "no-store",
-                headers: {
-                  Accept:
-                    "application/json",
-                },
-              },
-            );
-
-          const rawResponse =
-            await response.text();
-
-          let result:
-            | LoanWaiverResponse
-            | null =
-            null;
-
-          try {
-            result =
-              JSON.parse(
-                rawResponse,
-              ) as LoanWaiverResponse;
-          } catch {
-            result = null;
-          }
-
-          if (!response.ok) {
-            throw new Error(
-              result?.error ||
-                `Failed to load loan waivers (${response.status}).`,
-            );
-          }
-
-          if (
-            result?.success ===
-            false
-          ) {
-            throw new Error(
-              result.error ||
-                "Failed to load loan waivers.",
-            );
-          }
-
-          setWaivers(
-            Array.isArray(
-              result?.data,
-            )
-              ? result.data
-              : [],
-          );
-        } catch (
-          requestError
-        ) {
-          console.error(
-            "Loan waiver history error:",
-            requestError,
-          );
-
-          setWaivers([]);
-
-          setWaiverError(
-            requestError instanceof Error
-              ? requestError.message
-              : "Failed to load loan waiver history.",
-          );
-        } finally {
-          setWaiversLoading(false);
+          result =
+            JSON.parse(
+              rawResponse,
+            ) as LoanWaiverResponse;
+        } catch {
+          result = null;
         }
-      },
-      [loan],
-    );
+
+        if (!response.ok) {
+          throw new Error(
+            result?.error ||
+              `Failed to load loan waivers (${response.status}).`,
+          );
+        }
+
+        if (result?.success === false) {
+          throw new Error(
+            result.error ||
+              "Failed to load loan waivers.",
+          );
+        }
+
+        setWaivers(
+          Array.isArray(result?.data)
+            ? result.data
+            : [],
+        );
+      } catch (requestError) {
+        console.error(
+          "Loan waiver history error:",
+          requestError,
+        );
+
+        setWaivers([]);
+
+        setWaiverError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Failed to load loan waiver history.",
+        );
+      } finally {
+        setWaiversLoading(false);
+      }
+    },
+    [loan],
+  );
 
   /* =======================================================
      INITIAL LOAD
   ======================================================= */
 
   useEffect(() => {
-    if (
-      !open ||
-      !loan
-    ) {
+    if (!open || !loan) {
       return;
     }
 
@@ -634,15 +587,10 @@ export default function LoanTransactionModal({
       return;
     }
 
-    setWaiverFormOpen(
-      false,
-    );
-
+    setWaiverFormOpen(false);
     setWaiverAmount("");
     setWaiverReason("");
-    setPendingWaiverReference(
-      null,
-    );
+    setPendingWaiverReference(null);
     setWaiverError("");
     setWaiverSuccess("");
   }, [loan?.id]);
@@ -651,35 +599,22 @@ export default function LoanTransactionModal({
      TOTAL REPAYMENTS
   ======================================================= */
 
-  const totalRepayments =
-    useMemo(() => {
-      return transactions.reduce(
-        (
-          total,
-          transaction,
-        ) => {
-          const amount =
-            Number(
-              transaction.amount,
-            );
+  const totalRepayments = useMemo(() => {
+    return transactions.reduce(
+      (total, transaction) => {
+        const amount = Number(
+          transaction.amount,
+        );
 
-          if (
-            !Number.isFinite(
-              amount,
-            )
-          ) {
-            return total;
-          }
+        if (!Number.isFinite(amount)) {
+          return total;
+        }
 
-          return (
-            total + amount
-          );
-        },
-        0,
-      );
-    }, [
-      transactions,
-    ]);
+        return total + amount;
+      },
+      0,
+    );
+  }, [transactions]);
 
   /* =======================================================
      WAIVER TOTALS
@@ -688,22 +623,14 @@ export default function LoanTransactionModal({
   const totalWaivedFromHistory =
     useMemo(() => {
       return waivers.reduce(
-        (
-          total,
-          waiver,
-        ) =>
-          total +
-          getWaiverAmount(
-            waiver,
-          ),
+        (total, waiver) =>
+          total + getWaiverAmount(waiver),
         0,
       );
     }, [waivers]);
 
   const totalFines =
-    Number.isFinite(
-      loan?.totalFines,
-    )
+    Number.isFinite(loan?.totalFines)
       ? Math.max(
           0,
           loan?.totalFines ?? 0,
@@ -729,20 +656,43 @@ export default function LoanTransactionModal({
   const activeFineBalance =
     Math.max(
       0,
-      totalFines -
-        knownWaivedFines,
+      totalFines - knownWaivedFines,
     );
 
-  /*
-   * Only active loans may be waived.
-   *
-   * The backend remains authoritative and performs
-   * the final validation.
-   */
   const canRecordWaiver =
-    loan?.status ===
-      "active" &&
+    loan?.status === "active" &&
     activeFineBalance > 0;
+
+  /* =======================================================
+     CURRENT INSTALLMENT BALANCE
+     
+     SERVER-DERIVED ONLY.
+     
+     The frontend does NOT calculate:
+     - repayment periods
+     - expected installments
+     - payments during period
+     - remaining installment
+     - fines
+     
+     It simply displays the value supplied by the
+     loan service.
+  ======================================================= */
+
+  const currentInstallmentBalance =
+    useMemo(() => {
+      const value = Number(
+        loan?.currentInstallmentBalance,
+      );
+
+      if (!Number.isFinite(value)) {
+        return 0;
+      }
+
+      return Math.max(0, value);
+    }, [
+      loan?.currentInstallmentBalance,
+    ]);
 
   /* =======================================================
      OPEN WAIVER FORM
@@ -750,21 +700,14 @@ export default function LoanTransactionModal({
 
   const handleOpenWaiverForm =
     useCallback(() => {
-      if (
-        !canRecordWaiver
-      ) {
+      if (!canRecordWaiver) {
         return;
       }
 
-      setWaiverFormOpen(
-        true,
-      );
-
+      setWaiverFormOpen(true);
       setWaiverError("");
       setWaiverSuccess("");
-    }, [
-      canRecordWaiver,
-    ]);
+    }, [canRecordWaiver]);
 
   /* =======================================================
      CLOSE WAIVER FORM
@@ -772,317 +715,222 @@ export default function LoanTransactionModal({
 
   const handleCancelWaiver =
     useCallback(() => {
-      if (
-        waiverSubmitting
-      ) {
+      if (waiverSubmitting) {
         return;
       }
 
-      /*
-       * If there was a failed submission, we deliberately
-       * keep the reference while the form is open.
-       *
-       * Cancelling means the administrator is abandoning
-       * that draft, so it is safe to clear it.
-       */
-      setWaiverFormOpen(
-        false,
-      );
-
+      setWaiverFormOpen(false);
       setWaiverAmount("");
       setWaiverReason("");
-
-      setPendingWaiverReference(
-        null,
-      );
-
+      setPendingWaiverReference(null);
       setWaiverError("");
       setWaiverSuccess("");
-    }, [
-      waiverSubmitting,
-    ]);
+    }, [waiverSubmitting]);
 
   /* =======================================================
      SUBMIT WAIVER
   ======================================================= */
 
   const handleSubmitWaiver =
-    useCallback(
-      async () => {
-        if (!loan) {
+    useCallback(async () => {
+      if (!loan) {
+        setWaiverError(
+          "No loan is selected.",
+        );
+        return;
+      }
+
+      if (waiverSubmitting) {
+        return;
+      }
+
+      const loanId =
+        typeof loan.id === "string"
+          ? loan.id.trim()
+          : "";
+
+      if (!loanId) {
+        setWaiverError(
+          "This loan does not have a valid ID.",
+        );
+        return;
+      }
+
+      if (loan.status !== "active") {
+        setWaiverError(
+          "Fine waivers can only be recorded for active loans.",
+        );
+        return;
+      }
+
+      const amount = Number(
+        waiverAmount,
+      );
+
+      if (
+        !Number.isFinite(amount) ||
+        amount <= 0
+      ) {
+        setWaiverError(
+          "Enter a valid waiver amount greater than zero.",
+        );
+        return;
+      }
+
+      if (
+        Math.abs(
+          amount -
+            Math.round(amount * 100) /
+              100,
+        ) > 0.000001
+      ) {
+        setWaiverError(
+          "Waiver amount cannot have more than two decimal places.",
+        );
+        return;
+      }
+
+      if (amount > activeFineBalance) {
+        setWaiverError(
+          `Waiver cannot exceed the available fine balance of ${formatKES(
+            activeFineBalance,
+          )}.`,
+        );
+        return;
+      }
+
+      const reason =
+        waiverReason.trim();
+
+      if (!reason) {
+        setWaiverError(
+          "A reason is required for every fine waiver.",
+        );
+        return;
+      }
+
+      if (reason.length > 1000) {
+        setWaiverError(
+          "Waiver reason must not exceed 1000 characters.",
+        );
+        return;
+      }
+
+      let waiverReference =
+        pendingWaiverReference;
+
+      if (!waiverReference) {
+        try {
+          waiverReference =
+            createWaiverReference();
+
+          setPendingWaiverReference(
+            waiverReference,
+          );
+        } catch (referenceError) {
           setWaiverError(
-            "No loan is selected.",
+            referenceError instanceof Error
+              ? referenceError.message
+              : "Unable to generate a secure waiver reference.",
           );
           return;
         }
+      }
 
-        if (
-          waiverSubmitting
-        ) {
-          return;
-        }
+      setWaiverSubmitting(true);
+      setWaiverError("");
+      setWaiverSuccess("");
 
-        const loanId =
-          typeof loan.id ===
-          "string"
-            ? loan.id.trim()
-            : "";
-
-        if (!loanId) {
-          setWaiverError(
-            "This loan does not have a valid ID.",
-          );
-          return;
-        }
-
-        if (
-          loan.status !==
-          "active"
-        ) {
-          setWaiverError(
-            "Fine waivers can only be recorded for active loans.",
-          );
-          return;
-        }
-
-        const amount =
-          Number(
-            waiverAmount,
-          );
-
-        if (
-          !Number.isFinite(
-            amount,
-          ) ||
-          amount <= 0
-        ) {
-          setWaiverError(
-            "Enter a valid waiver amount greater than zero.",
-          );
-          return;
-        }
-
-        if (
-          Math.abs(
-            amount -
-              Math.round(
-                amount * 100,
-              ) /
-                100,
-          ) >
-          0.000001
-        ) {
-          setWaiverError(
-            "Waiver amount cannot have more than two decimal places.",
-          );
-          return;
-        }
-
-        if (
-          amount >
-          activeFineBalance
-        ) {
-          setWaiverError(
-            `Waiver cannot exceed the available fine balance of ${formatKES(
-              activeFineBalance,
-            )}.`,
-          );
-          return;
-        }
-
-        const reason =
-          waiverReason.trim();
-
-        if (!reason) {
-          setWaiverError(
-            "A reason is required for every fine waiver.",
-          );
-          return;
-        }
-
-        if (
-          reason.length >
-          1000
-        ) {
-          setWaiverError(
-            "Waiver reason must not exceed 1000 characters.",
-          );
-          return;
-        }
-
-        let waiverReference =
-          pendingWaiverReference;
-
-        /*
-         * First attempt:
-         * create and store the reference.
-         *
-         * Retry:
-         * reuse the stored reference.
-         */
-        if (
-          !waiverReference
-        ) {
-          try {
-            waiverReference =
-              createWaiverReference();
-
-            setPendingWaiverReference(
+      try {
+        const response = await fetch(
+          WAIVERS_API,
+          {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type":
+                "application/json",
+              Accept:
+                "application/json",
+            },
+            body: JSON.stringify({
               waiverReference,
-            );
-          } catch (
-            referenceError
-          ) {
-            setWaiverError(
-              referenceError instanceof Error
-                ? referenceError.message
-                : "Unable to generate a secure waiver reference.",
-            );
-            return;
-          }
-        }
-
-        setWaiverSubmitting(
-          true,
+              loanId,
+              amount,
+              reason,
+            }),
+          },
         );
 
-        setWaiverError("");
-        setWaiverSuccess("");
+        const rawResponse =
+          await response.text();
+
+        let result:
+          | LoanWaiverCreateResponse
+          | null = null;
 
         try {
-          const response =
-            await fetch(
-              WAIVERS_API,
-              {
-                method: "POST",
-                credentials:
-                  "same-origin",
-                headers: {
-                  "Content-Type":
-                    "application/json",
-                  Accept:
-                    "application/json",
-                },
-                body: JSON.stringify({
-                  waiverReference,
-                  loanId,
-                  amount,
-                  reason,
-                }),
-              },
-            );
+          result =
+            JSON.parse(
+              rawResponse,
+            ) as LoanWaiverCreateResponse;
+        } catch {
+          result = null;
+        }
 
-          const rawResponse =
-            await response.text();
-
-          let result:
-            | LoanWaiverCreateResponse
-            | null =
-            null;
-
-          try {
-            result =
-              JSON.parse(
-                rawResponse,
-              ) as LoanWaiverCreateResponse;
-          } catch {
-            result = null;
-          }
-
-          if (!response.ok) {
-            throw new Error(
-              result?.error ||
-                `Unable to record waiver. Server returned ${response.status}.`,
-            );
-          }
-
-          if (
-            !result?.success
-          ) {
-            throw new Error(
-              result?.error ||
-                "Unable to record fine waiver.",
-            );
-          }
-
-          /*
-           * Server has confirmed the financial mutation.
-           *
-           * Only now do we clear the idempotency reference.
-           */
-          setPendingWaiverReference(
-            null,
-          );
-
-          setWaiverAmount("");
-          setWaiverReason("");
-
-          setWaiverSuccess(
-            "Fine waiver recorded successfully.",
-          );
-
-          /*
-           * Keep the form closed after a successful
-           * financial mutation.
-           */
-          setWaiverFormOpen(
-            false,
-          );
-
-          /*
-           * Refresh waiver history.
-           */
-          await loadWaivers();
-
-          /*
-           * Refresh the authoritative loan projection.
-           */
-          if (
-            onLoanUpdated
-          ) {
-            await onLoanUpdated();
-          }
-        } catch (
-          requestError
-        ) {
-          console.error(
-            "Loan waiver submission error:",
-            requestError,
-          );
-
-          /*
-           * IMPORTANT:
-           *
-           * pendingWaiverReference is deliberately NOT
-           * cleared here.
-           *
-           * If the server committed the waiver but the
-           * response was lost, retrying with the same
-           * reference lets the backend return the existing
-           * waiver instead of creating a duplicate.
-           */
-          setWaiverError(
-            requestError instanceof Error
-              ? requestError.message
-              : "Something went wrong while recording the fine waiver.",
-          );
-        } finally {
-          setWaiverSubmitting(
-            false,
+        if (!response.ok) {
+          throw new Error(
+            result?.error ||
+              `Unable to record waiver. Server returned ${response.status}.`,
           );
         }
-      },
-      [
-        loan,
-        waiverSubmitting,
-        waiverAmount,
-        waiverReason,
-        activeFineBalance,
-        pendingWaiverReference,
-        loadWaivers,
-        onLoanUpdated,
-      ],
-    );
+
+        if (!result?.success) {
+          throw new Error(
+            result?.error ||
+              "Unable to record fine waiver.",
+          );
+        }
+
+        setPendingWaiverReference(null);
+        setWaiverAmount("");
+        setWaiverReason("");
+
+        setWaiverSuccess(
+          "Fine waiver recorded successfully.",
+        );
+
+        setWaiverFormOpen(false);
+
+        await loadWaivers();
+
+        if (onLoanUpdated) {
+          await onLoanUpdated();
+        }
+      } catch (requestError) {
+        console.error(
+          "Loan waiver submission error:",
+          requestError,
+        );
+
+        setWaiverError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Something went wrong while recording the fine waiver.",
+        );
+      } finally {
+        setWaiverSubmitting(false);
+      }
+    }, [
+      loan,
+      waiverSubmitting,
+      waiverAmount,
+      waiverReason,
+      activeFineBalance,
+      pendingWaiverReference,
+      loadWaivers,
+      onLoanUpdated,
+    ]);
 
   /* =======================================================
      ESCAPE KEY
@@ -1093,16 +941,16 @@ export default function LoanTransactionModal({
       return;
     }
 
-    const handleKeyDown =
-      (event: KeyboardEvent) => {
-        if (
-          event.key ===
-            "Escape" &&
-          !waiverSubmitting
-        ) {
-          onClose();
-        }
-      };
+    const handleKeyDown = (
+      event: KeyboardEvent,
+    ) => {
+      if (
+        event.key === "Escape" &&
+        !waiverSubmitting
+      ) {
+        onClose();
+      }
+    };
 
     window.addEventListener(
       "keydown",
@@ -1125,10 +973,7 @@ export default function LoanTransactionModal({
      CLOSED
   ======================================================= */
 
-  if (
-    !open ||
-    !loan
-  ) {
+  if (!open || !loan) {
     return null;
   }
 
@@ -1178,9 +1023,7 @@ export default function LoanTransactionModal({
           shadow-[0_30px_100px_rgba(0,0,0,0.6)]
         "
       >
-        {/* =================================================
-            HEADER
-        ================================================= */}
+        {/* HEADER */}
 
         <header
           className="
@@ -1226,27 +1069,20 @@ export default function LoanTransactionModal({
               id="loan-history-title"
               className="mt-2 truncate text-lg font-semibold text-white"
             >
-              {loan.loanNumber ||
-                "Loan"}
+              {loan.loanNumber || "Loan"}
             </h2>
 
             <p className="mt-1 truncate text-xs text-white/30">
               {loan.memberName ||
                 "Unknown member"}{" "}
-              ·{" "}
-              {loan.memberNumber ||
-                "—"}
+              · {loan.memberNumber || "—"}
             </p>
           </div>
 
           <button
             type="button"
-            onClick={
-              onClose
-            }
-            disabled={
-              waiverSubmitting
-            }
+            onClick={onClose}
+            disabled={waiverSubmitting}
             className="
               flex
               h-9
@@ -1271,9 +1107,7 @@ export default function LoanTransactionModal({
           </button>
         </header>
 
-        {/* =================================================
-            LOAN SUMMARY
-        ================================================= */}
+        {/* LOAN SUMMARY */}
 
         <div
           className="
@@ -1302,24 +1136,25 @@ export default function LoanTransactionModal({
           />
 
           <SummaryBox
+            label="Weekly balance"
+            value={formatKES(
+              currentInstallmentBalance,
+            )}
+            danger={
+              currentInstallmentBalance > 0
+            }
+          />
+
+          <SummaryBox
             label="Outstanding"
             value={formatKES(
               loan.outstandingBalance,
             )}
             highlight
           />
-
-          <SummaryBox
-            label="Repayments"
-            value={formatKES(
-              totalRepayments,
-            )}
-          />
         </div>
 
-        {/* =================================================
-            SCROLLABLE CONTENT
-        ================================================= */}
+        {/* SCROLLABLE CONTENT */}
 
         <div
           className="
@@ -1332,13 +1167,9 @@ export default function LoanTransactionModal({
             scrollbar-thumb-white/10
           "
         >
-          {/* =================================================
-              FINE WAIVERS
-          ================================================= */}
+          {/* FINE WAIVERS */}
 
           <section className="mb-5 rounded-2xl border border-amber-500/10 bg-amber-500/[0.025] p-4">
-            {/* HEADER */}
-
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-3">
                 <div
@@ -1414,8 +1245,6 @@ export default function LoanTransactionModal({
               </button>
             </div>
 
-            {/* SUMMARY */}
-
             <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
               <SummaryBox
                 label="Total fines"
@@ -1437,15 +1266,10 @@ export default function LoanTransactionModal({
                   activeFineBalance,
                 )}
                 highlight={
-                  activeFineBalance >
-                  0
+                  activeFineBalance > 0
                 }
               />
             </div>
-
-            {/* =================================================
-                ADD WAIVER BUTTON
-            ================================================= */}
 
             {canRecordWaiver &&
               !waiverFormOpen && (
@@ -1484,10 +1308,6 @@ export default function LoanTransactionModal({
                   Add Fine Waiver
                 </button>
               )}
-
-            {/* =================================================
-                WAIVER FORM
-            ================================================= */}
 
             {waiverFormOpen &&
               canRecordWaiver && (
@@ -1538,8 +1358,6 @@ export default function LoanTransactionModal({
                   </div>
 
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    {/* AMOUNT */}
-
                     <label className="block">
                       <span className="mb-1.5 block text-[9px] font-medium uppercase tracking-[0.12em] text-white/30">
                         Waiver amount
@@ -1558,21 +1376,13 @@ export default function LoanTransactionModal({
                             activeFineBalance
                           }
                           step="0.01"
-                          value={
-                            waiverAmount
-                          }
-                          onChange={(
-                            event,
-                          ) => {
+                          value={waiverAmount}
+                          onChange={(event) => {
                             setWaiverAmount(
                               event.target.value,
                             );
-                            setWaiverError(
-                              "",
-                            );
-                            setWaiverSuccess(
-                              "",
-                            );
+                            setWaiverError("");
+                            setWaiverSuccess("");
                           }}
                           disabled={
                             waiverSubmitting
@@ -1610,29 +1420,19 @@ export default function LoanTransactionModal({
                       </p>
                     </label>
 
-                    {/* REASON */}
-
                     <label className="block">
                       <span className="mb-1.5 block text-[9px] font-medium uppercase tracking-[0.12em] text-white/30">
                         Reason
                       </span>
 
                       <textarea
-                        value={
-                          waiverReason
-                        }
-                        onChange={(
-                          event,
-                        ) => {
+                        value={waiverReason}
+                        onChange={(event) => {
                           setWaiverReason(
                             event.target.value,
                           );
-                          setWaiverError(
-                            "",
-                          );
-                          setWaiverSuccess(
-                            "",
-                          );
+                          setWaiverError("");
+                          setWaiverSuccess("");
                         }}
                         disabled={
                           waiverSubmitting
@@ -1663,13 +1463,10 @@ export default function LoanTransactionModal({
                       />
 
                       <p className="mt-1 text-right text-[9px] text-white/20">
-                        {waiverReason.length}
-                        /1000
+                        {waiverReason.length}/1000
                       </p>
                     </label>
                   </div>
-
-                  {/* ERROR */}
 
                   {waiverError && (
                     <div className="mt-4 rounded-xl border border-red-500/15 bg-red-500/[0.04] p-3">
@@ -1687,8 +1484,6 @@ export default function LoanTransactionModal({
                     </div>
                   )}
 
-                  {/* SUCCESS */}
-
                   {waiverSuccess && (
                     <div className="mt-4 rounded-xl border border-emerald-500/15 bg-emerald-500/[0.04] p-3">
                       <div className="flex items-start gap-2">
@@ -1705,8 +1500,6 @@ export default function LoanTransactionModal({
                     </div>
                   )}
 
-                  {/* RETRY NOTICE */}
-
                   {pendingWaiverReference && (
                     <div className="mt-4 rounded-xl border border-blue-500/10 bg-blue-500/[0.025] p-3">
                       <p className="text-[9px] leading-5 text-blue-300/50">
@@ -1718,8 +1511,6 @@ export default function LoanTransactionModal({
                       </p>
                     </div>
                   )}
-
-                  {/* ACTIONS */}
 
                   <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                     <button
@@ -1789,7 +1580,6 @@ export default function LoanTransactionModal({
                             className="animate-spin"
                             strokeWidth={2}
                           />
-
                           Recording...
                         </>
                       ) : (
@@ -1798,7 +1588,6 @@ export default function LoanTransactionModal({
                             size={14}
                             strokeWidth={2}
                           />
-
                           Record Waiver
                         </>
                       )}
@@ -1807,14 +1596,9 @@ export default function LoanTransactionModal({
                 </div>
               )}
 
-            {/* =================================================
-                NOT ELIGIBLE
-            ================================================= */}
-
             {!canRecordWaiver && (
               <div className="mt-4 rounded-xl border border-white/[0.06] bg-black/20 p-3">
-                {loan.status !==
-                "active" ? (
+                {loan.status !== "active" ? (
                   <p className="text-[10px] leading-5 text-white/30">
                     Fine waivers cannot be recorded
                     because this loan is{" "}
@@ -1832,10 +1616,6 @@ export default function LoanTransactionModal({
               </div>
             )}
 
-            {/* =================================================
-                WAIVER HISTORY
-            ================================================= */}
-
             <div className="mt-5">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <div>
@@ -1848,8 +1628,7 @@ export default function LoanTransactionModal({
                       "en-KE",
                     )}{" "}
                     recorded{" "}
-                    {waivers.length ===
-                    1
+                    {waivers.length === 1
                       ? "waiver"
                       : "waivers"}
                   </p>
@@ -1859,17 +1638,10 @@ export default function LoanTransactionModal({
               {waiversLoading ? (
                 <div className="space-y-2">
                   {Array.from(
-                    {
-                      length: 2,
-                    },
-                    (
-                      _,
-                      index,
-                    ) => (
+                    { length: 2 },
+                    (_, index) => (
                       <div
-                        key={
-                          index
-                        }
+                        key={index}
                         className="
                           h-[82px]
                           animate-pulse
@@ -1882,8 +1654,7 @@ export default function LoanTransactionModal({
                     ),
                   )}
                 </div>
-              ) : waivers.length ===
-                0 ? (
+              ) : waivers.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-white/[0.07] bg-black/15 p-5 text-center">
                   <p className="text-[10px] font-medium text-white/35">
                     No fine waivers recorded
@@ -1897,10 +1668,7 @@ export default function LoanTransactionModal({
               ) : (
                 <div className="space-y-2">
                   {waivers.map(
-                    (
-                      waiver,
-                      index,
-                    ) => {
+                    (waiver, index) => {
                       const amount =
                         getWaiverAmount(
                           waiver,
@@ -1911,13 +1679,11 @@ export default function LoanTransactionModal({
                         "—";
 
                       const actorName =
-                        waiver.waivedBy
-                          ?.name ||
+                        waiver.waivedBy?.name ||
                         "Unknown";
 
                       const actorEmail =
-                        waiver.waivedBy
-                          ?.email ||
+                        waiver.waivedBy?.email ||
                         "—";
 
                       return (
@@ -1962,9 +1728,7 @@ export default function LoanTransactionModal({
                                   </p>
 
                                   <p className="mt-0.5 truncate font-mono text-[9px] text-white/20">
-                                    {
-                                      reference
-                                    }
+                                    {reference}
                                   </p>
                                 </div>
                               </div>
@@ -1983,7 +1747,7 @@ export default function LoanTransactionModal({
                               </p>
 
                               <p className="mt-1 text-[9px] text-white/20">
-                                {formatDate(
+                                {formatTimestamp(
                                   waiver.createdAt,
                                 )}
                               </p>
@@ -1995,30 +1759,22 @@ export default function LoanTransactionModal({
                               icon={
                                 <UserRound
                                   size={12}
-                                  strokeWidth={
-                                    1.8
-                                  }
+                                  strokeWidth={1.8}
                                 />
                               }
                               label="Waived by"
-                              value={
-                                actorName
-                              }
+                              value={actorName}
                             />
 
                             <TransactionDetail
                               icon={
                                 <Smartphone
                                   size={12}
-                                  strokeWidth={
-                                    1.8
-                                  }
+                                  strokeWidth={1.8}
                                 />
                               }
                               label="Actor email"
-                              value={
-                                actorEmail
-                              }
+                              value={actorEmail}
                             />
                           </div>
                         </article>
@@ -2030,9 +1786,7 @@ export default function LoanTransactionModal({
             </div>
           </section>
 
-          {/* =================================================
-              REPAYMENT ERROR
-          ================================================= */}
+          {/* TRANSACTION ERROR */}
 
           {error && (
             <div className="mb-4 rounded-xl border border-red-500/15 bg-red-500/[0.04] p-3">
@@ -2057,9 +1811,7 @@ export default function LoanTransactionModal({
             </div>
           )}
 
-          {/* =================================================
-              REPAYMENT HISTORY
-          ================================================= */}
+          {/* REPAYMENT TRANSACTIONS */}
 
           <section>
             <div className="mb-3">
@@ -2076,17 +1828,10 @@ export default function LoanTransactionModal({
             {loading ? (
               <div className="space-y-2">
                 {Array.from(
-                  {
-                    length: 3,
-                  },
-                  (
-                    _,
-                    index,
-                  ) => (
+                  { length: 3 },
+                  (_, index) => (
                     <div
-                      key={
-                        index
-                      }
+                      key={index}
                       className="
                         h-[88px]
                         animate-pulse
@@ -2099,8 +1844,7 @@ export default function LoanTransactionModal({
                   ),
                 )}
               </div>
-            ) : transactions.length ===
-              0 ? (
+            ) : transactions.length === 0 ? (
               <div
                 className="
                   flex
@@ -2152,10 +1896,9 @@ export default function LoanTransactionModal({
                     transaction,
                     index,
                   ) => {
-                    const amount =
-                      Number(
-                        transaction.amount,
-                      );
+                    const amount = Number(
+                      transaction.amount,
+                    );
 
                     const validAmount =
                       Number.isFinite(
@@ -2236,9 +1979,7 @@ export default function LoanTransactionModal({
                               }
                             `}
                           >
-                            {positive
-                              ? "+"
-                              : ""}
+                            {positive ? "+" : ""}
                             {formatKES(
                               transaction.amount,
                             )}
@@ -2250,9 +1991,7 @@ export default function LoanTransactionModal({
                             icon={
                               <Smartphone
                                 size={12}
-                                strokeWidth={
-                                  1.8
-                                }
+                                strokeWidth={1.8}
                               />
                             }
                             label="Source"
@@ -2265,13 +2004,11 @@ export default function LoanTransactionModal({
                             icon={
                               <Clock3
                                 size={12}
-                                strokeWidth={
-                                  1.8
-                                }
+                                strokeWidth={1.8}
                               />
                             }
                             label="Date"
-                            value={formatDate(
+                            value={formatTransactionDate(
                               transactionDate,
                             )}
                           />
@@ -2282,16 +2019,12 @@ export default function LoanTransactionModal({
                               "reversed" ? (
                                 <XCircle
                                   size={12}
-                                  strokeWidth={
-                                    1.8
-                                  }
+                                  strokeWidth={1.8}
                                 />
                               ) : (
                                 <CheckCircle2
                                   size={12}
-                                  strokeWidth={
-                                    1.8
-                                  }
+                                  strokeWidth={1.8}
                                 />
                               )
                             }
@@ -2305,15 +2038,11 @@ export default function LoanTransactionModal({
                             icon={
                               <UserRound
                                 size={12}
-                                strokeWidth={
-                                  1.8
-                                }
+                                strokeWidth={1.8}
                               />
                             }
                             label="Reference"
-                            value={
-                              reference
-                            }
+                            value={reference}
                           />
                         </div>
 
@@ -2367,9 +2096,7 @@ export default function LoanTransactionModal({
           </section>
         </div>
 
-        {/* =================================================
-            FOOTER
-        ================================================= */}
+        {/* FOOTER */}
 
         <footer
           className="
@@ -2389,28 +2116,22 @@ export default function LoanTransactionModal({
             {transactions.length.toLocaleString(
               "en-KE",
             )}{" "}
-            {transactions.length ===
-            1
+            {transactions.length === 1
               ? "transaction"
               : "transactions"}{" "}
             ·{" "}
             {waivers.length.toLocaleString(
               "en-KE",
             )}{" "}
-            {waivers.length ===
-            1
+            {waivers.length === 1
               ? "waiver"
               : "waivers"}
           </p>
 
           <button
             type="button"
-            onClick={
-              onClose
-            }
-            disabled={
-              waiverSubmitting
-            }
+            onClick={onClose}
+            disabled={waiverSubmitting}
             className="
               inline-flex
               h-9
@@ -2448,10 +2169,12 @@ function SummaryBox({
   label,
   value,
   highlight = false,
+  danger = false,
 }: {
   label: string;
   value: string;
   highlight?: boolean;
+  danger?: boolean;
 }) {
   return (
     <div className="min-w-0 rounded-xl border border-white/[0.05] bg-white/[0.02] p-3">
@@ -2466,9 +2189,11 @@ function SummaryBox({
           text-sm
           font-semibold
           ${
-            highlight
-              ? "text-yellow-400"
-              : "text-white/75"
+            danger
+              ? "text-red-400"
+              : highlight
+                ? "text-yellow-400"
+                : "text-white/75"
           }
         `}
       >
