@@ -26,8 +26,8 @@ export default function MemberSummary({
     (member) => member.status === "inactive"
   ).length;
 
-  const suspended = members.filter(
-    (member) => member.status === "suspended"
+  const blacklisted = members.filter(
+    (member) => member.status === "blacklisted"
   ).length;
 
   return (
@@ -60,8 +60,8 @@ export default function MemberSummary({
       />
 
       <SummaryCard
-        label="Suspended"
-        value={suspended}
+        label="blacklisted"
+        value={blacklisted}
         description="Require attention"
         icon={<AlertTriangle size={19} strokeWidth={1.8} />}
         iconClass="bg-red-50 text-red-600"

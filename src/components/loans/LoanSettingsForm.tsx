@@ -49,8 +49,6 @@ type LoanSettingsFormState = {
 
   regularMinimumSavings: string;
   regularSavingsMultiplier: string;
-
-  repaymentGraceDays: string;
   repaymentCycleDays: string;
   fineRate: string;
 
@@ -69,7 +67,6 @@ const DEFAULT_FORM: LoanSettingsFormState = {
   regularMinimumSavings: "",
   regularSavingsMultiplier: "",
 
-  repaymentGraceDays: "",
   repaymentCycleDays: "",
   fineRate: "",
 
@@ -133,14 +130,7 @@ function settingsToForm(
           )
         : "",
 
-    repaymentGraceDays:
-      Number.isFinite(
-        settings.repaymentGraceDays,
-      )
-        ? String(
-            settings.repaymentGraceDays,
-          )
-        : "",
+    
 
     repaymentCycleDays:
       Number.isFinite(
@@ -200,8 +190,7 @@ function formToPayload(
     regularSavingsMultiplier:
       Number(form.regularSavingsMultiplier),
 
-    repaymentGraceDays:
-      Number(form.repaymentGraceDays),
+   
 
     repaymentCycleDays:
       Number(form.repaymentCycleDays),
@@ -708,10 +697,7 @@ export default function LoanSettingsForm({
         "Regular savings multiplier",
         payload.regularSavingsMultiplier,
       ],
-      [
-        "Repayment grace days",
-        payload.repaymentGraceDays,
-      ],
+      
       [
         "Repayment cycle days",
         payload.repaymentCycleDays,
@@ -780,20 +766,7 @@ export default function LoanSettingsForm({
       );
     }
 
-    /* =====================================================
-       GRACE DAYS
-    ===================================================== */
 
-    if (
-      !Number.isInteger(
-        payload.repaymentGraceDays,
-      ) ||
-      payload.repaymentGraceDays < 0
-    ) {
-      throw new Error(
-        "Repayment grace days must be a whole number of zero or greater.",
-      );
-    }
 
     /* =====================================================
        REPAYMENT CYCLE
@@ -1180,20 +1153,7 @@ export default function LoanSettingsForm({
                       Interest Rates
                     </h3>
 
-                    <p className="mt-1 text-xs leading-5 text-white/30">
-                      Enter the actual percentage charged
-                      on the loan. For example,
-                      <span className="font-medium text-yellow-400/70">
-                        {" "}
-                        30%
-                      </span>{" "}
-                      should be entered as
-                      <span className="font-medium text-yellow-400/70">
-                        {" "}
-                        30
-                      </span>
-                      .
-                    </p>
+                    
                   </div>
 
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -1408,25 +1368,7 @@ export default function LoanSettingsForm({
                       disabled={saving}
                     />
 
-                    <NumberField
-                      label="Repayment Grace Days"
-                      description="Additional days allowed before repayment becomes overdue."
-                      value={
-                        form.repaymentGraceDays
-                      }
-                      onChange={(value) =>
-                        updateField(
-                          "repaymentGraceDays",
-                          value,
-                        )
-                      }
-                      min="0"
-                      step="1"
-                      suffix="days"
-                      placeholder="7"
-                      disabled={saving}
-                    />
-
+                    
                     <NumberField
                       label="Fine Rate"
                       description="Percentage charged on the unpaid portion of the expected installment."
@@ -1605,14 +1547,7 @@ export default function LoanSettingsForm({
                       }
                     />
 
-                    <SummaryItem
-                      label="Grace Period"
-                      value={
-                        form.repaymentGraceDays
-                          ? `${form.repaymentGraceDays} days`
-                          : "—"
-                      }
-                    />
+                  
 
                     <SummaryItem
                       label="Fine Rate"
