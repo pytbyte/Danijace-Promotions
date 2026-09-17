@@ -262,49 +262,56 @@ export async function getCurrentInstallmentBalance(
     throw new Error("Loan not found.");
   }
 
-  const today = dateToKenyanCalendarDate(new Date());
-
-  const elapsedDays = differenceInCalendarDays(
+  assertCalendarDate(
     loan.disbursementDate,
-    today,
+    "loan disbursement date",
   );
 
-  if (elapsedDays < 0) {
-    return 0;
-  }
+  const today =
+    dateToKenyanCalendarDate(new Date());
 
-  const cycleDays = normalizeCycleDays(
-    loan.repaymentCycleDays,
-  );
+  const cycleDays =
+    normalizeCycleDays(
+      loan.repaymentCycleDays,
+    );
 
-  /*
-   * Only completed repayment cycles are included.
-   *
-   * The current/open cycle is deliberately excluded.
-   */
-  const completedCycles = Math.floor(
-    elapsedDays / cycleDays,
-  );
+  const installmentAmount =
+    money(
+      Math.max(
+        0,
+        Number(
+          loan.installmentAmount ?? 0,
+        ),
+      ),
+    );
 
-  if (completedCycles <= 0) {
+  if (installmentAmount <= 0) {
     return 0;
   }
 
   let totalUnpaidBalance = 0;
+  let periodNumber = 1;
 
-  for (
-    let periodNumber = 1;
-    periodNumber <= completedCycles;
-    periodNumber += 1
-  ) {
-    const period = getAssessmentPeriod(
-      loan,
-      periodNumber,
-    );
+  while (true) {
+    const period =
+      getAssessmentPeriod(
+        loan,
+        periodNumber,
+      );
 
     /*
-     * Determine how much of the core loan was already
-     * paid before this installment period began.
+     * Only completed cycles are included.
+     *
+     * If the period ends today or in the future,
+     * it is still the current/open cycle.
+     */
+    if (period.periodEnd >= today) {
+      break;
+    }
+
+    /*
+     * Amount of principal + interest that had already
+     * been paid before this cycle started.
      */
     const amountPaidBeforePeriod =
       await getLoanPaidTotalAsOf(
@@ -312,33 +319,38 @@ export async function getCurrentInstallmentBalance(
         period.periodStart,
       );
 
-    /*
-     * The installment for this period is normally the
-     * configured installment amount. If the remaining
-     * principal + interest is less than that amount,
-     * only the remaining amount is due.
-     */
-    const remainingCoreBalance = Math.max(
-      0,
+    const remainingCoreBalance =
       money(
-        loan.principal +
-          loan.interestAmount -
-          amountPaidBeforePeriod,
-      ),
-    );
-
-    const expectedInstallment = money(
-      Math.min(
-        Math.max(0, loan.installmentAmount),
-        remainingCoreBalance,
-      ),
-    );
+        Math.max(
+          0,
+          loan.principal +
+            loan.interestAmount -
+            amountPaidBeforePeriod,
+        ),
+      );
 
     /*
-     * IMPORTANT:
-     *
-     * This is the amount actually paid during THIS
-     * repayment period.
+     * Nothing remains to be paid.
+     * No later installments can exist.
+     */
+    if (remainingCoreBalance <= 0) {
+      break;
+    }
+
+    /*
+     * This cycle can never require more than the
+     * remaining principal + interest.
+     */
+    const expectedInstallment =
+      money(
+        Math.min(
+          installmentAmount,
+          remainingCoreBalance,
+        ),
+      );
+
+    /*
+     * Payments belonging ONLY to this repayment cycle.
      */
     const paymentsDuringPeriod =
       await getPeriodPaymentTotal(
@@ -346,16 +358,35 @@ export async function getCurrentInstallmentBalance(
         period,
       );
 
+    /*
+     * Cycle shortfall:
+     *
+     * max(
+     *   0,
+     *   expected installment - payments in cycle
+     * )
+     *
+     * This is also the base used by the
+     * percentage-based fine calculation.
+     */
     const unpaidInstallment =
       calculateUnpaidInstallment(
         expectedInstallment,
         paymentsDuringPeriod,
       );
 
-    totalUnpaidBalance += unpaidInstallment;
+    totalUnpaidBalance =
+      money(
+        totalUnpaidBalance +
+          unpaidInstallment,
+      );
+
+    periodNumber += 1;
   }
 
-  return money(totalUnpaidBalance);
+  return money(
+    totalUnpaidBalance,
+  );
 }
 /* =========================================================
    COLLECTIONS
