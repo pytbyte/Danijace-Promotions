@@ -6,7 +6,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Capacitor } from "@capacitor/core";
 
@@ -47,45 +47,40 @@ function formatSmsDate(
   return date.toLocaleString();
 }
 
-function getResultLabel(
+function getResultType(
   result: SmsProcessResult
 ): string {
-  if (result.processed) {
-    return "Processed";
+  const type =
+    typeof result.type === "string"
+      ? result.type.toLowerCase()
+      : "";
+
+  if (type === "loan") {
+    return "Loan payment";
   }
 
-  if (result.duplicate) {
-    return "Duplicate";
+  if (type === "savings") {
+    return "Savings deposit";
   }
 
-  if (result.ignored) {
-    return "Ignored";
-  }
-
-  if (result.error) {
-    return "Failed";
-  }
-
-  return result.status || "Unknown";
+  return result.processed
+    ? "Transaction"
+    : "Financial transaction";
 }
 
 function getResultLabelClass(
   result: SmsProcessResult
 ): string {
-  if (result.processed) {
+  if (result.type === "loan") {
+    return "text-sky-400";
+  }
+
+  if (result.type === "savings") {
     return "text-emerald-400";
   }
 
-  if (result.duplicate) {
-    return "text-amber-400";
-  }
-
-  if (result.ignored) {
-    return "text-slate-400";
-  }
-
-  if (result.error) {
-    return "text-red-400";
+  if (result.processed) {
+    return "text-emerald-400";
   }
 
   return "text-slate-300";
@@ -111,6 +106,23 @@ export default function SmsInboxMonitor() {
 
   const [resultsOpen, setResultsOpen] =
     useState(false);
+
+  /*
+   * Only show SMS messages that actually caused
+   * a financial change.
+   *
+   * This means ordinary SMS, ignored SMS,
+   * duplicates without a financial change, and
+   * failed processing attempts stay out of the UI.
+   */
+  const financialResults = useMemo(
+    () =>
+      results.filter(
+        (result) =>
+          result.financialChange === true
+      ),
+    [results]
+  );
 
   if (!isNative) {
     return null;
@@ -402,7 +414,7 @@ export default function SmsInboxMonitor() {
             </span>
           </button>
 
-          {/* RESULTS */}
+          {/* FINANCIAL RESULTS */}
 
           <button
             type="button"
@@ -411,16 +423,18 @@ export default function SmsInboxMonitor() {
                 (open) => !open
               )
             }
-            disabled={results.length === 0}
+            disabled={
+              financialResults.length === 0
+            }
             aria-label={
               resultsOpen
-                ? "Hide SMS results"
-                : "Show SMS results"
+                ? "Hide transaction results"
+                : "Show transaction results"
             }
             title={
               resultsOpen
-                ? "Hide SMS results"
-                : "Show SMS results"
+                ? "Hide transaction results"
+                : "Show transaction results"
             }
             className="
               relative
@@ -450,7 +464,7 @@ export default function SmsInboxMonitor() {
               <ChevronDown className="h-3.5 w-3.5" />
             )}
 
-            {results.length > 0 && (
+            {financialResults.length > 0 && (
               <span
                 className="
                   absolute
@@ -469,9 +483,9 @@ export default function SmsInboxMonitor() {
                   text-white
                 "
               >
-                {results.length > 99
+                {financialResults.length > 99
                   ? "99+"
-                  : results.length}
+                  : financialResults.length}
               </span>
             )}
           </button>
@@ -479,11 +493,11 @@ export default function SmsInboxMonitor() {
       </div>
 
       {/* ===================================================
-          RESULTS
+          FINANCIAL TRANSACTION RESULTS
       =================================================== */}
 
       {resultsOpen &&
-        results.length > 0 && (
+        financialResults.length > 0 && (
           <div
             className="
               border-t
@@ -501,7 +515,7 @@ export default function SmsInboxMonitor() {
               "
             >
               <div className="space-y-2">
-                {results.map(
+                {financialResults.map(
                   (
                     result,
                     index
@@ -516,7 +530,7 @@ export default function SmsInboxMonitor() {
                         p-3
                       "
                     >
-                      {/* RESULT HEADER */}
+                      {/* TRANSACTION HEADER */}
 
                       <div
                         className="
@@ -526,21 +540,23 @@ export default function SmsInboxMonitor() {
                           gap-3
                         "
                       >
-                        <span
-                          className={`
-                            text-[10px]
-                            font-semibold
-                            uppercase
-                            tracking-[0.08em]
-                            ${getResultLabelClass(
+                        <div className="min-w-0">
+                          <span
+                            className={`
+                              text-[10px]
+                              font-semibold
+                              uppercase
+                              tracking-[0.08em]
+                              ${getResultLabelClass(
+                                result
+                              )}
+                            `}
+                          >
+                            {getResultType(
                               result
                             )}
-                          `}
-                        >
-                          {getResultLabel(
-                            result
-                          )}
-                        </span>
+                          </span>
+                        </div>
 
                         <span
                           className="
@@ -570,36 +586,13 @@ export default function SmsInboxMonitor() {
                         {result.sms.body ||
                           "SMS body unavailable."}
                       </p>
-
-                      {/* ERROR */}
-
-                      {result.error && (
-                        <p
-                          className="
-                            mt-2
-                            whitespace-pre-wrap
-                            break-words
-                            rounded-lg
-                            border
-                            border-red-500/10
-                            bg-red-500/5
-                            px-2
-                            py-1.5
-                            text-[10px]
-                            leading-relaxed
-                            text-red-300
-                          "
-                        >
-                          {result.error}
-                        </p>
-                      )}
                     </div>
                   )
                 )}
               </div>
             </div>
 
-            {/* RESULTS FOOTER */}
+            {/* FOOTER */}
 
             <div
               className="
@@ -616,8 +609,8 @@ export default function SmsInboxMonitor() {
               "
             >
               <span>
-                {results.length} SMS result
-                {results.length === 1
+                {financialResults.length} transaction
+                {financialResults.length === 1
                   ? ""
                   : "s"}
               </span>
