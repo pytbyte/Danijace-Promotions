@@ -912,7 +912,7 @@ export default function MemberEditModal({
                       label: "Inactive",
                     },
                     {
-                      value: "blacklisted",
+                      value: "suspended",
                       label: "blacklisted",
                     },
                   ]}

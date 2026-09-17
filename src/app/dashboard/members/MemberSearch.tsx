@@ -114,7 +114,7 @@ export default function MemberSearch({
                 </option>
 
                 <option
-                  value="blacklisted"
+                  value="suspended"
                   className="bg-black text-white"
                 >
                   blacklisted

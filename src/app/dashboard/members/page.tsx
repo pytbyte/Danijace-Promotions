@@ -331,71 +331,96 @@ export default function MembersPage() {
     void loadMembers(true);
   }
 
-  /* =======================================================
-     FILTER MEMBERS
-  ======================================================= */
 
-  const filteredMembers = useMemo(() => {
-    const query =
-      search.trim().toLowerCase();
 
-    return members.filter((member) => {
-      /* ---------------------------------------------------
-         STATUS
-      --------------------------------------------------- */
+/* =======================================================
+   FILTER MEMBERS
+======================================================= */
 
-      if (
-        status !== "all" &&
-        member.status !== status
-      ) {
-        return false;
-      }
+const filteredMembers = useMemo(() => {
+  const query = search.trim().toLowerCase();
 
-      /* ---------------------------------------------------
-         EMPTY SEARCH
-      --------------------------------------------------- */
+  const selectedStatus =
+    typeof status === "string"
+      ? status.trim().toLowerCase()
+      : "all";
 
-      if (!query) {
-        return true;
-      }
+  return members.filter((member) => {
+    /* ---------------------------------------------------
+       NORMALIZE MEMBER STATUS
+    --------------------------------------------------- */
 
-      /* ---------------------------------------------------
-         FULL NAME
-      --------------------------------------------------- */
+    const memberStatus =
+      typeof member.status === "string"
+        ? member.status.trim().toLowerCase()
+        : "";
 
-      const fullName = [
-        member.firstName,
-        member.middleName,
-        member.lastName,
-      ]
-        .filter(Boolean)
-        .join(" ");
+    /* ---------------------------------------------------
+       STATUS FILTER
+    --------------------------------------------------- */
 
-      /* ---------------------------------------------------
-         SEARCHABLE FIELDS
-      --------------------------------------------------- */
+    if (
+      selectedStatus !== "all" &&
+      memberStatus !== selectedStatus
+    ) {
+      return false;
+    }
 
-      const searchableText = [
-        fullName,
-        member.membershipNumber,
-        member.phone,
-        member.email,
-        member.nationalId,
-        member.address,
-        member.city,
-        member.county,
-        member.occupation,
-        member.nextOfKinName,
-        member.nextOfKinPhone,
-        member.nextOfKinRelationship,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+    /* ---------------------------------------------------
+       NO SEARCH QUERY
+    --------------------------------------------------- */
 
-      return searchableText.includes(query);
-    });
-  }, [members, search, status]);
+    if (!query) {
+      return true;
+    }
+
+    /* ---------------------------------------------------
+       FULL NAME
+    --------------------------------------------------- */
+
+    const fullName = [
+      member.firstName,
+      member.middleName,
+      member.lastName,
+    ]
+      .filter(
+        (value): value is string =>
+          typeof value === "string" &&
+          value.trim().length > 0
+      )
+      .join(" ");
+
+    /* ---------------------------------------------------
+       SEARCHABLE FIELDS
+    --------------------------------------------------- */
+
+    const searchableText = [
+      fullName,
+      member.membershipNumber,
+      member.phone,
+      member.email,
+      member.nationalId,
+      member.address,
+      member.city,
+      member.county,
+      member.occupation,
+      member.nextOfKinName,
+      member.nextOfKinPhone,
+      member.nextOfKinRelationship,
+    ]
+      .filter(
+        (value): value is string =>
+          typeof value === "string" &&
+          value.trim().length > 0
+      )
+      .join(" ")
+      .toLowerCase();
+
+    return searchableText.includes(query);
+  });
+}, [members, search, status]);
+
+
 
   /* =======================================================
      SSR / HYDRATION GUARD

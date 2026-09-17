@@ -745,7 +745,7 @@ export default function MemberForm({
                       label: "Inactive",
                     },
                     {
-                      value: "blacklisted",
+                      value: "suspended",
                       label: "blacklisted",
                     },
                   ]}

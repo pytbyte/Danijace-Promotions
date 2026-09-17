@@ -253,45 +253,77 @@ export default function MemberTable({
    STATUS BADGE
 ========================================================= */
 
+
 function StatusBadge({
   status,
 }: {
   status: Member["status"];
 }) {
-  const styles: Record<Member["status"], string> = {
-    active:
-      "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  const normalizedStatus =
+    typeof status === "string"
+      ? status.trim().toLowerCase()
+      : "";
 
-    inactive:
-      "bg-slate-100 text-black ring-slate-200",
-
-    blacklisted:
-      "bg-red-50 text-red-700 ring-red-200",
-  };
-
-  const labels: Record<Member["status"], string> = {
-    active: "Active",
-    inactive: "Inactive",
-    blacklisted: "blacklisted",
-  };
-
-  const dots: Record<Member["status"], string> = {
-    active: "bg-emerald-500",
-    inactive: "bg-black/40",
-    blacklisted: "bg-red-500",
-  };
+  const item =
+    normalizedStatus === "active"
+      ? {
+          label: "Active",
+          badge:
+            "bg-emerald-50 text-emerald-700 ring-emerald-200",
+          dot: "bg-emerald-500",
+        }
+      : normalizedStatus === "inactive"
+        ? {
+            label: "Inactive",
+            badge:
+              "bg-slate-100 text-black ring-slate-200",
+            dot: "bg-black/40",
+          }
+        : normalizedStatus === "suspended"
+          ? {
+              label: "Blacklisted",
+              badge:
+                "bg-red-50 text-red-700 ring-red-200",
+              dot: "bg-red-500",
+            }
+          : {
+              label: "Unknown",
+              badge:
+                "bg-slate-100 text-slate-600 ring-slate-200",
+              dot: "bg-slate-400",
+            };
 
   return (
     <span
-      className={`inline-flex max-w-full shrink-0 items-center rounded-lg px-2 py-1 text-[9px] font-medium ring-1 ${styles[status]}`}
+      className={`
+        inline-flex
+        max-w-full
+        shrink-0
+        items-center
+        rounded-lg
+        px-2
+        py-1
+        text-[9px]
+        font-medium
+        ring-1
+        ${item.badge}
+      `}
     >
       <span
-        className={`mr-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dots[status]}`}
+        className={`
+          mr-1.5
+          h-1.5
+          w-1.5
+          shrink-0
+          rounded-full
+          ${item.dot}
+        `}
       />
 
       <span className="truncate">
-        {labels[status]}
+        {item.label}
       </span>
     </span>
   );
 }
+

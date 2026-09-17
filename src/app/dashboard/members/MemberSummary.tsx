@@ -19,15 +19,28 @@ export default function MemberSummary({
   const total = members.length;
 
   const active = members.filter(
-    (member) => member.status === "active"
+    (member) => member.status === "active",
   ).length;
 
   const inactive = members.filter(
-    (member) => member.status === "inactive"
+    (member) => member.status === "inactive",
   ).length;
 
+  /*
+   * The database uses:
+   *   suspended
+   *
+   * The UI displays:
+   *   Blacklisted
+   *
+   * MemberStatus currently does not include
+   * "suspended", so normalize the runtime value
+   * before comparing it.
+   */
   const blacklisted = members.filter(
-    (member) => member.status === "blacklisted"
+    (member) =>
+      String(member.status).trim().toLowerCase() ===
+      "suspended",
   ).length;
 
   return (
@@ -39,7 +52,12 @@ export default function MemberSummary({
         label="Total Members"
         value={total}
         description="Registered members"
-        icon={<Users size={19} strokeWidth={1.8} />}
+        icon={
+          <Users
+            size={19}
+            strokeWidth={1.8}
+          />
+        }
         iconClass="bg-blue-50 text-blue-600"
       />
 
@@ -47,7 +65,12 @@ export default function MemberSummary({
         label="Active"
         value={active}
         description="Currently active"
-        icon={<UserCheck size={19} strokeWidth={1.8} />}
+        icon={
+          <UserCheck
+            size={19}
+            strokeWidth={1.8}
+          />
+        }
         iconClass="bg-emerald-50 text-emerald-600"
       />
 
@@ -55,15 +78,25 @@ export default function MemberSummary({
         label="Inactive"
         value={inactive}
         description="Inactive members"
-        icon={<UserX size={19} strokeWidth={1.8} />}
+        icon={
+          <UserX
+            size={19}
+            strokeWidth={1.8}
+          />
+        }
         iconClass="bg-slate-100 text-slate-500"
       />
 
       <SummaryCard
-        label="blacklisted"
+        label="Blacklisted"
         value={blacklisted}
         description="Require attention"
-        icon={<AlertTriangle size={19} strokeWidth={1.8} />}
+        icon={
+          <AlertTriangle
+            size={19}
+            strokeWidth={1.8}
+          />
+        }
         iconClass="bg-red-50 text-red-600"
       />
     </section>
@@ -130,3 +163,4 @@ function SummaryCard({
     </div>
   );
 }
+
