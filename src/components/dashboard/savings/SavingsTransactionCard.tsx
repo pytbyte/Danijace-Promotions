@@ -503,7 +503,7 @@ export default function SavingsTransactionCard({
                 strokeWidth={1.8}
               />
 
-              <span>Adjust</span>
+              <span>Withdraw</span>
             </button>
           )}
 

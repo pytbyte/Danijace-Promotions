@@ -691,7 +691,7 @@ function TransactionRow({
               />
 
               <span>
-                Adjust
+                Withdraw
               </span>
             </button>
           )}
