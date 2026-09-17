@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { AppLockProvider } from "@/components/security/AppLockProvider";
+import { SmsInboxProvider } from "@/components/sms/SmsInboxProvider";
 
 export default function DashboardLayout({
   children,
@@ -9,7 +10,9 @@ export default function DashboardLayout({
 }) {
   return (
     <AppLockProvider>
-      {children}
+      <SmsInboxProvider>
+        {children}
+      </SmsInboxProvider>
     </AppLockProvider>
   );
 }
