@@ -42,6 +42,13 @@ interface LoanFormProps {
 /* =========================================================
    API TYPES
 ========================================================= */
+type ExistingGuarantee = {
+  loanId: string;
+  loanNumber: string;
+  borrowerName: string;
+  principal: number;
+  status?: string;
+};
 
 type MembersResponse = {
   success: boolean;
@@ -292,6 +299,14 @@ export default function LoanForm({
   /* =======================================================
      MEMBER
   ======================================================= */
+  const [existingGuarantees, setExistingGuarantees] =
+  useState<ExistingGuarantee[]>([]);
+
+const [checkingGuarantees, setCheckingGuarantees] =
+  useState(false);
+
+const [guaranteeDecision, setGuaranteeDecision] =
+  useState<Record<string, "allow" | "cancel">>({});
 
   const [member, setMember] =
     useState<Member | null>(null);
@@ -1170,34 +1185,77 @@ export default function LoanForm({
      MEMBER SELECTION
   ========================================================= */
 
-  function handleSelectMember(
-    selectedMember: Member,
+async function handleSelectMember(
+  selectedMember: Member,
+) {
+  if (
+    submitting ||
+    isEditMode
   ) {
-    if (
-      submitting ||
-      isEditMode
-    ) {
-      return;
-    }
-
-    if (
-      selectedMember.status !==
-      "active"
-    ) {
-      showError(
-        "Only active members can receive loans.",
-        "member",
-      );
-
-      return;
-    }
-
-    setMember(selectedMember);
-    setMemberSearch("");
-    setMembers([]);
-
-    clearError();
+    return;
   }
+
+  if (
+    selectedMember.status !==
+    "active"
+  ) {
+    showError(
+      "Only active members can receive loans.",
+      "member",
+    );
+
+    return;
+  }
+
+  // Select the member immediately.
+  setMember(selectedMember);
+  setMemberSearch("");
+  setMembers([]);
+  clearError();
+
+  // Reset guarantor information belonging to the
+  // previously selected member.
+  setExistingGuarantees([]);
+  setGuaranteeDecision({});
+  setCheckingGuarantees(true);
+
+  try {
+    const response = await fetch(
+      `/api/loans/guarantor-check?memberId=${encodeURIComponent(
+        String(selectedMember._id),
+      )}`,
+      {
+        method: "GET",
+        cache: "no-store",
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        "Unable to check existing guarantor commitments.",
+      );
+    }
+
+    const data = await response.json();
+
+    setExistingGuarantees(
+      Array.isArray(data?.guarantees)
+        ? data.guarantees
+        : [],
+    );
+  } catch (error) {
+    console.error(
+      "Guarantor check failed:",
+      error,
+    );
+
+    // Do not prevent the member from being selected
+    // if the informational guarantor check fails.
+    setExistingGuarantees([]);
+  } finally {
+    setCheckingGuarantees(false);
+  }
+}
 
   function clearMember() {
     if (
@@ -2089,1319 +2147,1336 @@ async function handleSubmit(
   if (!open) {
     return null;
   }
+/* =========================================================
+   UI
+========================================================= */
 
-  /* =========================================================
-     UI
-  ========================================================= */
+return (
+  <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+    <div
+      className="flex max-h-[95dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-[#0b0f0e] shadow-2xl sm:rounded-3xl"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="loan-form-title"
+    >
+      {/* =================================================
+          HEADER
+      ================================================= */}
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-      <div
-        className="flex max-h-[95dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-[#0b0f0e] shadow-2xl sm:rounded-3xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="loan-form-title"
-      >
-        {/* =================================================
-            HEADER
-        ================================================= */}
+      <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4 sm:px-6">
+        <div>
+          <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-emerald-400/70">
+            Loan management
+          </p>
 
-        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4 sm:px-6">
-          <div>
-            <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-emerald-400/70">
-              Loan management
-            </p>
-
-            <h2
-              id="loan-form-title"
-              className="mt-1 text-lg font-semibold text-white"
-            >
-              {isEditMode
-                ? "Edit Loan"
-                : "Create Loan"}
-            </h2>
-
-            <p className="mt-0.5 text-xs text-white/40">
-              {isEditMode
-                ? "Update the editable terms of this loan."
-                : "Loan terms are captured when the loan is created."}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleClose}
-            disabled={submitting}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5 text-white/50 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label="Close loan form"
+          <h2
+            id="loan-form-title"
+            className="mt-1 text-lg font-semibold text-white"
           >
-            <X size={18} />
-          </button>
+            {isEditMode ? "Edit Loan" : "Create Loan"}
+          </h2>
+
+          <p className="mt-0.5 text-xs text-white/40">
+            {isEditMode
+              ? "Update the editable terms of this loan."
+              : "Loan terms are captured when the loan is created."}
+          </p>
         </div>
 
-        {/* =================================================
-            FORM
-        ================================================= */}
-
-        <form
-          onSubmit={handleSubmit}
-          className="min-h-0 flex-1 overflow-y-auto"
+        <button
+          type="button"
+          onClick={handleClose}
+          disabled={submitting}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5 text-white/50 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="Close loan form"
         >
-          <div className="space-y-5 p-5 sm:p-6">
-
-            {/* =================================================
-                SYSTEM ERROR
-            ================================================= */}
-
-            {error &&
-              errorSection ===
-                "general" && (
-                <div
-                  role="alert"
-                  className="flex items-start gap-3 rounded-2xl border border-red-400/20 bg-red-500/[0.07] px-4 py-3"
-                >
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-red-500/10">
-                    <AlertCircle
-                      size={15}
-                      className="text-red-400"
-                    />
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold text-red-200">
-                      {isEditMode
-                        ? "Unable to update loan"
-                        : "Unable to create loan"}
-                    </p>
-
-                    <p className="mt-0.5 text-xs leading-5 text-red-200/70">
-                      {error}
-                    </p>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={
-                      clearError
-                    }
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-red-300/50 transition hover:bg-red-500/10 hover:text-red-200"
-                    aria-label="Dismiss error"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              )}
-
-            {/* =================================================
-                MEMBER
-            ================================================= */}
-
-            <section
-              className={`rounded-2xl border bg-white/[0.025] p-4 ${
-                errorSection ===
-                "member"
-                  ? "border-red-500/25"
-                  : "border-white/10"
-              }`}
-            >
-              <div className="mb-4">
-                <h3 className="text-sm font-semibold text-white">
-                  Member
-                </h3>
-
-                <p className="mt-1 text-xs text-white/40">
-                  {isEditMode
-                    ? "The borrower cannot be changed after the loan is created."
-                    : "Select the active member receiving this loan."}
-                </p>
-              </div>
-
-              {!member ? (
-                <div className="relative">
-                  <div
-                    className={`flex items-center gap-2 rounded-xl border bg-black/20 px-3 ${
-                      errorSection ===
-                      "member"
-                        ? "border-red-500/30"
-                        : "border-white/10"
-                    }`}
-                  >
-                    <Search
-                      size={16}
-                      className="shrink-0 text-white/30"
-                    />
-
-                    <input
-                      type="search"
-                      value={
-                        memberSearch
-                      }
-                      onChange={(
-                        event,
-                      ) => {
-                        setMemberSearch(
-                          event.target
-                            .value,
-                        );
-
-                        clearSectionError(
-                          "member",
-                        );
-                      }}
-                      placeholder="Search member first and middle name"
-                      disabled={
-                        submitting ||
-                        isEditMode ||
-                        Boolean(
-                          memberId?.trim(),
-                        )
-                      }
-                      className="h-11 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/25"
-                    />
-
-                    {loadingMembers && (
-                      <Loader2
-                        size={16}
-                        className="animate-spin text-white/40"
-                      />
-                    )}
-                  </div>
-
-                  {memberSearch.trim() &&
-                    !isEditMode &&
-                    !memberId?.trim() && (
-                      <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-[#111816] p-1 shadow-2xl">
-                        {loadingMembers ? (
-                          <div className="p-4 text-center text-xs text-white/40">
-                            Searching members...
-                          </div>
-                        ) : members.length ===
-                          0 ? (
-                          <div className="p-4 text-center text-xs text-white/40">
-                            No eligible active members found.
-                          </div>
-                        ) : (
-                          members.map(
-                            (item) => {
-                              const itemId =
-                                item._id;
-
-                              if (
-                                typeof itemId !==
-                                "string"
-                              ) {
-                                return null;
-                              }
-
-                              return (
-                                <button
-                                  key={
-                                    itemId
-                                  }
-                                  type="button"
-                                  onClick={() =>
-                                    handleSelectMember(
-                                      item,
-                                    )
-                                  }
-                                  className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-white/5"
-                                >
-                                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-300">
-                                    <UserRound
-                                      size={
-                                        16
-                                      }
-                                    />
-                                  </div>
-
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate text-sm font-medium text-white">
-                                      {getMemberFullName(
-                                        item,
-                                      )}
-                                    </p>
-
-                                    <p className="mt-0.5 truncate text-xs text-white/40">
-                                      {
-                                        item.membershipNumber
-                                      }
-
-                                      {item.phone
-                                        ? ` • ${item.phone}`
-                                        : ""}
-                                    </p>
-                                  </div>
-
-                                  <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] capitalize text-emerald-300">
-                                    eligible
-                                  </span>
-                                </button>
-                              );
-                            },
-                          )
-                        )}
-                      </div>
-                    )}
-                </div>
-              ) : (
-                <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.06] p-3.5">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-300">
-                    <UserRound size={18} />
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-white">
-                      {getMemberFullName(
-                        member,
-                      )}
-                    </p>
-
-                    <p className="mt-0.5 text-xs text-white/45">
-                      {
-                        member.membershipNumber
-                      }
-
-                      {member.phone
-                        ? ` • ${member.phone}`
-                        : ""}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="hidden items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-300 sm:flex">
-                      <CheckCircle2
-                        size={11}
-                      />
-
-                      {isEditMode
-                        ? "Borrower"
-                        : "Eligible"}
-                    </span>
-
-                    {!isEditMode &&
-                      !memberId?.trim() && (
-                        <button
-                          type="button"
-                          onClick={
-                            clearMember
-                          }
-                          disabled={
-                            submitting
-                          }
-                          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 text-white/40 hover:bg-white/10 hover:text-white"
-                          aria-label="Change member"
-                        >
-                          <X size={15} />
-                        </button>
-                      )}
-                  </div>
-                </div>
-              )}
-
-              {error &&
-                errorSection ===
-                  "member" && (
-                  <SectionError>
-                    {error}
-                  </SectionError>
-                )}
-
-              {member && (
-                <div className="mt-3 rounded-xl bg-black/20 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wide text-white/35">
-                        Fixed savings
-                      </p>
-
-                      {loadingSavings ? (
-                        <div className="mt-1 flex items-center gap-2 text-xs text-white/40">
-                          <Loader2
-                            size={13}
-                            className="animate-spin"
-                          />
-
-                          Loading balance...
-                        </div>
-                      ) : savingsAccount ? (
-                        <p className="mt-1 text-sm font-semibold text-white">
-                          {formatKES(
-                            savingsBalance,
-                          )}
-                        </p>
-                      ) : (
-                        <p className="mt-1 text-sm font-medium text-red-300">
-                          No active account
-                        </p>
-                      )}
-                    </div>
-
-                    {savingsAccount && (
-                      <div className="text-right">
-                        <p className="text-[10px] uppercase tracking-wide text-white/35">
-                          Account
-                        </p>
-
-                        <p className="mt-1 text-xs text-white/55">
-                          {savingsAccount.accountNumber ||
-                            "—"}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {error &&
-                errorSection ===
-                  "savings" && (
-                  <SectionError>
-                    {error}
-                  </SectionError>
-                )}
-            </section>
-
-            {/* =================================================
-                LOAN TYPE
-            ================================================= */}
-
-            <section
-              className={`rounded-2xl border bg-white/[0.025] p-4 ${
-                errorSection ===
-                "type"
-                  ? "border-red-500/25"
-                  : "border-white/10"
-              }`}
-            >
-              <div className="mb-4">
-                <h3 className="text-sm font-semibold text-white">
-                  Loan type
-                </h3>
-
-                <p className="mt-1 text-xs text-white/40">
-                  Choose the loan product to use.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  disabled={
-                    submitting ||
-                    Boolean(
-                      settings &&
-                        !settings.regularLoansEnabled,
-                    )
-                  }
-                  onClick={() =>
-                    handleTypeChange(
-                      "regular",
-                    )
-                  }
-                  className={`rounded-2xl border p-4 text-left transition ${
-                    type === "regular"
-                      ? "border-emerald-500/40 bg-emerald-500/10"
-                      : "border-white/10 bg-black/20 hover:bg-white/[0.04]"
-                  } disabled:cursor-not-allowed disabled:opacity-40`}
-                >
-                  <p
-                    className={`text-sm font-semibold ${
-                      type === "regular"
-                        ? "text-emerald-300"
-                        : "text-white"
-                    }`}
-                  >
-                    Regular
-                  </p>
-
-                  <p className="mt-1 text-[11px] leading-4 text-white/40">
-                    Based on fixed savings eligibility.
-                  </p>
-
-                  {settings && (
-                    <p className="mt-3 text-xs text-white/60">
-                      Interest{" "}
-                      <span className="font-semibold text-white">
-                        {(
-                          settings.regularInterestRate *
-                          100
-                        ).toFixed(0)}
-                        %
-                      </span>
-                    </p>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={
-                    submitting ||
-                    Boolean(
-                      settings &&
-                        !settings.emergencyLoansEnabled,
-                    )
-                  }
-                  onClick={() =>
-                    handleTypeChange(
-                      "emergency",
-                    )
-                  }
-                  className={`rounded-2xl border p-4 text-left transition ${
-                    type === "emergency"
-                      ? "border-amber-500/40 bg-amber-500/10"
-                      : "border-white/10 bg-black/20 hover:bg-white/[0.04]"
-                  } disabled:cursor-not-allowed disabled:opacity-40`}
-                >
-                  <p
-                    className={`text-sm font-semibold ${
-                      type === "emergency"
-                        ? "text-amber-300"
-                        : "text-white"
-                    }`}
-                  >
-                    Emergency
-                  </p>
-
-                  <p className="mt-1 text-[11px] leading-4 text-white/40">
-                    Manually entered emergency loan amount.
-                  </p>
-
-                  {settings && (
-                    <p className="mt-3 text-xs text-white/60">
-                      Interest{" "}
-                      <span className="font-semibold text-white">
-                        {(
-                          settings.emergencyInterestRate *
-                          100
-                        ).toFixed(0)}
-                        %
-                      </span>
-                    </p>
-                  )}
-                </button>
-              </div>
-
-              {error &&
-                errorSection ===
-                  "type" && (
-                  <SectionError>
-                    {error}
-                  </SectionError>
-                )}
-
-              {type === "regular" &&
-                settings &&
-                member && (
-                  <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-                    <div className="flex items-center justify-between gap-3 text-xs">
-                      <span className="text-white/45">
-                        Minimum savings
-                      </span>
-
-                      <span className="font-medium text-white">
-                        {formatKES(
-                          settings.regularMinimumSavings,
-                        )}
-                      </span>
-                    </div>
-
-                    <div className="mt-2 flex items-center justify-between gap-3 text-xs">
-                      <span className="text-white/45">
-                        Maximum regular loan
-                      </span>
-
-                      <span className="font-semibold text-emerald-300">
-                        {formatKES(
-                          maximumRegularLoan,
-                        )}
-                      </span>
-                    </div>
-
-                    {belowRegularMinimum && (
-                      <div className="mt-3 flex items-start gap-2 text-[11px] leading-4 text-amber-300">
-                        <AlertCircle
-                          size={14}
-                          className="mt-0.5 shrink-0"
-                        />
-
-                        <span>
-                          This member's savings are below the configured regular-loan minimum.
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-            </section>
-
-            {/* =================================================
-                LOAN TERMS
-            ================================================= */}
-
-            <section
-              className={`rounded-2xl border bg-white/[0.025] p-4 ${
-                errorSection ===
-                  "principal" ||
-                errorSection ===
-                  "dates"
-                  ? "border-red-500/25"
-                  : "border-white/10"
-              }`}
-            >
-              <div className="mb-4">
-                <h3 className="text-sm font-semibold text-white">
-                  Loan terms
-                </h3>
-
-                <p className="mt-1 text-xs text-white/40">
-                  {isEditMode
-                    ? "Update the editable principal, installment and repayment schedule."
-                    : "Enter the principal, repayment installment and repayment schedule."}
-                </p>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                {/* PRINCIPAL */}
-
-                <label className="block">
-                  <span className="mb-1.5 block text-xs font-medium text-white/55">
-                    Principal
-                  </span>
-
-                  <div
-                    className={`flex items-center rounded-xl border bg-black/20 px-3 ${
-                      errorSection ===
-                      "principal"
-                        ? "border-red-500/30"
-                        : "border-white/10"
-                    }`}
-                  >
-                    <CircleDollarSign
-                      size={16}
-                      className="mr-2 shrink-0 text-white/30"
-                    />
-
-                    <input
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      inputMode="decimal"
-                      value={
-                        principal
-                      }
-                      onChange={(
-                        event,
-                      ) =>
-                        handlePrincipalChange(
-                          event.target
-                            .value,
-                        )
-                      }
-                      placeholder="0.00"
-                      disabled={
-                        submitting
-                      }
-                      className="h-11 w-full bg-transparent text-sm text-white outline-none placeholder:text-white/25"
-                    />
-                  </div>
-
-                  {error &&
-                    errorSection ===
-                      "principal" && (
-                      <FieldError>
-                        {error}
-                      </FieldError>
-                    )}
-                </label>
-
-                {/* REPAYMENT INSTALLMENT */}
-
-                <div className="space-y-2">
-                  <label
-                    htmlFor="installment-amount"
-                    className="text-sm font-medium text-white/80"
-                  >
-                    Repayment installment
-                  </label>
-
-                  <input
-                    id="installment-amount"
-                    type="number"
-                    min="1"
-                    step="0.01"
-                    inputMode="decimal"
-                    value={
-                      installmentAmount
-                    }
-                    onChange={(
-                      event,
-                    ) =>
-                      handleInstallmentChange(
-                        event.target
-                          .value,
-                      )
-                    }
-                    placeholder="e.g. 5,000"
-                    disabled={
-                      submitting
-                    }
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-white/30 focus:border-sky-400/50 focus:ring-2 focus:ring-sky-400/20"
-                  />
-
-                  <p className="text-xs text-white/40">
-                    Amount the member is expected to pay every repayment cycle.
-                  </p>
-
-                  {parsedInstallment !==
-                    null &&
-                    parsedPrincipal !==
-                      null &&
-                    parsedInstallment >
-                      parsedPrincipal && (
-                      <FieldError>
-                        Repayment installment cannot exceed the loan amount.
-                      </FieldError>
-                    )}
-                </div>
-
-                {/* DISBURSEMENT */}
-
-                <label className="block">
-                  <span className="mb-1.5 block text-xs font-medium text-white/55">
-                    Disbursement date
-                  </span>
-
-                  <div
-                    className={`flex items-center rounded-xl border bg-black/20 px-3 ${
-                      errorSection ===
-                      "dates"
-                        ? "border-red-500/30"
-                        : "border-white/10"
-                    }`}
-                  >
-                    <CalendarDays
-                      size={16}
-                      className="mr-2 shrink-0 text-white/30"
-                    />
-
-                    <input
-                      type="date"
-                      value={
-                        disbursementDate
-                      }
-                      onChange={(
-                        event,
-                      ) =>
-                        handleDisbursementDateChange(
-                          event.target
-                            .value,
-                        )
-                      }
-                      disabled={
-                        submitting
-                      }
-                      className="h-11 w-full bg-transparent text-sm text-white outline-none"
-                    />
-                  </div>
-                </label>
-
-                {/* REPAYMENT */}
-
-                <label className="block">
-                  <span className="mb-1.5 block text-xs font-medium text-white/55">
-                    Repayment date
-                  </span>
-
-                  <div
-                    className={`flex items-center rounded-xl border bg-black/20 px-3 ${
-                      errorSection ===
-                      "dates"
-                        ? "border-red-500/30"
-                        : "border-white/10"
-                    }`}
-                  >
-                    <CalendarDays
-                      size={16}
-                      className="mr-2 shrink-0 text-emerald-400/60"
-                    />
-
-                    <input
-                      type="date"
-                      value={
-                        repaymentDate
-                      }
-                      min={
-                        disbursementDate ||
-                        undefined
-                      }
-                      onChange={(
-                        event,
-                      ) =>
-                        handleRepaymentDateChange(
-                          event.target
-                            .value,
-                        )
-                      }
-                      disabled={
-                        submitting
-                      }
-                      className="h-11 w-full bg-transparent text-sm text-white outline-none"
-                    />
-                  </div>
-
-                  <p className="mt-1.5 text-[10px] leading-4 text-white/30">
-                    Defaults to the configured repayment cycle from disbursement.
-                  </p>
-                </label>
-
-                {/* END DATE */}
-
-                <label className="block">
-                  <span className="mb-1.5 block text-xs font-medium text-white/55">
-                    Loan end date
-                  </span>
-
-                  <div
-                    className={`flex items-center rounded-xl border bg-black/20 px-3 ${
-                      errorSection ===
-                      "dates"
-                        ? "border-red-500/30"
-                        : "border-white/10"
-                    }`}
-                  >
-                    <CalendarDays
-                      size={16}
-                      className="mr-2 shrink-0 text-amber-400/60"
-                    />
-
-                    <input
-                      type="date"
-                      value={
-                        endDate
-                      }
-                      min={
-                        repaymentDate ||
-                        disbursementDate ||
-                        undefined
-                      }
-                      onChange={(
-                        event,
-                      ) =>
-                        handleEndDateChange(
-                          event.target
-                            .value,
-                        )
-                      }
-                      disabled={
-                        submitting
-                      }
-                      className="h-11 w-full bg-transparent text-sm text-white outline-none"
-                    />
-                  </div>
-
-                  <p className="mt-1.5 text-[10px] leading-4 text-white/30">
-                    The final date by which the loan should be completed.
-                  </p>
-                </label>
-              </div>
-
-              {error &&
-                errorSection ===
-                  "dates" && (
-                  <SectionError>
-                    {error}
-                  </SectionError>
-                )}
-
-              {/* CONFIGURED TERMS */}
-
-              {settings && (
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                    <p className="text-[9px] uppercase tracking-wide text-white/30">
-                      Repayment cycle
-                    </p>
-
-                    <p className="mt-1 text-sm font-semibold text-white">
-                      {
-                        settings.repaymentCycleDays
-                      }{" "}
-                      days
-                    </p>
-
-                    <p className="mt-1 text-[10px] leading-4 text-white/30">
-                      Measured from the disbursement date.
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                    <p className="text-[9px] uppercase tracking-wide text-white/30">
-                      Fine rate
-                    </p>
-
-                    <p className="mt-1 text-sm font-semibold text-white">
-                      {(
-                        settings.fineRate *
-                        100
-                      ).toFixed(2)}
-                      %
-                    </p>
-
-                    <p className="mt-1 text-[10px] leading-4 text-white/30">
-                      Applied once per completed repayment cycle to the unpaid installment amount.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* PREVIEW */}
-
-              {parsedPrincipal !==
-                null && (
-                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-6">
-                  <div className="rounded-xl bg-black/20 p-3">
-                    <p className="text-[9px] uppercase tracking-wide text-white/30">
-                      Principal
-                    </p>
-
-                    <p className="mt-1 text-xs font-semibold text-white">
-                      {formatKES(
-                        parsedPrincipal,
-                      )}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl bg-black/20 p-3">
-                    <p className="text-[9px] uppercase tracking-wide text-white/30">
-                      Installment
-                    </p>
-
-                    <p className="mt-1 text-xs font-semibold text-sky-300">
-                      {parsedInstallment !==
-                      null
-                        ? formatKES(
-                            parsedInstallment,
-                          )
-                        : "—"}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl bg-black/20 p-3">
-                    <p className="text-[9px] uppercase tracking-wide text-white/30">
-                      Interest
-                    </p>
-
-                    <p className="mt-1 text-xs font-semibold text-white">
-                      {formatKES(
-                        calculatedInterest,
-                      )}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl bg-black/20 p-3">
-                    <p className="text-[9px] uppercase tracking-wide text-white/30">
-                      Total due
-                    </p>
-
-                    <p className="mt-1 text-xs font-semibold text-white">
-                      {formatKES(
-                        calculatedTotalDue,
-                      )}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl bg-black/20 p-3">
-                    <p className="text-[9px] uppercase tracking-wide text-white/30">
-                      Repayment
-                    </p>
-
-                    <p className="mt-1 text-xs font-semibold text-white">
-                      {repaymentDate ||
-                        "—"}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl bg-black/20 p-3">
-                    <p className="text-[9px] uppercase tracking-wide text-white/30">
-                      End date
-                    </p>
-
-                    <p className="mt-1 text-xs font-semibold text-white">
-                      {endDate ||
-                        "—"}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* REGULAR LIMIT */}
-
-              {!isEditMode &&
-                type === "regular" &&
-                exceedsRegularLimit && (
-                  <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-200">
-                    <AlertCircle
-                      size={15}
-                      className="mt-0.5 shrink-0"
-                    />
-
-                    <span>
-                      Requested amount exceeds the member's current regular-loan limit of{" "}
-                      <strong>
-                        {formatKES(
-                          maximumRegularLoan,
-                        )}
-                      </strong>
-                      .
-                    </span>
-                  </div>
-                )}
-            </section>
-
-            {/* =================================================
-                SETTINGS ERROR
-            ================================================= */}
-
-            {error &&
-              errorSection ===
-                "settings" && (
-                <SectionError>
-                  {error}
-                </SectionError>
-              )}
-
-            {/* =================================================
-                GUARANTOR
-            ================================================= */}
-
-            <section
-              className={`rounded-2xl border bg-white/[0.025] p-4 ${
-                errorSection ===
-                "guarantor"
-                  ? "border-red-500/25"
-                  : "border-white/10"
-              }`}
-            >
-              <div className="mb-4">
-                <h3 className="text-sm font-semibold text-white">
-                  Guarantor
-                </h3>
-
-                <p className="mt-1 text-xs text-white/40">
-                  Guarantor details are stored as part of the loan record.
-                </p>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                {/* NAME */}
-
-                <label className="block sm:col-span-2">
-                  <span className="mb-1.5 block text-xs font-medium text-white/55">
-                    Full name
-                  </span>
-
-                  <input
-                    type="text"
-                    value={
-                      guarantorName
-                    }
-                    onChange={(
-                      event,
-                    ) =>
-                      handleGuarantorNameChange(
-                        event.target
-                          .value,
-                      )
-                    }
-                    placeholder="Guarantor full name"
-                    disabled={
-                      submitting
-                    }
-                    className={`h-11 w-full rounded-xl border bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-white/20 ${
-                      errorSection ===
-                      "guarantor"
-                        ? "border-red-500/30"
-                        : "border-white/10"
-                    }`}
-                  />
-                </label>
-
-                {/* PHONE */}
-
-                <label className="block">
-                  <span className="mb-1.5 block text-xs font-medium text-white/55">
-                    Phone number
-                  </span>
-
-                  <input
-                    type="tel"
-                    value={
-                      guarantorPhone
-                    }
-                    onChange={(
-                      event,
-                    ) =>
-                      handleGuarantorPhoneChange(
-                        event.target
-                          .value,
-                      )
-                    }
-                    placeholder="07xx xxx xxx"
-                    disabled={
-                      submitting
-                    }
-                    className={`h-11 w-full rounded-xl border bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-white/20 ${
-                      errorSection ===
-                      "guarantor"
-                        ? "border-red-500/30"
-                        : "border-white/10"
-                    }`}
-                  />
-                </label>
-
-                {/* ID */}
-
-                <label className="block">
-                  <span className="mb-1.5 block text-xs font-medium text-white/55">
-                    National ID
-                    <span className="ml-1 text-white/25">
-                      optional
-                    </span>
-                  </span>
-
-                  <input
-                    type="text"
-                    value={
-                      guarantorIdNumber
-                    }
-                    onChange={(
-                      event,
-                    ) =>
-                      handleGuarantorIdChange(
-                        event.target
-                          .value,
-                      )
-                    }
-                    placeholder="Guarantor ID number"
-                    disabled={
-                      submitting
-                    }
-                    className="h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-white/20"
-                  />
-                </label>
-              </div>
-
-              {error &&
-                errorSection ===
-                  "guarantor" && (
-                  <SectionError>
-                    {error}
-                  </SectionError>
-                )}
-            </section>
-
-            {/* =================================================
-                FINAL SUMMARY
-            ================================================= */}
-
-            {parsedPrincipal !==
-              null && (
-              <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.05] p-4">
-                <div className="flex items-center gap-2">
-                  <CircleDollarSign
-                    size={16}
-                    className="text-emerald-300"
-                  />
-
-                  <h3 className="text-sm font-semibold text-white">
-                    Loan summary
-                  </h3>
-                </div>
-
-                <div className="mt-3 space-y-2 text-xs">
-                  <div className="flex justify-between gap-4">
-                    <span className="text-white/45">
-                      Member
-                    </span>
-
-                    <span className="text-right font-medium text-white">
-                      {member
-                        ? getMemberFullName(
-                            member,
-                          )
-                        : "—"}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between gap-4">
-                    <span className="text-white/45">
-                      Loan type
-                    </span>
-
-                    <span className="font-medium capitalize text-white">
-                      {type}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between gap-4">
-                    <span className="text-white/45">
-                      Principal
-                    </span>
-
-                    <span className="font-semibold text-white">
-                      {formatKES(
-                        parsedPrincipal,
-                      )}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between gap-4">
-                    <span className="text-white/45">
-                      Repayment installment
-                    </span>
-
-                    <span className="font-semibold text-sky-300">
-                      {parsedInstallment !==
-                      null
-                        ? formatKES(
-                            parsedInstallment,
-                          )
-                        : "—"}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between gap-4">
-                    <span className="text-white/45">
-                      Interest
-                    </span>
-
-                    <span className="text-white">
-                      {formatKES(
-                        calculatedInterest,
-                      )}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between gap-4">
-                    <span className="text-white/45">
-                      Repayment date
-                    </span>
-
-                    <span className="font-medium text-white">
-                      {repaymentDate ||
-                        "—"}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between gap-4">
-                    <span className="text-white/45">
-                      Loan end date
-                    </span>
-
-                    <span className="font-medium text-white">
-                      {endDate ||
-                        "—"}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between gap-4">
-                    <span className="text-white/45">
-                      Repayment cycle
-                    </span>
-
-                    <span className="font-medium text-white">
-                      {settings
-                        ? `${settings.repaymentCycleDays} days`
-                        : "—"}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between gap-4">
-                    <span className="text-white/45">
-                      Fine rate
-                    </span>
-
-                    <span className="font-medium text-white">
-                      {settings
-                        ? `${(
-                            settings.fineRate *
-                            100
-                          ).toFixed(2)}%`
-                        : "—"}
-                    </span>
-                  </div>
-
-                  <div className="border-t border-white/10 pt-2">
-                    <div className="flex justify-between gap-4">
-                      <span className="font-medium text-white/60">
-                        Initial total due
-                      </span>
-
-                      <span className="text-sm font-bold text-emerald-300">
-                        {formatKES(
-                          calculatedTotalDue,
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </section>
-            )}
-          </div>
+          <X size={18} />
+        </button>
+      </div>
+
+      {/* =================================================
+          FORM
+      ================================================= */}
+
+      <form
+        onSubmit={handleSubmit}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
+        <div className="space-y-5 p-5 sm:p-6">
 
           {/* =================================================
-              FOOTER
+              SYSTEM ERROR
           ================================================= */}
 
-          <div className="sticky bottom-0 border-t border-white/10 bg-[#0b0f0e]/95 px-5 py-4 backdrop-blur sm:px-6">
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={
-                  handleClose
-                }
-                disabled={
-                  submitting
-                }
-                className="h-11 rounded-xl border border-white/10 bg-white/[0.03] px-5 text-sm font-medium text-white/60 transition hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Cancel
-              </button>
+          {error && errorSection === "general" && (
+            <div
+              role="alert"
+              className="flex items-start gap-3 rounded-2xl border border-red-400/20 bg-red-500/[0.07] px-4 py-3"
+            >
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-red-500/10">
+                <AlertCircle
+                  size={15}
+                  className="text-red-400"
+                />
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-red-200">
+                  {isEditMode
+                    ? "Unable to update loan"
+                    : "Unable to create loan"}
+                </p>
+
+                <p className="mt-0.5 text-xs leading-5 text-red-200/70">
+                  {error}
+                </p>
+              </div>
 
               <button
-                type="submit"
-                disabled={
-                  submitting ||
-                  loadingSettings
-                }
-                className="flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-6 text-sm font-semibold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+                type="button"
+                onClick={clearError}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-red-300/50 transition hover:bg-red-500/10 hover:text-red-200"
+                aria-label="Dismiss error"
               >
-                {submitting ? (
-                  <>
+                <X size={14} />
+              </button>
+            </div>
+          )}
+
+          {/* =================================================
+              MEMBER
+          ================================================= */}
+
+          <section
+            className={`rounded-2xl border bg-white/[0.025] p-4 ${
+              errorSection === "member"
+                ? "border-red-500/25"
+                : "border-white/10"
+            }`}
+          >
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-white">
+                Member
+              </h3>
+
+              <p className="mt-1 text-xs text-white/40">
+                {isEditMode
+                  ? "The borrower cannot be changed after the loan is created."
+                  : "Select the active member receiving this loan."}
+              </p>
+            </div>
+
+            {/* =================================================
+                MEMBER SEARCH / SELECTED MEMBER
+            ================================================= */}
+
+            {!member ? (
+              <div className="relative">
+                <div
+                  className={`flex items-center gap-2 rounded-xl border bg-black/20 px-3 ${
+                    errorSection === "member"
+                      ? "border-red-500/30"
+                      : "border-white/10"
+                  }`}
+                >
+                  <Search
+                    size={16}
+                    className="shrink-0 text-white/30"
+                  />
+
+                  <input
+                    type="search"
+                    value={memberSearch}
+                    onChange={(event) => {
+                      setMemberSearch(event.target.value);
+                      clearSectionError("member");
+                    }}
+                    placeholder="Search member first and middle name"
+                    disabled={
+                      submitting ||
+                      isEditMode ||
+                      Boolean(memberId?.trim())
+                    }
+                    className="h-11 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/25"
+                  />
+
+                  {loadingMembers && (
                     <Loader2
                       size={16}
+                      className="animate-spin text-white/40"
+                    />
+                  )}
+                </div>
+
+                {memberSearch.trim() &&
+                  !isEditMode &&
+                  !memberId?.trim() && (
+                    <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-[#111816] p-1 shadow-2xl">
+                      {loadingMembers ? (
+                        <div className="p-4 text-center text-xs text-white/40">
+                          Searching members...
+                        </div>
+                      ) : members.length === 0 ? (
+                        <div className="p-4 text-center text-xs text-white/40">
+                          No eligible active members found.
+                        </div>
+                      ) : (
+                        members.map((item) => {
+                          const itemId = item._id;
+
+                          if (
+                            typeof itemId !== "string"
+                          ) {
+                            return null;
+                          }
+
+                          return (
+                            <button
+                              key={itemId}
+                              type="button"
+                              onClick={() =>
+                                handleSelectMember(item)
+                              }
+                              className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-white/5"
+                            >
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-300">
+                                <UserRound size={16} />
+                              </div>
+
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-medium text-white">
+                                  {getMemberFullName(item)}
+                                </p>
+
+                                <p className="mt-0.5 truncate text-xs text-white/40">
+                                  {item.membershipNumber}
+
+                                  {item.phone
+                                    ? ` • ${item.phone}`
+                                    : ""}
+                                </p>
+                              </div>
+
+                              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] capitalize text-emerald-300">
+                                eligible
+                              </span>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.06] p-3.5">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-300">
+                  <UserRound size={18} />
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-white">
+                    {getMemberFullName(member)}
+                  </p>
+
+                  <p className="mt-0.5 text-xs text-white/45">
+                    {member.membershipNumber}
+
+                    {member.phone
+                      ? ` • ${member.phone}`
+                      : ""}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="hidden items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-300 sm:flex">
+                    <CheckCircle2 size={11} />
+
+                    {isEditMode
+                      ? "Borrower"
+                      : "Eligible"}
+                  </span>
+
+                  {!isEditMode &&
+                    !memberId?.trim() && (
+                      <button
+                        type="button"
+                        onClick={clearMember}
+                        disabled={submitting}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 text-white/40 hover:bg-white/10 hover:text-white"
+                        aria-label="Change member"
+                      >
+                        <X size={15} />
+                      </button>
+                    )}
+                </div>
+              </div>
+            )}
+
+            {error && errorSection === "member" && (
+              <SectionError>
+                {error}
+              </SectionError>
+            )}
+
+            {/* =================================================
+                EXISTING GUARANTOR COMMITMENTS
+                MOVED DIRECTLY UNDER MEMBER SELECTION
+            ================================================= */}
+
+            {!isEditMode && member && (
+              <div className="mt-3">
+                {checkingGuarantees ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-xs text-white/40">
+                    <Loader2
+                      size={14}
                       className="animate-spin"
                     />
 
-                    {isEditMode
-                      ? "Updating loan..."
-                      : "Creating loan..."}
-                  </>
+                    Checking existing guarantor commitments...
+                  </div>
+                ) : existingGuarantees.length > 0 ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold text-amber-300">
+                          Existing guarantor commitments
+                        </p>
+
+                        <p className="mt-0.5 text-[11px] leading-4 text-white/40">
+                          This member is already listed as a
+                          guarantor on the following loan
+                          {existingGuarantees.length === 1
+                            ? ""
+                            : "s"}.
+                        </p>
+                      </div>
+
+                      <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-300">
+                        {existingGuarantees.length}{" "}
+                        {existingGuarantees.length === 1
+                          ? "loan"
+                          : "loans"}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {existingGuarantees.map(
+                        (guarantee) => {
+                          const decision =
+                            guaranteeDecision[
+                              guarantee.loanId
+                            ];
+
+                          return (
+                            <div
+                              key={guarantee.loanId}
+                              className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-3"
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-300">
+                                  <CircleDollarSign
+                                    size={16}
+                                  />
+                                </div>
+
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-sm font-semibold text-white">
+                                      {guarantee.loanNumber}
+                                    </p>
+
+                                    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] capitalize text-white/50">
+                                      {guarantee.status ||
+                                        "unknown"}
+                                    </span>
+                                  </div>
+
+                                  <p className="mt-1 text-xs text-white/45">
+                                    Borrower
+                                  </p>
+
+                                  <p className="text-sm font-medium text-white">
+                                    {guarantee.borrowerName ||
+                                      "Unknown member"}
+                                  </p>
+
+                                  <div className="mt-2">
+                                    <p className="text-[10px] uppercase tracking-wide text-white/30">
+                                      Principal
+                                    </p>
+
+                                    <p className="mt-0.5 text-sm font-semibold text-white">
+                                      {formatKES(
+                                        guarantee.principal,
+                                      )}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="mt-3 flex gap-2 border-t border-white/10 pt-3">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setGuaranteeDecision(
+                                      (current) => ({
+                                        ...current,
+                                        [guarantee.loanId]:
+                                          "allow",
+                                      }),
+                                    )
+                                  }
+                                  className={`flex-1 rounded-xl border px-3 py-2 text-xs font-medium transition ${
+                                    decision === "allow"
+                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                      : "border-white/10 bg-white/[0.03] text-white/50 hover:bg-white/[0.06] hover:text-white"
+                                  }`}
+                                >
+                                  Allow
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setGuaranteeDecision(
+                                      (current) => ({
+                                        ...current,
+                                        [guarantee.loanId]:
+                                          "cancel",
+                                      }),
+                                    );
+
+                                    /*
+                                     * Cancel means:
+                                     * abandon this member selection
+                                     * and return to member search.
+                                     *
+                                     * It does NOT modify the
+                                     * existing guaranteed loan.
+                                     */
+                                    setMember(null);
+                                    setMemberSearch("");
+                                    setMembers([]);
+                                    setExistingGuarantees([]);
+                                    setCheckingGuarantees(false);
+                                    clearError();
+                                  }}
+                                  className={`flex-1 rounded-xl border px-3 py-2 text-xs font-medium transition ${
+                                    decision === "cancel"
+                                      ? "border-red-500/30 bg-red-500/10 text-red-300"
+                                      : "border-white/10 bg-white/[0.03] text-white/50 hover:bg-white/[0.06] hover:text-white"
+                                  }`}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        },
+                      )}
+                    </div>
+                  </div>
                 ) : (
-                  <>
+                  <div className="flex items-start gap-2 rounded-xl border border-emerald-500/15 bg-emerald-500/[0.04] px-3 py-3">
                     <CheckCircle2
-                      size={16}
+                      size={14}
+                      className="mt-0.5 shrink-0 text-emerald-400"
                     />
 
-                    {isEditMode
-                      ? "Update Loan"
-                      : "Create Loan"}
-                  </>
+                    <div>
+                      <p className="text-xs font-medium text-emerald-300">
+                        No existing guarantor commitments
+                      </p>
+
+                      <p className="mt-0.5 text-[11px] leading-4 text-white/35">
+                        This member is not currently listed as
+                        a guarantor on another pending or active
+                        loan.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* =================================================
+                FIXED SAVINGS
+            ================================================= */}
+
+            {member && (
+              <div className="mt-3 rounded-xl bg-black/20 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-white/35">
+                      Fixed savings
+                    </p>
+
+                    {loadingSavings ? (
+                      <div className="mt-1 flex items-center gap-2 text-xs text-white/40">
+                        <Loader2
+                          size={13}
+                          className="animate-spin"
+                        />
+
+                        Loading balance...
+                      </div>
+                    ) : savingsAccount ? (
+                      <p className="mt-1 text-sm font-semibold text-white">
+                        {formatKES(savingsBalance)}
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-sm font-medium text-red-300">
+                        No active account
+                      </p>
+                    )}
+                  </div>
+
+                  {savingsAccount && (
+                    <div className="text-right">
+                      <p className="text-[10px] uppercase tracking-wide text-white/35">
+                        Account
+                      </p>
+
+                      <p className="mt-1 text-xs text-white/55">
+                        {savingsAccount.accountNumber ||
+                          "—"}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {error && errorSection === "savings" && (
+              <SectionError>
+                {error}
+              </SectionError>
+            )}
+          </section>
+
+          {/* =================================================
+              LOAN TYPE
+          ================================================= */}
+
+          <section
+            className={`rounded-2xl border bg-white/[0.025] p-4 ${
+              errorSection === "type"
+                ? "border-red-500/25"
+                : "border-white/10"
+            }`}
+          >
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-white">
+                Loan type
+              </h3>
+
+              <p className="mt-1 text-xs text-white/40">
+                Choose the loan product to use.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                disabled={
+                  submitting ||
+                  Boolean(
+                    settings &&
+                      !settings.regularLoansEnabled,
+                  )
+                }
+                onClick={() =>
+                  handleTypeChange("regular")
+                }
+                className={`rounded-2xl border p-4 text-left transition ${
+                  type === "regular"
+                    ? "border-emerald-500/40 bg-emerald-500/10"
+                    : "border-white/10 bg-black/20 hover:bg-white/[0.04]"
+                } disabled:cursor-not-allowed disabled:opacity-40`}
+              >
+                <p
+                  className={`text-sm font-semibold ${
+                    type === "regular"
+                      ? "text-emerald-300"
+                      : "text-white"
+                  }`}
+                >
+                  Regular
+                </p>
+
+                <p className="mt-1 text-[11px] leading-4 text-white/40">
+                  Based on fixed savings eligibility.
+                </p>
+
+                {settings && (
+                  <p className="mt-3 text-xs text-white/60">
+                    Interest{" "}
+                    <span className="font-semibold text-white">
+                      {(
+                        settings.regularInterestRate *
+                        100
+                      ).toFixed(0)}
+                      %
+                    </span>
+                  </p>
+                )}
+              </button>
+
+              <button
+                type="button"
+                disabled={
+                  submitting ||
+                  Boolean(
+                    settings &&
+                      !settings.emergencyLoansEnabled,
+                  )
+                }
+                onClick={() =>
+                  handleTypeChange("emergency")
+                }
+                className={`rounded-2xl border p-4 text-left transition ${
+                  type === "emergency"
+                    ? "border-amber-500/40 bg-amber-500/10"
+                    : "border-white/10 bg-black/20 hover:bg-white/[0.04]"
+                } disabled:cursor-not-allowed disabled:opacity-40`}
+              >
+                <p
+                  className={`text-sm font-semibold ${
+                    type === "emergency"
+                      ? "text-amber-300"
+                      : "text-white"
+                  }`}
+                >
+                  Emergency
+                </p>
+
+                <p className="mt-1 text-[11px] leading-4 text-white/40">
+                  Manually entered emergency loan amount.
+                </p>
+
+                {settings && (
+                  <p className="mt-3 text-xs text-white/60">
+                    Interest{" "}
+                    <span className="font-semibold text-white">
+                      {(
+                        settings.emergencyInterestRate *
+                        100
+                      ).toFixed(0)}
+                      %
+                    </span>
+                  </p>
                 )}
               </button>
             </div>
+
+            {error && errorSection === "type" && (
+              <SectionError>
+                {error}
+              </SectionError>
+            )}
+
+            {type === "regular" &&
+              settings &&
+              member && (
+                <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <span className="text-white/45">
+                      Minimum savings
+                    </span>
+
+                    <span className="font-medium text-white">
+                      {formatKES(
+                        settings.regularMinimumSavings,
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="mt-2 flex items-center justify-between gap-3 text-xs">
+                    <span className="text-white/45">
+                      Maximum regular loan
+                    </span>
+
+                    <span className="font-semibold text-emerald-300">
+                      {formatKES(
+                        maximumRegularLoan,
+                      )}
+                    </span>
+                  </div>
+
+                  {belowRegularMinimum && (
+                    <div className="mt-3 flex items-start gap-2 text-[11px] leading-4 text-amber-300">
+                      <AlertCircle
+                        size={14}
+                        className="mt-0.5 shrink-0"
+                      />
+
+                      <span>
+                        This member's savings are below the configured regular-loan minimum.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+          </section>
+
+          {/* =================================================
+              LOAN TERMS
+          ================================================= */}
+
+          <section
+            className={`rounded-2xl border bg-white/[0.025] p-4 ${
+              errorSection === "principal" ||
+              errorSection === "dates"
+                ? "border-red-500/25"
+                : "border-white/10"
+            }`}
+          >
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-white">
+                Loan terms
+              </h3>
+
+              <p className="mt-1 text-xs text-white/40">
+                {isEditMode
+                  ? "Update the editable principal, installment and repayment schedule."
+                  : "Enter the principal, repayment installment and repayment schedule."}
+              </p>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              {/* PRINCIPAL */}
+
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-white/55">
+                  Principal
+                </span>
+
+                <div
+                  className={`flex items-center rounded-xl border bg-black/20 px-3 ${
+                    errorSection === "principal"
+                      ? "border-red-500/30"
+                      : "border-white/10"
+                  }`}
+                >
+                  <CircleDollarSign
+                    size={16}
+                    className="mr-2 shrink-0 text-white/30"
+                  />
+
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={principal}
+                    onChange={(event) =>
+                      handlePrincipalChange(
+                        event.target.value,
+                      )
+                    }
+                    placeholder="0.00"
+                    disabled={submitting}
+                    className="h-11 w-full bg-transparent text-sm text-white outline-none placeholder:text-white/25"
+                  />
+                </div>
+
+                {error &&
+                  errorSection ===
+                    "principal" && (
+                    <FieldError>
+                      {error}
+                    </FieldError>
+                  )}
+              </label>
+
+              {/* REPAYMENT INSTALLMENT */}
+
+              <div className="space-y-2">
+                <label
+                  htmlFor="installment-amount"
+                  className="text-sm font-medium text-white/80"
+                >
+                  Repayment installment
+                </label>
+
+                <input
+                  id="installment-amount"
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={installmentAmount}
+                  onChange={(event) =>
+                    handleInstallmentChange(
+                      event.target.value,
+                    )
+                  }
+                  placeholder="e.g. 5,000"
+                  disabled={submitting}
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-white/30 focus:border-sky-400/50 focus:ring-2 focus:ring-sky-400/20"
+                />
+
+                <p className="text-xs text-white/40">
+                  Amount the member is expected to pay every repayment cycle.
+                </p>
+
+                {parsedInstallment !== null &&
+                  parsedPrincipal !== null &&
+                  parsedInstallment >
+                    parsedPrincipal && (
+                    <FieldError>
+                      Repayment installment cannot exceed the loan amount.
+                    </FieldError>
+                  )}
+              </div>
+
+              {/* DISBURSEMENT */}
+
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-white/55">
+                  Disbursement date
+                </span>
+
+                <div
+                  className={`flex items-center rounded-xl border bg-black/20 px-3 ${
+                    errorSection === "dates"
+                      ? "border-red-500/30"
+                      : "border-white/10"
+                  }`}
+                >
+                  <CalendarDays
+                    size={16}
+                    className="mr-2 shrink-0 text-white/30"
+                  />
+
+                  <input
+                    type="date"
+                    value={disbursementDate}
+                    onChange={(event) =>
+                      handleDisbursementDateChange(
+                        event.target.value,
+                      )
+                    }
+                    disabled={submitting}
+                    className="h-11 w-full bg-transparent text-sm text-white outline-none"
+                  />
+                </div>
+              </label>
+
+              {/* REPAYMENT */}
+
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-white/55">
+                  Repayment date
+                </span>
+
+                <div
+                  className={`flex items-center rounded-xl border bg-black/20 px-3 ${
+                    errorSection === "dates"
+                      ? "border-red-500/30"
+                      : "border-white/10"
+                  }`}
+                >
+                  <CalendarDays
+                    size={16}
+                    className="mr-2 shrink-0 text-emerald-400/60"
+                  />
+
+                  <input
+                    type="date"
+                    value={repaymentDate}
+                    min={
+                      disbursementDate ||
+                      undefined
+                    }
+                    onChange={(event) =>
+                      handleRepaymentDateChange(
+                        event.target.value,
+                      )
+                    }
+                    disabled={submitting}
+                    className="h-11 w-full bg-transparent text-sm text-white outline-none"
+                  />
+                </div>
+
+                <p className="mt-1.5 text-[10px] leading-4 text-white/30">
+                  Defaults to the configured repayment cycle from disbursement.
+                </p>
+              </label>
+
+              {/* END DATE */}
+
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-white/55">
+                  Loan end date
+                </span>
+
+                <div
+                  className={`flex items-center rounded-xl border bg-black/20 px-3 ${
+                    errorSection === "dates"
+                      ? "border-red-500/30"
+                      : "border-white/10"
+                  }`}
+                >
+                  <CalendarDays
+                    size={16}
+                    className="mr-2 shrink-0 text-amber-400/60"
+                  />
+
+                  <input
+                    type="date"
+                    value={endDate}
+                    min={
+                      repaymentDate ||
+                      disbursementDate ||
+                      undefined
+                    }
+                    onChange={(event) =>
+                      handleEndDateChange(
+                        event.target.value,
+                      )
+                    }
+                    disabled={submitting}
+                    className="h-11 w-full bg-transparent text-sm text-white outline-none"
+                  />
+                </div>
+
+                <p className="mt-1.5 text-[10px] leading-4 text-white/30">
+                  The final date by which the loan should be completed.
+                </p>
+              </label>
+            </div>
+
+            {error && errorSection === "dates" && (
+              <SectionError>
+                {error}
+              </SectionError>
+            )}
+
+            {/* CONFIGURED TERMS */}
+
+            {settings && (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-[9px] uppercase tracking-wide text-white/30">
+                    Repayment cycle
+                  </p>
+
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {settings.repaymentCycleDays} days
+                  </p>
+
+                  <p className="mt-1 text-[10px] leading-4 text-white/30">
+                    Measured from the disbursement date.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-[9px] uppercase tracking-wide text-white/30">
+                    Fine rate
+                  </p>
+
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {(settings.fineRate * 100).toFixed(2)}%
+                  </p>
+
+                  <p className="mt-1 text-[10px] leading-4 text-white/30">
+                    Applied once per completed repayment cycle to the unpaid installment amount.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* PREVIEW */}
+
+            {parsedPrincipal !== null && (
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-6">
+                <div className="rounded-xl bg-black/20 p-3">
+                  <p className="text-[9px] uppercase tracking-wide text-white/30">
+                    Principal
+                  </p>
+
+                  <p className="mt-1 text-xs font-semibold text-white">
+                    {formatKES(parsedPrincipal)}
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-black/20 p-3">
+                  <p className="text-[9px] uppercase tracking-wide text-white/30">
+                    Installment
+                  </p>
+
+                  <p className="mt-1 text-xs font-semibold text-sky-300">
+                    {parsedInstallment !== null
+                      ? formatKES(parsedInstallment)
+                      : "—"}
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-black/20 p-3">
+                  <p className="text-[9px] uppercase tracking-wide text-white/30">
+                    Interest
+                  </p>
+
+                  <p className="mt-1 text-xs font-semibold text-white">
+                    {formatKES(calculatedInterest)}
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-black/20 p-3">
+                  <p className="text-[9px] uppercase tracking-wide text-white/30">
+                    Total due
+                  </p>
+
+                  <p className="mt-1 text-xs font-semibold text-white">
+                    {formatKES(calculatedTotalDue)}
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-black/20 p-3">
+                  <p className="text-[9px] uppercase tracking-wide text-white/30">
+                    Repayment
+                  </p>
+
+                  <p className="mt-1 text-xs font-semibold text-white">
+                    {repaymentDate || "—"}
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-black/20 p-3">
+                  <p className="text-[9px] uppercase tracking-wide text-white/30">
+                    End date
+                  </p>
+
+                  <p className="mt-1 text-xs font-semibold text-white">
+                    {endDate || "—"}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* REGULAR LIMIT */}
+
+            {!isEditMode &&
+              type === "regular" &&
+              exceedsRegularLimit && (
+                <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-200">
+                  <AlertCircle
+                    size={15}
+                    className="mt-0.5 shrink-0"
+                  />
+
+                  <span>
+                    Requested amount exceeds the member's current regular-loan limit of{" "}
+                    <strong>
+                      {formatKES(maximumRegularLoan)}
+                    </strong>
+                    .
+                  </span>
+                </div>
+              )}
+          </section>
+
+          {/* =================================================
+              SETTINGS ERROR
+          ================================================= */}
+
+          {error && errorSection === "settings" && (
+            <SectionError>
+              {error}
+            </SectionError>
+          )}
+
+          {/* =================================================
+              GUARANTOR
+          ================================================= */}
+
+          <section
+            className={`rounded-2xl border bg-white/[0.025] p-4 ${
+              errorSection === "guarantor"
+                ? "border-red-500/25"
+                : "border-white/10"
+            }`}
+          >
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-white">
+                Guarantor
+              </h3>
+
+              <p className="mt-1 text-xs text-white/40">
+                Guarantor details are stored as part of the loan record.
+              </p>
+            </div>
+
+            {/* =================================================
+                CURRENT LOAN GUARANTOR DETAILS
+            ================================================= */}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              {/* NAME */}
+
+              <label className="block sm:col-span-2">
+                <span className="mb-1.5 block text-xs font-medium text-white/55">
+                  Full name
+                </span>
+
+                <input
+                  type="text"
+                  value={guarantorName}
+                  onChange={(event) =>
+                    handleGuarantorNameChange(
+                      event.target.value,
+                    )
+                  }
+                  placeholder="Guarantor full name"
+                  disabled={submitting}
+                  className={`h-11 w-full rounded-xl border bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-white/20 ${
+                    errorSection === "guarantor"
+                      ? "border-red-500/30"
+                      : "border-white/10"
+                  }`}
+                />
+              </label>
+
+              {/* PHONE */}
+
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-white/55">
+                  Phone number
+                </span>
+
+                <input
+                  type="tel"
+                  value={guarantorPhone}
+                  onChange={(event) =>
+                    handleGuarantorPhoneChange(
+                      event.target.value,
+                    )
+                  }
+                  placeholder="07xx xxx xxx"
+                  disabled={submitting}
+                  className={`h-11 w-full rounded-xl border bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-white/20 ${
+                    errorSection === "guarantor"
+                      ? "border-red-500/30"
+                      : "border-white/10"
+                  }`}
+                />
+              </label>
+
+              {/* ID */}
+
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-white/55">
+                  National ID
+                  <span className="ml-1 text-white/25">
+                    optional
+                  </span>
+                </span>
+
+                <input
+                  type="text"
+                  value={guarantorIdNumber}
+                  onChange={(event) =>
+                    handleGuarantorIdChange(
+                      event.target.value,
+                    )
+                  }
+                  placeholder="Guarantor ID number"
+                  disabled={submitting}
+                  className="h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-white/20"
+                />
+              </label>
+            </div>
+
+            {error && errorSection === "guarantor" && (
+              <SectionError>
+                {error}
+              </SectionError>
+            )}
+          </section>
+
+          {/* =================================================
+              FINAL SUMMARY
+          ================================================= */}
+
+          {parsedPrincipal !== null && (
+            <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.05] p-4">
+              <div className="flex items-center gap-2">
+                <CircleDollarSign
+                  size={16}
+                  className="text-emerald-300"
+                />
+
+                <h3 className="text-sm font-semibold text-white">
+                  Loan summary
+                </h3>
+              </div>
+
+              <div className="mt-3 space-y-2 text-xs">
+                <div className="flex justify-between gap-4">
+                  <span className="text-white/45">
+                    Member
+                  </span>
+
+                  <span className="text-right font-medium text-white">
+                    {member
+                      ? getMemberFullName(member)
+                      : "—"}
+                  </span>
+                </div>
+
+                <div className="flex justify-between gap-4">
+                  <span className="text-white/45">
+                    Loan type
+                  </span>
+
+                  <span className="font-medium capitalize text-white">
+                    {type}
+                  </span>
+                </div>
+
+                <div className="flex justify-between gap-4">
+                  <span className="text-white/45">
+                    Principal
+                  </span>
+
+                  <span className="font-semibold text-white">
+                    {formatKES(parsedPrincipal)}
+                  </span>
+                </div>
+
+                <div className="flex justify-between gap-4">
+                  <span className="text-white/45">
+                    Repayment installment
+                  </span>
+
+                  <span className="font-semibold text-sky-300">
+                    {parsedInstallment !== null
+                      ? formatKES(parsedInstallment)
+                      : "—"}
+                  </span>
+                </div>
+
+                <div className="flex justify-between gap-4">
+                  <span className="text-white/45">
+                    Interest
+                  </span>
+
+                  <span className="text-white">
+                    {formatKES(calculatedInterest)}
+                  </span>
+                </div>
+
+                <div className="flex justify-between gap-4">
+                  <span className="text-white/45">
+                    Repayment date
+                  </span>
+
+                  <span className="font-medium text-white">
+                    {repaymentDate || "—"}
+                  </span>
+                </div>
+
+                <div className="flex justify-between gap-4">
+                  <span className="text-white/45">
+                    Loan end date
+                  </span>
+
+                  <span className="font-medium text-white">
+                    {endDate || "—"}
+                  </span>
+                </div>
+
+                <div className="flex justify-between gap-4">
+                  <span className="text-white/45">
+                    Repayment cycle
+                  </span>
+
+                  <span className="font-medium text-white">
+                    {settings
+                      ? `${settings.repaymentCycleDays} days`
+                      : "—"}
+                  </span>
+                </div>
+
+                <div className="flex justify-between gap-4">
+                  <span className="text-white/45">
+                    Fine rate
+                  </span>
+
+                  <span className="font-medium text-white">
+                    {settings
+                      ? `${(
+                          settings.fineRate * 100
+                        ).toFixed(2)}%`
+                      : "—"}
+                  </span>
+                </div>
+
+                <div className="border-t border-white/10 pt-2">
+                  <div className="flex justify-between gap-4">
+                    <span className="font-medium text-white/60">
+                      Initial total due
+                    </span>
+
+                    <span className="text-sm font-bold text-emerald-300">
+                      {formatKES(calculatedTotalDue)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+        </div>
+
+        {/* =================================================
+            FOOTER
+        ================================================= */}
+
+        <div className="sticky bottom-0 border-t border-white/10 bg-[#0b0f0e]/95 px-5 py-4 backdrop-blur sm:px-6">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={handleClose}
+              disabled={submitting}
+              className="h-11 rounded-xl border border-white/10 bg-white/[0.03] px-5 text-sm font-medium text-white/60 transition hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Cancel
+            </button>
+
+            <button
+              type="submit"
+              disabled={
+                submitting ||
+                loadingSettings
+              }
+              className="flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-6 text-sm font-semibold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {submitting ? (
+                <>
+                  <Loader2
+                    size={16}
+                    className="animate-spin"
+                  />
+
+                  {isEditMode
+                    ? "Updating loan..."
+                    : "Creating loan..."}
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 size={16} />
+
+                  {isEditMode
+                    ? "Update Loan"
+                    : "Create Loan"}
+                </>
+              )}
+            </button>
           </div>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
-  );
+  </div>
+);
 }

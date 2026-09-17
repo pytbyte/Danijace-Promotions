@@ -465,6 +465,298 @@ async function getCollections(): Promise<LoanCollections> {
   };
 }
 
+export type ExistingLoanGuarantee = {
+  loanId: string;
+  loanNumber: string;
+  borrowerName: string;
+  principal: number;
+  status: LoanStatus;
+};
+
+/* =========================================================
+   GUARANTOR COMMITMENT CHECK
+========================================================= */
+
+/**
+ * Returns loans on which a member is currently recorded
+ * as a guarantor.
+ *
+ * IMPORTANT
+ * ---------------------------------------------------------
+ * Existing loan documents currently store guarantors as:
+ *
+ * {
+ *   name,
+ *   phone,
+ *   idNumber?
+ * }
+ *
+ * They do not currently store guarantor.memberId.
+ *
+ * Therefore existing records are matched using:
+ *
+ * 1. normalized Kenyan phone number
+ * 2. exact normalized full name
+ *
+ * Active and pending loans represent current commitments.
+ * Completed and cancelled loans are historical and are not
+ * returned as current guarantor commitments.
+ *
+ * This function is READ-ONLY.
+ */
+export async function getExistingGuarantorCommitments(
+  memberId: string,
+): Promise<ExistingLoanGuarantee[]> {
+  if (
+    typeof memberId !== "string" ||
+    !ObjectId.isValid(memberId)
+  ) {
+    throw new Error("Invalid member ID.");
+  }
+
+  const {
+    db,
+  } = await getCollections();
+
+  /* -------------------------------------------------------
+     MEMBER
+  ------------------------------------------------------- */
+
+  const member =
+    await db
+      .collection<{
+        _id: ObjectId;
+        firstName?: string;
+        middleName?: string;
+        lastName?: string;
+        phone?: string;
+        status?: string;
+      }>(
+        MEMBERS_COLLECTION,
+      )
+      .findOne(
+        {
+          _id: createObjectId(memberId),
+        },
+        {
+          projection: {
+            _id: 1,
+            firstName: 1,
+            middleName: 1,
+            lastName: 1,
+            phone: 1,
+            status: 1,
+          },
+        },
+      );
+
+  if (!member) {
+    throw new Error("Member not found.");
+  }
+
+  /* -------------------------------------------------------
+     NORMALIZATION
+  ------------------------------------------------------- */
+
+  const normalizeName = (
+    value: unknown,
+  ): string => {
+    if (
+      typeof value !== "string"
+    ) {
+      return "";
+    }
+
+    return value
+      .normalize("NFKC")
+      .trim()
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+  };
+
+  const normalizePhone = (
+    value: unknown,
+  ): string => {
+    if (
+      typeof value !== "string"
+    ) {
+      return "";
+    }
+
+    const digits =
+      value.replace(
+        /\D/g,
+        "",
+      );
+
+    /*
+     * Normalize Kenyan numbers to 254XXXXXXXXX.
+     *
+     * Supported examples:
+     *
+     * 0712345678
+     * 0112345678
+     * 254712345678
+     * +254712345678
+     */
+    if (
+      digits.startsWith("254") &&
+      digits.length === 12
+    ) {
+      return digits;
+    }
+
+    if (
+      digits.startsWith("0") &&
+      digits.length === 10
+    ) {
+      return `254${digits.slice(1)}`;
+    }
+
+    if (
+      digits.length === 9 &&
+      (digits.startsWith("7") ||
+        digits.startsWith("1"))
+    ) {
+      return `254${digits}`;
+    }
+
+    return digits;
+  };
+
+  const memberName =
+    normalizeName(
+      [
+        member.firstName,
+        member.middleName,
+        member.lastName,
+      ]
+        .filter(
+          (
+            value,
+          ) =>
+            typeof value ===
+              "string" &&
+            value.trim() !== "",
+        )
+        .join(" "),
+    );
+
+  const memberPhone =
+    normalizePhone(
+      member.phone,
+    );
+
+  /* -------------------------------------------------------
+     LOAN SEARCH
+  ------------------------------------------------------- */
+
+  const loans =
+    await db
+      .collection<LoanDocument>(
+        LOANS_COLLECTION,
+      )
+      .find(
+        {
+          status: {
+            $in: [
+              "pending",
+              "active",
+            ],
+          },
+
+          guarantor: {
+            $exists: true,
+          },
+        },
+        {
+          projection: {
+            _id: 1,
+            loanNumber: 1,
+            memberName: 1,
+            principal: 1,
+            status: 1,
+            guarantor: 1,
+          },
+        },
+      )
+      .toArray();
+
+  /* -------------------------------------------------------
+     MATCH CURRENT GUARANTOR
+  ------------------------------------------------------- */
+
+  const matches =
+    loans.filter(
+      (loan) => {
+        const guarantor =
+          loan.guarantor;
+
+        if (!guarantor) {
+          return false;
+        }
+
+        const guarantorPhone =
+          normalizePhone(
+            guarantor.phone,
+          );
+
+        /*
+         * Phone is the strongest available identifier in
+         * the current guarantor schema.
+         */
+        if (
+          memberPhone &&
+          guarantorPhone &&
+          memberPhone ===
+            guarantorPhone
+        ) {
+          return true;
+        }
+
+        /*
+         * Name is the fallback for older records where the
+         * phone may not match or may not have been stored
+         * consistently.
+         */
+        const guarantorName =
+          normalizeName(
+            guarantor.name,
+          );
+
+        return (
+          !!memberName &&
+          !!guarantorName &&
+          memberName ===
+            guarantorName
+        );
+      },
+    );
+
+  /* -------------------------------------------------------
+     PUBLIC RESPONSE
+  ------------------------------------------------------- */
+
+  return matches.map(
+    (loan) => ({
+      loanId:
+        loan._id!.toString(),
+
+      loanNumber:
+        loan.loanNumber,
+
+      borrowerName:
+        loan.memberName,
+
+      principal:
+        loan.principal,
+
+      status:
+        loan.status,
+    }),
+  );
+}
+
 /* =========================================================
    HELPERS
 ========================================================= */

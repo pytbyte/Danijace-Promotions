@@ -531,6 +531,27 @@ function getMemberId(
   );
 }
 
+function getMemberStatus(
+  member: PdfMember,
+): string {
+  const status = safeString(
+    (member as PdfMember & {
+      status?: unknown;
+    }).status,
+  );
+
+  if (!status) {
+    return "Unknown";
+  }
+
+  return status
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (char) =>
+      char.toUpperCase(),
+    );
+}
+
 function getMemberInitials(
   member: PdfMember,
 ): string {
@@ -2466,6 +2487,16 @@ const styles =
         COLORS.ink,
     },
 
+    memberStatus: {
+      marginTop: 3,
+
+      fontSize: 7.5,
+
+      fontWeight: 700,
+
+      color: "#C62828",
+    },
+
     memberNumber: {
       marginTop: 4,
 
@@ -3741,6 +3772,14 @@ function MemberAccountStatement({
 
             <Text
               style={
+                styles.memberStatus
+              }
+            >
+              Status: {getMemberStatus(member)}
+            </Text>
+
+            <Text
+              style={
                 styles.memberNumber
               }
             >
@@ -4160,6 +4199,14 @@ function MemberAccountStatement({
             >
               {fullName ||
                 "Member"}
+            </Text>
+
+            <Text
+              style={
+                styles.memberStatus
+              }
+            >
+              Status: {getMemberStatus(member)}
             </Text>
 
             <Text
