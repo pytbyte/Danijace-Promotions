@@ -1297,12 +1297,12 @@ function StatusBadge({
   status:
     | "active"
     | "inactive"
-    | "suspended";
+    | "blacklisted";
 }) {
   const className =
     status === "active"
       ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
-      : status === "suspended"
+      : status === "blacklisted"
         ? "bg-rose-50 text-rose-700 ring-rose-200"
         : "bg-slate-100 text-black ring-slate-200";
 

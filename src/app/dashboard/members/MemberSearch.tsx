@@ -6,7 +6,7 @@ export type MemberStatusFilter =
   | "all"
   | "active"
   | "inactive"
-  | "suspended";
+  | "blacklisted";
 
 type MemberSearchProps = {
   search: string;
@@ -114,10 +114,10 @@ export default function MemberSearch({
                 </option>
 
                 <option
-                  value="suspended"
+                  value="blacklisted"
                   className="bg-black text-white"
                 >
-                  Suspended
+                  blacklisted
                 </option>
               </select>
             </div>

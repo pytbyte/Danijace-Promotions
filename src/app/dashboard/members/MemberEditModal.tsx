@@ -912,8 +912,8 @@ export default function MemberEditModal({
                       label: "Inactive",
                     },
                     {
-                      value: "suspended",
-                      label: "Suspended",
+                      value: "blacklisted",
+                      label: "blacklisted",
                     },
                   ]}
                 />

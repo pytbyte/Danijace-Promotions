@@ -1341,8 +1341,7 @@ export default function LoanSettingsForm({
                     </h3>
 
                     <p className="mt-1 text-xs leading-5 text-white/30">
-                      Configure the repayment cycle, grace
-                      period and percentage fine applied to
+                      Configure the repayment cycle,percentage fine applied to
                       an unpaid installment shortfall.
                     </p>
                   </div>

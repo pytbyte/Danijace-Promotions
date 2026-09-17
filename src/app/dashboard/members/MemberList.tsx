@@ -994,8 +994,8 @@ function StatusBadge({
       dot: "bg-slate-400",
     },
 
-    suspended: {
-      label: "Suspended",
+    blacklisted: {
+      label: "blacklisted",
       badge:
         "bg-amber-50 text-amber-700",
       dot: "bg-amber-500",

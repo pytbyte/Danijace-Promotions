@@ -2070,11 +2070,11 @@ export async function suspendMember(
   }
 
   /**
-   * Already suspended.
+   * Already blacklisted.
    */
   if (
     existing.status ===
-    "suspended"
+    "blacklisted"
   ) {
     return toMember(
       existing,
@@ -2094,7 +2094,7 @@ export async function suspendMember(
       {
         $set: {
           status:
-            "suspended",
+            "blacklisted",
 
           updatedAt:
             now,
@@ -2109,7 +2109,7 @@ export async function suspendMember(
     result.matchedCount === 0
   ) {
     throw new Error(
-      "Member could not be suspended.",
+      "Member could not be blacklisted.",
     );
   }
 
@@ -2121,7 +2121,7 @@ export async function suspendMember(
 
   if (!updated) {
     throw new Error(
-      "Member was suspended but could not be retrieved.",
+      "Member was blacklisted but could not be retrieved.",
     );
   }
 

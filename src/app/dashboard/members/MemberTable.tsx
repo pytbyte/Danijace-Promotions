@@ -265,20 +265,20 @@ function StatusBadge({
     inactive:
       "bg-slate-100 text-black ring-slate-200",
 
-    suspended:
+    blacklisted:
       "bg-red-50 text-red-700 ring-red-200",
   };
 
   const labels: Record<Member["status"], string> = {
     active: "Active",
     inactive: "Inactive",
-    suspended: "Suspended",
+    blacklisted: "blacklisted",
   };
 
   const dots: Record<Member["status"], string> = {
     active: "bg-emerald-500",
     inactive: "bg-black/40",
-    suspended: "bg-red-500",
+    blacklisted: "bg-red-500",
   };
 
   return (
