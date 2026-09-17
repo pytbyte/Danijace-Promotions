@@ -262,34 +262,64 @@ export async function getCurrentInstallmentBalance(
     throw new Error("Loan not found.");
   }
 
-  const today =
-    dateToKenyanCalendarDate(new Date());
+  const today = dateToKenyanCalendarDate(new Date());
 
-  const elapsedDays =
-    differenceInCalendarDays(
-      loan.disbursementDate,
-      today,
-    );
+  const elapsedDays = differenceInCalendarDays(
+    loan.disbursementDate,
+    today,
+  );
 
   if (elapsedDays < 0) {
     return 0;
   }
 
-  const cycleDays =
-    normalizeCycleDays(
-      loan.repaymentCycleDays,
-    );
+  const cycleDays = normalizeCycleDays(
+    loan.repaymentCycleDays,
+  );
 
-  const periodNumber =
-    Math.floor(
-      elapsedDays / cycleDays,
-    ) + 1;
+  /*
+   * Number of fully completed repayment cycles.
+   *
+   * Example with a 7-day cycle:
+   *
+   * Day 0–6  → 0 completed cycles
+   * Day 7    → 1 completed cycle
+   * Day 14   → 2 completed cycles
+   */
+  const completedCycles = Math.floor(
+    elapsedDays / cycleDays,
+  );
 
-  const period =
-    getAssessmentPeriod(
-      loan,
-      periodNumber,
-    );
+  /*
+   * The balance we want to display is:
+   *
+   * 1. The current cycle if it is still open.
+   * 2. The most recently completed cycle if a cycle
+   *    has just ended.
+   *
+   * At a cycle boundary, the previous cycle is the one
+   * that must be evaluated.
+   */
+  const isCycleBoundary =
+    elapsedDays > 0 &&
+    elapsedDays % cycleDays === 0;
+
+  const periodNumber = isCycleBoundary
+    ? completedCycles
+    : completedCycles + 1;
+
+  /*
+   * Before the first cycle there is no installment
+   * balance to display.
+   */
+  if (periodNumber < 1) {
+    return 0;
+  }
+
+  const period = getAssessmentPeriod(
+    loan,
+    periodNumber,
+  );
 
   const amountPaidBeforePeriod =
     await getLoanPaidTotalAsOf(
@@ -309,7 +339,7 @@ export async function getCurrentInstallmentBalance(
     await getPeriodPaymentTotal(
       loan._id!,
       period,
-    );
+  );
 
   return calculateUnpaidInstallment(
     expectedInstallment,
