@@ -568,10 +568,10 @@ export default function LoanCard({
               </p>
 
               <p className="mt-1 text-[26px] font-bold tracking-tight text-red-600">
-                {formatKES(
-                  Math.max(0, loan.currentInstallmentBalance ?? 0),
-                )}
-              </p>
+  {formatKES(
+    Math.max(0, loan.completedInstallmentBalance ?? 0),
+  )}
+</p>
 
               <p className="mt-1 text-[11px] text-red-600/70">
                 Unpaid balance from completed repayment weeks
