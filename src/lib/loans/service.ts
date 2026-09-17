@@ -15,7 +15,7 @@
  * amountPaid           = sum of recorded repayments.
  * totalFines           = sum of cycle-based fines.
  * outstandingBalance   = principal + interest + effective fines - amountPaid.
- 
+
  * INSTALLMENT FINE
  * ---------------------------------------------------------------
  * At the end of each completed repayment cycle:
@@ -245,149 +245,8 @@ export type LoanSummary = {
 };
 
 
-export async function getCurrentInstallmentBalance(
-  loanId: string,
-): Promise<number> {
-  if (!ObjectId.isValid(loanId)) {
-    throw new Error("Invalid loan ID.");
-  }
 
-  const { loans } = await getCollections();
 
-  const loan = await loans.findOne({
-    _id: createObjectId(loanId),
-  });
-
-  if (!loan) {
-    throw new Error("Loan not found.");
-  }
-
-  assertCalendarDate(
-    loan.disbursementDate,
-    "loan disbursement date",
-  );
-
-  const today =
-    dateToKenyanCalendarDate(new Date());
-
-  const cycleDays =
-    normalizeCycleDays(
-      loan.repaymentCycleDays,
-    );
-
-  const installmentAmount =
-    money(
-      Math.max(
-        0,
-        Number(
-          loan.installmentAmount ?? 0,
-        ),
-      ),
-    );
-
-  if (installmentAmount <= 0) {
-    return 0;
-  }
-
-  let totalUnpaidBalance = 0;
-  let periodNumber = 1;
-
-  while (true) {
-    const period =
-      getAssessmentPeriod(
-        loan,
-        periodNumber,
-      );
-
-    /*
-     * Only completed cycles are included.
-     *
-     * If the period ends today or in the future,
-     * it is still the current/open cycle.
-     */
-    if (period.periodEnd >= today) {
-      break;
-    }
-
-    /*
-     * Amount of principal + interest that had already
-     * been paid before this cycle started.
-     */
-    const amountPaidBeforePeriod =
-      await getLoanPaidTotalAsOf(
-        loan._id!,
-        period.periodStart,
-      );
-
-    const remainingCoreBalance =
-      money(
-        Math.max(
-          0,
-          loan.principal +
-            loan.interestAmount -
-            amountPaidBeforePeriod,
-        ),
-      );
-
-    /*
-     * Nothing remains to be paid.
-     * No later installments can exist.
-     */
-    if (remainingCoreBalance <= 0) {
-      break;
-    }
-
-    /*
-     * This cycle can never require more than the
-     * remaining principal + interest.
-     */
-    const expectedInstallment =
-      money(
-        Math.min(
-          installmentAmount,
-          remainingCoreBalance,
-        ),
-      );
-
-    /*
-     * Payments belonging ONLY to this repayment cycle.
-     */
-    const paymentsDuringPeriod =
-      await getPeriodPaymentTotal(
-        loan._id!,
-        period,
-      );
-
-    /*
-     * Cycle shortfall:
-     *
-     * max(
-     *   0,
-     *   expected installment - payments in cycle
-     * )
-     *
-     * This is also the base used by the
-     * percentage-based fine calculation.
-     */
-    const unpaidInstallment =
-      calculateUnpaidInstallment(
-        expectedInstallment,
-        paymentsDuringPeriod,
-      );
-
-    totalUnpaidBalance =
-      money(
-        totalUnpaidBalance +
-          unpaidInstallment,
-      );
-
-    periodNumber += 1;
-  }
-
-  return money(
-    totalUnpaidBalance,
-  );
-}
 /* =========================================================
    COLLECTIONS
 ========================================================= */
@@ -408,153 +267,6 @@ type LoanCollections = {
 };
 
 
-async function calculateCurrentInstallmentBalance(
-  loan: LoanDocument,
-): Promise<number> {
-  if (!loan._id) {
-    return 0;
-  }
-
-  assertCalendarDate(
-    loan.disbursementDate,
-    "loan disbursement date",
-  );
-
-  const today =
-    dateToKenyanCalendarDate(new Date());
-
-  const cycleDays =
-    normalizeCycleDays(
-      loan.repaymentCycleDays,
-    );
-
-  const installmentAmount =
-    money(
-      Number(
-        loan.installmentAmount ?? 0,
-      ),
-    );
-
-  if (installmentAmount <= 0) {
-    return 0;
-  }
-
-  let totalUnpaidBalance = 0;
-  let periodNumber = 1;
-
-  while (true) {
-    const period =
-      getAssessmentPeriod(
-        loan,
-        periodNumber,
-      );
-
-    /*
-     * Only completed repayment cycles count.
-     *
-     * The cycle whose periodEnd is today is still
-     * considered open until the calendar date has passed.
-     */
-    if (
-      period.periodEnd >= today
-    ) {
-      break;
-    }
-
-    /*
-     * Determine how much of the core loan was already
-     * paid before this repayment period began.
-     */
-    const amountPaidBeforePeriod =
-      await getLoanPaidTotalAsOf(
-        loan._id,
-        period.periodStart,
-      );
-
-    const remainingCoreBalance =
-      money(
-        Math.max(
-          0,
-          loan.principal +
-            loan.interestAmount -
-            amountPaidBeforePeriod,
-        ),
-      );
-
-    /*
-     * Nothing remains to be paid on the core loan.
-     */
-    if (
-      remainingCoreBalance <= 0
-    ) {
-      break;
-    }
-
-    /*
-     * The expected amount for this specific cycle can
-     * never exceed the remaining core loan balance.
-     */
-    const amountDue =
-      money(
-        Math.min(
-          installmentAmount,
-          remainingCoreBalance,
-        ),
-      );
-
-    const paymentsDuringPeriod =
-      await getPeriodPaymentTotal(
-        loan._id,
-        period,
-      );
-
-    /*
-     * This is the exact installment shortfall for
-     * THIS repayment cycle.
-     *
-     * It is also the amount that the fine calculation
-     * should use:
-     *
-     * fine = unpaidInstallment × fineRate
-     */
-    const unpaidInstallment =
-      calculateUnpaidInstallment(
-        amountDue,
-        paymentsDuringPeriod,
-      );
-
-    console.log(
-      "INSTALLMENT DEBUG",
-      {
-        loanNumber:
-          loan.loanNumber,
-        periodNumber,
-        periodStart:
-          period.periodStart,
-        periodEnd:
-          period.periodEnd,
-        expected:
-          amountDue,
-        paid:
-          paymentsDuringPeriod,
-        unpaid:
-          unpaidInstallment,
-      },
-    );
-
-    totalUnpaidBalance =
-      money(
-        totalUnpaidBalance +
-          unpaidInstallment,
-      );
-
-    periodNumber += 1;
-  }
-
-  return money(
-    totalUnpaidBalance,
-  );
-}
 
 
 
@@ -3500,12 +3212,77 @@ export async function createLoan(
     await session.endSession();
   }
 }
+/* =========================================================
+   GET completed installments
+============================================
 
+/**
+ * Returns the total unpaid installment balance across
+ * all completed repayment cycles for a loan.
+ *
+ * The source of truth is loanAssessments.installmentShortfall,
+ * which is already calculated by assessLoanPeriod().
+ *
+ * This does NOT:
+ * - calculate the current/open cycle
+ * - calculate fines
+ * - include fines in the balance
+ * - recalculate repayment periods
+ * - modify the loan
+ */
+export async function getCompletedInstallmentBalance(
+  loanId: string,
+): Promise<number> {
+  if (!ObjectId.isValid(loanId)) {
+    throw new Error("Invalid loan ID.");
+  }
+
+  const { loans, assessments } =
+    await getCollections();
+
+  const objectId =
+    createObjectId(loanId);
+
+  const loan =
+    await loans.findOne({
+      _id: objectId,
+    });
+
+  if (!loan) {
+    throw new Error("Loan not found.");
+  }
+
+  const result =
+    await assessments.aggregate<{
+      _id: null;
+      total: number;
+    }>([
+      {
+        $match: {
+          loanId: objectId,
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: {
+            $sum: "$installmentShortfall",
+          },
+        },
+      },
+    ]).toArray();
+
+  return money(
+    Number(
+      result[0]?.total ?? 0,
+    ),
+  );
+ }
 
 /* =========================================================
    GET LOAN
-========================================================= */
-
+========================================================= 
+*/
 export async function getLoanById(
   id: string,
 ): Promise<Loan | null> {
@@ -3523,14 +3300,12 @@ export async function getLoanById(
     return null;
   }
 
-  const currentInstallmentBalance =
-    await calculateCurrentInstallmentBalance(
-      loan,
-    );
+  const completedInstallmentBalance =
+    await getCompletedInstallmentBalance(id);
 
   return {
     ...toLoan(loan),
-    currentInstallmentBalance,
+    completedInstallmentBalance,
   };
 }
 
@@ -3556,14 +3331,14 @@ export async function getLoanByNumber(
     return null;
   }
 
-  const currentInstallmentBalance =
-    await calculateCurrentInstallmentBalance(
-      loan,
+  const completedInstallmentBalance =
+    await getCompletedInstallmentBalance(
+      loan._id.toString(),
     );
 
   return {
     ...toLoan(loan),
-    currentInstallmentBalance,
+    completedInstallmentBalance,
   };
 }
 
