@@ -378,6 +378,8 @@ type LoanCollections = {
 
 
 
+
+
 async function calculateCurrentInstallmentBalance(
   loan: LoanDocument,
 ): Promise<number> {
@@ -385,28 +387,17 @@ async function calculateCurrentInstallmentBalance(
     return 0;
   }
 
-  if (
-    typeof loan.disbursementDate !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(
-      loan.disbursementDate,
-    )
-  ) {
-    console.error(
-      "INSTALLMENT DEBUG: invalid disbursement date",
-      {
-        loanId: loan._id.toString(),
-        loanNumber: loan.loanNumber,
-        disbursementDate:
-          loan.disbursementDate,
-      },
-    );
-
-    return 0;
-  }
+  assertCalendarDate(
+    loan.disbursementDate,
+    "loan disbursement date",
+  );
 
   const today =
-    dateToKenyanCalendarDate(
-      new Date(),
+    dateToKenyanCalendarDate(new Date());
+
+  const cycleDays =
+    normalizeCycleDays(
+      loan.repaymentCycleDays,
     );
 
   const elapsedDays =
@@ -415,37 +406,23 @@ async function calculateCurrentInstallmentBalance(
       today,
     );
 
-  const cycleDays =
-    normalizeCycleDays(
-      loan.repaymentCycleDays,
-    );
+  if (elapsedDays < cycleDays) {
+    return 0;
+  }
 
   const completedCycles =
     Math.floor(
       elapsedDays / cycleDays,
     );
 
-  console.log(
-    "INSTALLMENT DEBUG: loan",
-    {
-      loanId: loan._id.toString(),
-      loanNumber: loan.loanNumber,
-      disbursementDate:
-        loan.disbursementDate,
-      today,
-      elapsedDays,
-      cycleDays,
-      completedCycles,
-      installmentAmount:
-        loan.installmentAmount,
-    },
-  );
+  const installmentAmount =
+    money(
+      Number(
+        loan.installmentAmount ?? 0,
+      ),
+    );
 
-  if (elapsedDays < 0) {
-    return 0;
-  }
-
-  if (completedCycles <= 0) {
+  if (installmentAmount <= 0) {
     return 0;
   }
 
@@ -462,20 +439,6 @@ async function calculateCurrentInstallmentBalance(
         periodNumber,
       );
 
-    const amountPaidBeforePeriod =
-      await getLoanPaidTotalAsOf(
-        loan._id,
-        period.periodStart,
-      );
-
-    const expectedInstallment =
-      calculateLoanAmountDue(
-        loan.installmentAmount,
-        loan.principal,
-        loan.interestAmount,
-        amountPaidBeforePeriod,
-      );
-
     const paymentsDuringPeriod =
       await getPeriodPaymentTotal(
         loan._id,
@@ -484,34 +447,26 @@ async function calculateCurrentInstallmentBalance(
 
     const unpaidInstallment =
       calculateUnpaidInstallment(
-        expectedInstallment,
+        installmentAmount,
         paymentsDuringPeriod,
       );
 
     console.log(
-      "INSTALLMENT DEBUG: period",
+      "INSTALLMENT DEBUG",
       {
-        loanId:
-          loan._id.toString(),
         loanNumber:
           loan.loanNumber,
-
-        periodNumber:
-          period.periodNumber,
-
+        periodNumber,
         periodStart:
           period.periodStart,
-
         periodEnd:
           period.periodEnd,
-
-        amountPaidBeforePeriod,
-
-        expectedInstallment,
-
-        paymentsDuringPeriod,
-
-        unpaidInstallment,
+        expected:
+          installmentAmount,
+        paid:
+          paymentsDuringPeriod,
+        unpaid:
+          unpaidInstallment,
       },
     );
 
@@ -522,26 +477,10 @@ async function calculateCurrentInstallmentBalance(
       );
   }
 
-  console.log(
-    "INSTALLMENT DEBUG: FINAL",
-    {
-      loanId:
-        loan._id.toString(),
-
-      loanNumber:
-        loan.loanNumber,
-
-      totalUnpaidBalance,
-    },
-  );
-
   return money(
     totalUnpaidBalance,
   );
 }
-
-
-
 
 async function getCollections(): Promise<LoanCollections> {
   const client =
@@ -4732,6 +4671,7 @@ function getLatestDueAssessmentPeriod(
   return Math.floor(elapsedDays / cycleDays);
 }
 
+
 async function getPeriodPaymentTotal(
   loanId: ObjectId,
   period: AssessmentPeriod,
@@ -4740,56 +4680,79 @@ async function getPeriodPaymentTotal(
   const { repayments } =
     await getCollections();
 
-  const dateMatch =
+  /*
+   * Financial dates are stored as exact
+   * YYYY-MM-DD strings.
+   *
+   * Do NOT convert them to JavaScript Date.
+   * Do NOT use $dateToString.
+   */
+  assertCalendarDate(
+    period.periodStart,
+    "repayment period start",
+  );
+
+  assertCalendarDate(
+    period.periodEnd,
+    "repayment period end",
+  );
+
+  /*
+   * Period 1:
+   *   start <= transactionDate <= end
+   *
+   * Period 2+:
+   *   start < transactionDate <= end
+   *
+   * This prevents a repayment on a period boundary
+   * from being counted in two different periods.
+   */
+  const transactionDateFilter =
     period.periodNumber === 1
       ? {
-          transactionDate: {
-            $gte:
-              period.periodStart,
-            $lte:
-              period.periodEnd,
-          },
+          $gte: period.periodStart,
+          $lte: period.periodEnd,
         }
       : {
-          transactionDate: {
-            $gt:
-              period.periodStart,
-            $lte:
-              period.periodEnd,
-          },
+          $gt: period.periodStart,
+          $lte: period.periodEnd,
         };
 
-  const result = await repayments
-    .aggregate<{
-      _id: null;
-      total: number;
-    }>(
-      [
-        {
-          $match: {
-            loanId,
-            ...dateMatch,
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            total: {
-              $sum: "$amount",
+  const result =
+    await repayments
+      .aggregate<{
+        _id: null;
+        total: number;
+      }>(
+        [
+          {
+            $match: {
+              loanId,
+              transactionDate:
+                transactionDateFilter,
             },
           },
-        },
-      ],
-      { session },
-    )
-    .toArray();
+          {
+            $group: {
+              _id: null,
+              total: {
+                $sum: "$amount",
+              },
+            },
+          },
+        ],
+        { session },
+      )
+      .toArray();
 
   return money(
     Number(
-      result[0]?.total || 0,
+      result[0]?.total ?? 0,
     ),
   );
 }
+
+
 
 /* =========================================================
    ASSESS LOAN PERIOD
