@@ -113,9 +113,10 @@ function formatKES(value: unknown): string {
 
 /**
  * GEO-SHUA financial dates are CalendarDate strings:
- * YYYY-MM-DD.
  *
- * Do not convert these to JavaScript Date objects.
+ * YYYY-MM-DD
+ *
+ * These dates must never be passed through JavaScript Date.
  */
 function formatCalendarDate(value: unknown): string {
   if (
@@ -125,7 +126,8 @@ function formatCalendarDate(value: unknown): string {
     return "";
   }
 
-  const [year, month, day] = value.split("-");
+  const [year, month, day] =
+    value.split("-");
 
   const parsedYear = Number(year);
   const parsedMonth = Number(month);
@@ -161,6 +163,11 @@ function formatCalendarDate(value: unknown): string {
   return `${monthNames[parsedMonth - 1]} ${parsedDay}, ${parsedYear}`;
 }
 
+/**
+ * Formats actual timestamps such as createdAt/updatedAt.
+ *
+ * These are different from financial CalendarDate fields.
+ */
 function formatTimestamp(value: unknown): string {
   if (
     typeof value !== "string" &&
@@ -184,9 +191,15 @@ function formatTimestamp(value: unknown): string {
   }).format(date);
 }
 
-function formatTransactionDate(value: unknown): string {
+/**
+ * Displays either a CalendarDate or a real timestamp.
+ */
+function formatTransactionDate(
+  value: unknown,
+): string {
   if (typeof value === "string") {
-    const calendarDate = formatCalendarDate(value);
+    const calendarDate =
+      formatCalendarDate(value);
 
     if (calendarDate) {
       return calendarDate;
@@ -202,6 +215,203 @@ function formatTransactionDate(value: unknown): string {
   return "Unknown date";
 }
 
+/**
+ * Returns the transaction's primary date.
+ *
+ * transactionDate is preferred because it represents the
+ * actual repayment transaction date.
+ *
+ * createdAt/updatedAt are only fallbacks.
+ */
+function getTransactionDateValue(
+  transaction: LoanTransaction,
+): string | undefined {
+  return (
+    transaction.transactionDate ||
+    transaction.createdAt ||
+    transaction.updatedAt
+  );
+}
+
+/**
+ * Converts a transaction date into a sortable value.
+ *
+ * Important:
+ *
+ * - YYYY-MM-DD is treated as a CalendarDate.
+ * - CalendarDate is NOT converted using new Date().
+ * - Actual timestamps are parsed normally.
+ * - Invalid/missing values return 0 and therefore sort last.
+ */
+function getTransactionSortValue(
+  transaction: LoanTransaction,
+): number {
+  const value =
+    getTransactionDateValue(
+      transaction,
+    );
+
+  if (typeof value !== "string") {
+    return 0;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return 0;
+  }
+
+  /*
+   * Financial CalendarDate.
+   *
+   * Because YYYY-MM-DD is lexicographically chronological,
+   * removing the hyphens gives us a safe sortable number.
+   *
+   * Example:
+   *
+   * 2026-09-18 -> 20260918
+   * 2026-09-17 -> 20260917
+   */
+  if (
+    /^\d{4}-\d{2}-\d{2}$/.test(
+      trimmed,
+    )
+  ) {
+    const numeric = Number(
+      trimmed.replaceAll("-", ""),
+    );
+
+    return Number.isFinite(numeric)
+      ? numeric
+      : 0;
+  }
+
+  /*
+   * Actual timestamp.
+   *
+   * createdAt / updatedAt are real timestamps, so Date.parse
+   * is appropriate here.
+   */
+  const timestamp =
+    Date.parse(trimmed);
+
+  return Number.isFinite(timestamp)
+    ? timestamp
+    : 0;
+}
+
+/**
+ * Sort repayment transactions latest first.
+ *
+ * The API/database ordering is never trusted as the final UI
+ * ordering. The client applies this ordering every time the
+ * records are loaded.
+ *
+ * The original array is not mutated.
+ */
+function sortTransactionsLatestFirst(
+  records: LoanTransaction[],
+): LoanTransaction[] {
+  return [...records].sort(
+    (a, b) => {
+      const bDate =
+        getTransactionSortValue(b);
+
+      const aDate =
+        getTransactionSortValue(a);
+
+      /*
+       * Latest transaction first.
+       */
+      if (bDate !== aDate) {
+        return bDate - aDate;
+      }
+
+      /*
+       * If transactionDate is identical, use createdAt
+       * as the second-level ordering.
+       */
+      const bCreated =
+        typeof b.createdAt === "string"
+          ? Date.parse(b.createdAt)
+          : 0;
+
+      const aCreated =
+        typeof a.createdAt === "string"
+          ? Date.parse(a.createdAt)
+          : 0;
+
+      if (
+        Number.isFinite(bCreated) &&
+        Number.isFinite(aCreated) &&
+        bCreated !== aCreated
+      ) {
+        return bCreated - aCreated;
+      }
+
+      /*
+       * Final deterministic fallback.
+       */
+      return String(
+        b.id || "",
+      ).localeCompare(
+        String(a.id || ""),
+      );
+    },
+  );
+}
+
+/**
+ * Waivers use createdAt as their authoritative ordering
+ * timestamp.
+ */
+function getWaiverSortValue(
+  waiver: LoanWaiver,
+): number {
+  if (
+    typeof waiver.createdAt !== "string" ||
+    !waiver.createdAt.trim()
+  ) {
+    return 0;
+  }
+
+  const timestamp =
+    Date.parse(
+      waiver.createdAt,
+    );
+
+  return Number.isFinite(timestamp)
+    ? timestamp
+    : 0;
+}
+
+/**
+ * Sort waivers latest first.
+ */
+function sortWaiversLatestFirst(
+  records: LoanWaiver[],
+): LoanWaiver[] {
+  return [...records].sort(
+    (a, b) => {
+      const bDate =
+        getWaiverSortValue(b);
+
+      const aDate =
+        getWaiverSortValue(a);
+
+      if (bDate !== aDate) {
+        return bDate - aDate;
+      }
+
+      return String(
+        b.id || "",
+      ).localeCompare(
+        String(a.id || ""),
+      );
+    },
+  );
+}
+
 function getReference(
   transaction: LoanTransaction,
 ): string {
@@ -212,7 +422,9 @@ function getReference(
   );
 }
 
-function getSourceLabel(source: unknown): string {
+function getSourceLabel(
+  source: unknown,
+): string {
   if (
     typeof source !== "string" ||
     !source.trim()
@@ -220,7 +432,9 @@ function getSourceLabel(source: unknown): string {
     return "Unknown";
   }
 
-  switch (source.trim().toLowerCase()) {
+  switch (
+    source.trim().toLowerCase()
+  ) {
     case "sms":
       return "SMS";
 
@@ -235,7 +449,9 @@ function getSourceLabel(source: unknown): string {
   }
 }
 
-function getStatusLabel(status: unknown): string {
+function getStatusLabel(
+  status: unknown,
+): string {
   if (
     typeof status !== "string" ||
     !status.trim()
@@ -243,7 +459,9 @@ function getStatusLabel(status: unknown): string {
     return "Confirmed";
   }
 
-  switch (status.trim().toLowerCase()) {
+  switch (
+    status.trim().toLowerCase()
+  ) {
     case "confirmed":
       return "Confirmed";
 
@@ -258,12 +476,16 @@ function getStatusLabel(status: unknown): string {
   }
 }
 
-function getStatusClass(status: unknown): string {
+function getStatusClass(
+  status: unknown,
+): string {
   if (typeof status !== "string") {
     return "bg-emerald-500/10 text-emerald-400";
   }
 
-  switch (status.trim().toLowerCase()) {
+  switch (
+    status.trim().toLowerCase()
+  ) {
     case "pending":
       return "bg-yellow-500/10 text-yellow-400";
 
@@ -279,7 +501,9 @@ function getStatusClass(status: unknown): string {
 function getWaiverAmount(
   waiver: LoanWaiver,
 ): number {
-  const amount = Number(waiver.amount);
+  const amount = Number(
+    waiver.amount,
+  );
 
   return Number.isFinite(amount)
     ? Math.max(0, amount)
@@ -289,7 +513,8 @@ function getWaiverAmount(
 function createWaiverReference(): string {
   if (
     typeof crypto === "undefined" ||
-    typeof crypto.randomUUID !== "function"
+    typeof crypto.randomUUID !==
+      "function"
   ) {
     throw new Error(
       "Secure waiver reference generation is unavailable on this device.",
@@ -313,8 +538,10 @@ export default function LoanTransactionModal({
      REPAYMENT STATE
   ======================================================= */
 
-  const [transactions, setTransactions] =
-    useState<LoanTransaction[]>([]);
+  const [
+    transactions,
+    setTransactions,
+  ] = useState<LoanTransaction[]>([]);
 
   const [loading, setLoading] =
     useState(false);
@@ -326,41 +553,57 @@ export default function LoanTransactionModal({
      WAIVER STATE
   ======================================================= */
 
-  const [waivers, setWaivers] =
-    useState<LoanWaiver[]>([]);
+  const [
+    waivers,
+    setWaivers,
+  ] = useState<LoanWaiver[]>([]);
 
-  const [waiversLoading, setWaiversLoading] =
-    useState(false);
+  const [
+    waiversLoading,
+    setWaiversLoading,
+  ] = useState(false);
 
-  const [waiverSubmitting, setWaiverSubmitting] =
-    useState(false);
+  const [
+    waiverSubmitting,
+    setWaiverSubmitting,
+  ] = useState(false);
 
-  const [waiverError, setWaiverError] =
-    useState("");
+  const [
+    waiverError,
+    setWaiverError,
+  ] = useState("");
 
-  const [waiverSuccess, setWaiverSuccess] =
-    useState("");
+  const [
+    waiverSuccess,
+    setWaiverSuccess,
+  ] = useState("");
 
-  const [waiverAmount, setWaiverAmount] =
-    useState("");
+  const [
+    waiverAmount,
+    setWaiverAmount,
+  ] = useState("");
 
-  const [waiverReason, setWaiverReason] =
-    useState("");
+  const [
+    waiverReason,
+    setWaiverReason,
+  ] = useState("");
 
   const [
     pendingWaiverReference,
     setPendingWaiverReference,
   ] = useState<string | null>(null);
 
-  const [waiverFormOpen, setWaiverFormOpen] =
-    useState(false);
+  const [
+    waiverFormOpen,
+    setWaiverFormOpen,
+  ] = useState(false);
 
   /* =======================================================
      LOAD TRANSACTIONS
   ======================================================= */
 
-  const loadTransactions = useCallback(
-    async () => {
+  const loadTransactions =
+    useCallback(async () => {
       if (!loan) {
         return;
       }
@@ -382,21 +625,28 @@ export default function LoanTransactionModal({
       setError("");
 
       try {
-        const params = new URLSearchParams();
+        const params =
+          new URLSearchParams();
 
-        params.set("loanId", loanId);
-
-        const response = await fetch(
-          `/api/loans/repayments?${params.toString()}`,
-          {
-            method: "GET",
-            credentials: "same-origin",
-            cache: "no-store",
-            headers: {
-              Accept: "application/json",
-            },
-          },
+        params.set(
+          "loanId",
+          loanId,
         );
+
+        const response =
+          await fetch(
+            `/api/loans/repayments?${params.toString()}`,
+            {
+              method: "GET",
+              credentials:
+                "same-origin",
+              cache: "no-store",
+              headers: {
+                Accept:
+                  "application/json",
+              },
+            },
+          );
 
         const rawResponse =
           await response.text();
@@ -421,7 +671,9 @@ export default function LoanTransactionModal({
           );
         }
 
-        if (result?.success === false) {
+        if (
+          result?.success === false
+        ) {
           throw new Error(
             result.error ||
               "Failed to load loan transactions.",
@@ -429,7 +681,9 @@ export default function LoanTransactionModal({
         }
 
         const records =
-          Array.isArray(result?.data)
+          Array.isArray(
+            result?.data,
+          )
             ? result.data
             : Array.isArray(
                   result?.transactions,
@@ -437,7 +691,17 @@ export default function LoanTransactionModal({
               ? result.transactions
               : [];
 
-        setTransactions(records);
+        /*
+         * Always sort locally.
+         *
+         * This guarantees latest-first presentation even if
+         * MongoDB/API ordering changes.
+         */
+        setTransactions(
+          sortTransactionsLatestFirst(
+            records,
+          ),
+        );
       } catch (requestError) {
         console.error(
           "Loan transaction history error:",
@@ -454,16 +718,14 @@ export default function LoanTransactionModal({
       } finally {
         setLoading(false);
       }
-    },
-    [loan],
-  );
+    }, [loan]);
 
   /* =======================================================
      LOAD WAIVERS
   ======================================================= */
 
-  const loadWaivers = useCallback(
-    async () => {
+  const loadWaivers =
+    useCallback(async () => {
       if (!loan) {
         return;
       }
@@ -485,21 +747,28 @@ export default function LoanTransactionModal({
       setWaiverError("");
 
       try {
-        const params = new URLSearchParams();
+        const params =
+          new URLSearchParams();
 
-        params.set("loanId", loanId);
-
-        const response = await fetch(
-          `${WAIVERS_API}?${params.toString()}`,
-          {
-            method: "GET",
-            credentials: "same-origin",
-            cache: "no-store",
-            headers: {
-              Accept: "application/json",
-            },
-          },
+        params.set(
+          "loanId",
+          loanId,
         );
+
+        const response =
+          await fetch(
+            `${WAIVERS_API}?${params.toString()}`,
+            {
+              method: "GET",
+              credentials:
+                "same-origin",
+              cache: "no-store",
+              headers: {
+                Accept:
+                  "application/json",
+              },
+            },
+          );
 
         const rawResponse =
           await response.text();
@@ -524,17 +793,26 @@ export default function LoanTransactionModal({
           );
         }
 
-        if (result?.success === false) {
+        if (
+          result?.success === false
+        ) {
           throw new Error(
             result.error ||
               "Failed to load loan waivers.",
           );
         }
 
-        setWaivers(
-          Array.isArray(result?.data)
+        const records =
+          Array.isArray(
+            result?.data,
+          )
             ? result.data
-            : [],
+            : [];
+
+        setWaivers(
+          sortWaiversLatestFirst(
+            records,
+          ),
         );
       } catch (requestError) {
         console.error(
@@ -552,9 +830,7 @@ export default function LoanTransactionModal({
       } finally {
         setWaiversLoading(false);
       }
-    },
-    [loan],
-  );
+    }, [loan]);
 
   /* =======================================================
      INITIAL LOAD
@@ -590,7 +866,9 @@ export default function LoanTransactionModal({
     setWaiverFormOpen(false);
     setWaiverAmount("");
     setWaiverReason("");
-    setPendingWaiverReference(null);
+    setPendingWaiverReference(
+      null,
+    );
     setWaiverError("");
     setWaiverSuccess("");
   }, [loan?.id]);
@@ -599,22 +877,30 @@ export default function LoanTransactionModal({
      TOTAL REPAYMENTS
   ======================================================= */
 
-  const totalRepayments = useMemo(() => {
-    return transactions.reduce(
-      (total, transaction) => {
-        const amount = Number(
-          transaction.amount,
-        );
+  const totalRepayments =
+    useMemo(() => {
+      return transactions.reduce(
+        (
+          total,
+          transaction,
+        ) => {
+          const amount = Number(
+            transaction.amount,
+          );
 
-        if (!Number.isFinite(amount)) {
-          return total;
-        }
+          if (
+            !Number.isFinite(
+              amount,
+            )
+          ) {
+            return total;
+          }
 
-        return total + amount;
-      },
-      0,
-    );
-  }, [transactions]);
+          return total + amount;
+        },
+        0,
+      );
+    }, [transactions]);
 
   /* =======================================================
      WAIVER TOTALS
@@ -623,14 +909,22 @@ export default function LoanTransactionModal({
   const totalWaivedFromHistory =
     useMemo(() => {
       return waivers.reduce(
-        (total, waiver) =>
-          total + getWaiverAmount(waiver),
+        (
+          total,
+          waiver,
+        ) =>
+          total +
+          getWaiverAmount(
+            waiver,
+          ),
         0,
       );
     }, [waivers]);
 
   const totalFines =
-    Number.isFinite(loan?.totalFines)
+    Number.isFinite(
+      loan?.totalFines,
+    )
       ? Math.max(
           0,
           loan?.totalFines ?? 0,
@@ -656,7 +950,8 @@ export default function LoanTransactionModal({
   const activeFineBalance =
     Math.max(
       0,
-      totalFines - knownWaivedFines,
+      totalFines -
+        knownWaivedFines,
     );
 
   const canRecordWaiver =
@@ -674,9 +969,6 @@ export default function LoanTransactionModal({
      - payments during period
      - remaining installment
      - fines
-     
-     It simply displays the value supplied by the
-     loan service.
   ======================================================= */
 
   const currentInstallmentBalance =
@@ -685,11 +977,18 @@ export default function LoanTransactionModal({
         loan?.completedInstallmentBalance,
       );
 
-      if (!Number.isFinite(value)) {
+      if (
+        !Number.isFinite(
+          value,
+        )
+      ) {
         return 0;
       }
 
-      return Math.max(0, value);
+      return Math.max(
+        0,
+        value,
+      );
     }, [
       loan?.completedInstallmentBalance,
     ]);
@@ -707,7 +1006,9 @@ export default function LoanTransactionModal({
       setWaiverFormOpen(true);
       setWaiverError("");
       setWaiverSuccess("");
-    }, [canRecordWaiver]);
+    }, [
+      canRecordWaiver,
+    ]);
 
   /* =======================================================
      CLOSE WAIVER FORM
@@ -722,10 +1023,14 @@ export default function LoanTransactionModal({
       setWaiverFormOpen(false);
       setWaiverAmount("");
       setWaiverReason("");
-      setPendingWaiverReference(null);
+      setPendingWaiverReference(
+        null,
+      );
       setWaiverError("");
       setWaiverSuccess("");
-    }, [waiverSubmitting]);
+    }, [
+      waiverSubmitting,
+    ]);
 
   /* =======================================================
      SUBMIT WAIVER
@@ -756,7 +1061,9 @@ export default function LoanTransactionModal({
         return;
       }
 
-      if (loan.status !== "active") {
+      if (
+        loan.status !== "active"
+      ) {
         setWaiverError(
           "Fine waivers can only be recorded for active loans.",
         );
@@ -768,7 +1075,9 @@ export default function LoanTransactionModal({
       );
 
       if (
-        !Number.isFinite(amount) ||
+        !Number.isFinite(
+          amount,
+        ) ||
         amount <= 0
       ) {
         setWaiverError(
@@ -780,7 +1089,9 @@ export default function LoanTransactionModal({
       if (
         Math.abs(
           amount -
-            Math.round(amount * 100) /
+            Math.round(
+              amount * 100,
+            ) /
               100,
         ) > 0.000001
       ) {
@@ -790,7 +1101,10 @@ export default function LoanTransactionModal({
         return;
       }
 
-      if (amount > activeFineBalance) {
+      if (
+        amount >
+        activeFineBalance
+      ) {
         setWaiverError(
           `Waiver cannot exceed the available fine balance of ${formatKES(
             activeFineBalance,
@@ -827,9 +1141,12 @@ export default function LoanTransactionModal({
           setPendingWaiverReference(
             waiverReference,
           );
-        } catch (referenceError) {
+        } catch (
+          referenceError
+        ) {
           setWaiverError(
-            referenceError instanceof Error
+            referenceError instanceof
+              Error
               ? referenceError.message
               : "Unable to generate a secure waiver reference.",
           );
@@ -837,30 +1154,34 @@ export default function LoanTransactionModal({
         }
       }
 
-      setWaiverSubmitting(true);
+      setWaiverSubmitting(
+        true,
+      );
       setWaiverError("");
       setWaiverSuccess("");
 
       try {
-        const response = await fetch(
-          WAIVERS_API,
-          {
-            method: "POST",
-            credentials: "same-origin",
-            headers: {
-              "Content-Type":
-                "application/json",
-              Accept:
-                "application/json",
+        const response =
+          await fetch(
+            WAIVERS_API,
+            {
+              method: "POST",
+              credentials:
+                "same-origin",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Accept:
+                  "application/json",
+              },
+              body: JSON.stringify({
+                waiverReference,
+                loanId,
+                amount,
+                reason,
+              }),
             },
-            body: JSON.stringify({
-              waiverReference,
-              loanId,
-              amount,
-              reason,
-            }),
-          },
-        );
+          );
 
         const rawResponse =
           await response.text();
@@ -885,14 +1206,19 @@ export default function LoanTransactionModal({
           );
         }
 
-        if (!result?.success) {
+        if (
+          !result?.success
+        ) {
           throw new Error(
             result?.error ||
               "Unable to record fine waiver.",
           );
         }
 
-        setPendingWaiverReference(null);
+        setPendingWaiverReference(
+          null,
+        );
+
         setWaiverAmount("");
         setWaiverReason("");
 
@@ -900,26 +1226,33 @@ export default function LoanTransactionModal({
           "Fine waiver recorded successfully.",
         );
 
-        setWaiverFormOpen(false);
+        setWaiverFormOpen(
+          false,
+        );
 
         await loadWaivers();
 
         if (onLoanUpdated) {
           await onLoanUpdated();
         }
-      } catch (requestError) {
+      } catch (
+        requestError
+      ) {
         console.error(
           "Loan waiver submission error:",
           requestError,
         );
 
         setWaiverError(
-          requestError instanceof Error
+          requestError instanceof
+            Error
             ? requestError.message
             : "Something went wrong while recording the fine waiver.",
         );
       } finally {
-        setWaiverSubmitting(false);
+        setWaiverSubmitting(
+          false,
+        );
       }
     }, [
       loan,
@@ -1023,7 +1356,9 @@ export default function LoanTransactionModal({
           shadow-[0_30px_100px_rgba(0,0,0,0.6)]
         "
       >
-        {/* HEADER */}
+        {/* =================================================
+            HEADER
+        ================================================= */}
 
         <header
           className="
@@ -1069,20 +1404,25 @@ export default function LoanTransactionModal({
               id="loan-history-title"
               className="mt-2 truncate text-lg font-semibold text-white"
             >
-              {loan.loanNumber || "Loan"}
+              {loan.loanNumber ||
+                "Loan"}
             </h2>
 
             <p className="mt-1 truncate text-xs text-white/30">
               {loan.memberName ||
                 "Unknown member"}{" "}
-              · {loan.memberNumber || "—"}
+              ·{" "}
+              {loan.memberNumber ||
+                "—"}
             </p>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            disabled={waiverSubmitting}
+            disabled={
+              waiverSubmitting
+            }
             className="
               flex
               h-9
@@ -1107,7 +1447,9 @@ export default function LoanTransactionModal({
           </button>
         </header>
 
-        {/* LOAN SUMMARY */}
+        {/* =================================================
+            LOAN SUMMARY
+        ================================================= */}
 
         <div
           className="
@@ -1141,7 +1483,8 @@ export default function LoanTransactionModal({
               currentInstallmentBalance,
             )}
             danger={
-              currentInstallmentBalance > 0
+              currentInstallmentBalance >
+              0
             }
           />
 
@@ -1154,7 +1497,9 @@ export default function LoanTransactionModal({
           />
         </div>
 
-        {/* SCROLLABLE CONTENT */}
+        {/* =================================================
+            SCROLLABLE CONTENT
+        ================================================= */}
 
         <div
           className="
@@ -1167,7 +1512,9 @@ export default function LoanTransactionModal({
             scrollbar-thumb-white/10
           "
         >
-          {/* FINE WAIVERS */}
+          {/* =================================================
+              FINE WAIVERS
+          ================================================= */}
 
           <section className="mb-5 rounded-2xl border border-amber-500/10 bg-amber-500/[0.025] p-4">
             <div className="flex items-start justify-between gap-3">
@@ -1197,8 +1544,10 @@ export default function LoanTransactionModal({
                   </h3>
 
                   <p className="mt-1 text-[10px] leading-5 text-white/30">
-                    Manage authorized reductions of
-                    outstanding loan fines.
+                    Manage authorized
+                    reductions of
+                    outstanding loan
+                    fines.
                   </p>
                 </div>
               </div>
@@ -1266,7 +1615,8 @@ export default function LoanTransactionModal({
                   activeFineBalance,
                 )}
                 highlight={
-                  activeFineBalance > 0
+                  activeFineBalance >
+                  0
                 }
               />
             </div>
@@ -1320,8 +1670,11 @@ export default function LoanTransactionModal({
                         </h4>
 
                         <p className="mt-1 text-[9px] leading-5 text-white/25">
-                          This creates a permanent,
-                          audit-safe financial record.
+                          This creates a
+                          permanent,
+                          audit-safe
+                          financial
+                          record.
                         </p>
                       </div>
 
@@ -1376,13 +1729,23 @@ export default function LoanTransactionModal({
                             activeFineBalance
                           }
                           step="0.01"
-                          value={waiverAmount}
-                          onChange={(event) => {
+                          value={
+                            waiverAmount
+                          }
+                          onChange={(
+                            event,
+                          ) => {
                             setWaiverAmount(
-                              event.target.value,
+                              event
+                                .target
+                                .value,
                             );
-                            setWaiverError("");
-                            setWaiverSuccess("");
+                            setWaiverError(
+                              "",
+                            );
+                            setWaiverSuccess(
+                              "",
+                            );
                           }}
                           disabled={
                             waiverSubmitting
@@ -1411,7 +1774,8 @@ export default function LoanTransactionModal({
                       </div>
 
                       <p className="mt-1.5 text-[9px] text-white/20">
-                        Maximum available:{" "}
+                        Maximum
+                        available:{" "}
                         <span className="text-amber-400/60">
                           {formatKES(
                             activeFineBalance,
@@ -1426,18 +1790,30 @@ export default function LoanTransactionModal({
                       </span>
 
                       <textarea
-                        value={waiverReason}
-                        onChange={(event) => {
+                        value={
+                          waiverReason
+                        }
+                        onChange={(
+                          event,
+                        ) => {
                           setWaiverReason(
-                            event.target.value,
+                            event
+                              .target
+                              .value,
                           );
-                          setWaiverError("");
-                          setWaiverSuccess("");
+                          setWaiverError(
+                            "",
+                          );
+                          setWaiverSuccess(
+                            "",
+                          );
                         }}
                         disabled={
                           waiverSubmitting
                         }
-                        maxLength={1000}
+                        maxLength={
+                          1000
+                        }
                         rows={3}
                         placeholder="Why is this fine being waived?"
                         className="
@@ -1463,7 +1839,10 @@ export default function LoanTransactionModal({
                       />
 
                       <p className="mt-1 text-right text-[9px] text-white/20">
-                        {waiverReason.length}/1000
+                        {
+                          waiverReason.length
+                        }
+                        /1000
                       </p>
                     </label>
                   </div>
@@ -1474,11 +1853,15 @@ export default function LoanTransactionModal({
                         <CircleAlert
                           size={15}
                           className="mt-0.5 shrink-0 text-red-400"
-                          strokeWidth={1.8}
+                          strokeWidth={
+                            1.8
+                          }
                         />
 
                         <p className="break-words text-[10px] leading-5 text-red-300/75">
-                          {waiverError}
+                          {
+                            waiverError
+                          }
                         </p>
                       </div>
                     </div>
@@ -1490,11 +1873,15 @@ export default function LoanTransactionModal({
                         <CheckCircle2
                           size={15}
                           className="mt-0.5 shrink-0 text-emerald-400"
-                          strokeWidth={1.8}
+                          strokeWidth={
+                            1.8
+                          }
                         />
 
                         <p className="text-[10px] leading-5 text-emerald-300/75">
-                          {waiverSuccess}
+                          {
+                            waiverSuccess
+                          }
                         </p>
                       </div>
                     </div>
@@ -1503,10 +1890,16 @@ export default function LoanTransactionModal({
                   {pendingWaiverReference && (
                     <div className="mt-4 rounded-xl border border-blue-500/10 bg-blue-500/[0.025] p-3">
                       <p className="text-[9px] leading-5 text-blue-300/50">
-                        This submission has a retained
-                        transaction reference. If the
-                        previous request was interrupted,
-                        retrying will not create a duplicate
+                        This submission has
+                        a retained
+                        transaction
+                        reference. If
+                        the previous
+                        request was
+                        interrupted,
+                        retrying will
+                        not create a
+                        duplicate
                         waiver.
                       </p>
                     </div>
@@ -1578,7 +1971,9 @@ export default function LoanTransactionModal({
                           <RefreshCw
                             size={14}
                             className="animate-spin"
-                            strokeWidth={2}
+                            strokeWidth={
+                              2
+                            }
                           />
                           Recording...
                         </>
@@ -1586,7 +1981,9 @@ export default function LoanTransactionModal({
                         <>
                           <CheckCircle2
                             size={14}
-                            strokeWidth={2}
+                            strokeWidth={
+                              2
+                            }
                           />
                           Record Waiver
                         </>
@@ -1598,23 +1995,36 @@ export default function LoanTransactionModal({
 
             {!canRecordWaiver && (
               <div className="mt-4 rounded-xl border border-white/[0.06] bg-black/20 p-3">
-                {loan.status !== "active" ? (
+                {loan.status !==
+                "active" ? (
                   <p className="text-[10px] leading-5 text-white/30">
-                    Fine waivers cannot be recorded
-                    because this loan is{" "}
+                    Fine waivers
+                    cannot be
+                    recorded
+                    because this
+                    loan is{" "}
                     <span className="font-medium capitalize text-white/50">
-                      {loan.status}
+                      {
+                        loan.status
+                      }
                     </span>
                     .
                   </p>
                 ) : (
                   <p className="text-[10px] leading-5 text-white/30">
-                    There are currently no active
-                    fines available for waiver.
+                    There are
+                    currently no
+                    active fines
+                    available for
+                    waiver.
                   </p>
                 )}
               </div>
             )}
+
+            {/* =================================================
+                WAIVER HISTORY
+            ================================================= */}
 
             <div className="mt-5">
               <div className="mb-2 flex items-center justify-between gap-3">
@@ -1628,7 +2038,8 @@ export default function LoanTransactionModal({
                       "en-KE",
                     )}{" "}
                     recorded{" "}
-                    {waivers.length === 1
+                    {waivers.length ===
+                    1
                       ? "waiver"
                       : "waivers"}
                   </p>
@@ -1638,10 +2049,17 @@ export default function LoanTransactionModal({
               {waiversLoading ? (
                 <div className="space-y-2">
                   {Array.from(
-                    { length: 2 },
-                    (_, index) => (
+                    {
+                      length: 2,
+                    },
+                    (
+                      _,
+                      index,
+                    ) => (
                       <div
-                        key={index}
+                        key={
+                          index
+                        }
                         className="
                           h-[82px]
                           animate-pulse
@@ -1654,21 +2072,28 @@ export default function LoanTransactionModal({
                     ),
                   )}
                 </div>
-              ) : waivers.length === 0 ? (
+              ) : waivers.length ===
+                0 ? (
                 <div className="rounded-xl border border-dashed border-white/[0.07] bg-black/15 p-5 text-center">
                   <p className="text-[10px] font-medium text-white/35">
-                    No fine waivers recorded
+                    No fine waivers
+                    recorded
                   </p>
 
                   <p className="mt-1 text-[9px] leading-5 text-white/20">
-                    Approved fine waivers will appear
-                    here permanently.
+                    Approved fine
+                    waivers will
+                    appear here
+                    permanently.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-2">
                   {waivers.map(
-                    (waiver, index) => {
+                    (
+                      waiver,
+                      index,
+                    ) => {
                       const amount =
                         getWaiverAmount(
                           waiver,
@@ -1679,11 +2104,15 @@ export default function LoanTransactionModal({
                         "—";
 
                       const actorName =
-                        waiver.waivedBy?.name ||
+                        waiver
+                          .waivedBy
+                          ?.name ||
                         "Unknown";
 
                       const actorEmail =
-                        waiver.waivedBy?.email ||
+                        waiver
+                          .waivedBy
+                          ?.email ||
                         "—";
 
                       return (
@@ -1717,18 +2146,25 @@ export default function LoanTransactionModal({
                                   "
                                 >
                                   <FileWarning
-                                    size={14}
-                                    strokeWidth={1.8}
+                                    size={
+                                      14
+                                    }
+                                    strokeWidth={
+                                      1.8
+                                    }
                                   />
                                 </div>
 
                                 <div className="min-w-0">
                                   <p className="text-xs font-medium text-white/70">
-                                    Fine waiver
+                                    Fine
+                                    waiver
                                   </p>
 
                                   <p className="mt-0.5 truncate font-mono text-[9px] text-white/20">
-                                    {reference}
+                                    {
+                                      reference
+                                    }
                                   </p>
                                 </div>
                               </div>
@@ -1758,23 +2194,35 @@ export default function LoanTransactionModal({
                             <TransactionDetail
                               icon={
                                 <UserRound
-                                  size={12}
-                                  strokeWidth={1.8}
+                                  size={
+                                    12
+                                  }
+                                  strokeWidth={
+                                    1.8
+                                  }
                                 />
                               }
                               label="Waived by"
-                              value={actorName}
+                              value={
+                                actorName
+                              }
                             />
 
                             <TransactionDetail
                               icon={
                                 <Smartphone
-                                  size={12}
-                                  strokeWidth={1.8}
+                                  size={
+                                    12
+                                  }
+                                  strokeWidth={
+                                    1.8
+                                  }
                                 />
                               }
                               label="Actor email"
-                              value={actorEmail}
+                              value={
+                                actorEmail
+                              }
                             />
                           </div>
                         </article>
@@ -1786,7 +2234,9 @@ export default function LoanTransactionModal({
             </div>
           </section>
 
-          {/* TRANSACTION ERROR */}
+          {/* =================================================
+              TRANSACTION ERROR
+          ================================================= */}
 
           {error && (
             <div className="mb-4 rounded-xl border border-red-500/15 bg-red-500/[0.04] p-3">
@@ -1794,13 +2244,17 @@ export default function LoanTransactionModal({
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-500/10 text-red-400">
                   <CircleAlert
                     size={16}
-                    strokeWidth={1.8}
+                    strokeWidth={
+                      1.8
+                    }
                   />
                 </div>
 
                 <div className="min-w-0">
                   <p className="text-xs font-medium text-red-300">
-                    Transaction history unavailable
+                    Transaction
+                    history
+                    unavailable
                   </p>
 
                   <p className="mt-1 break-words text-[10px] leading-5 text-red-300/55">
@@ -1811,27 +2265,82 @@ export default function LoanTransactionModal({
             </div>
           )}
 
-          {/* REPAYMENT TRANSACTIONS */}
+          {/* =================================================
+              REPAYMENT TRANSACTIONS
+          ================================================= */}
 
           <section>
-            <div className="mb-3">
-              <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-white/25">
-                Repayment transactions
-              </p>
+            <div className="mb-3 flex items-end justify-between gap-3">
+              <div>
+                <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-white/25">
+                  Repayment
+                  transactions
+                </p>
 
-              <p className="mt-0.5 text-[9px] text-white/15">
-                Immutable repayment ledger for this
-                loan.
-              </p>
+                <p className="mt-0.5 text-[9px] text-white/15">
+                  Latest repayments
+                  appear first.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  void loadTransactions();
+                }}
+                disabled={
+                  loading ||
+                  waiverSubmitting
+                }
+                className="
+                  flex
+                  h-8
+                  w-8
+                  shrink-0
+                  items-center
+                  justify-center
+                  rounded-lg
+                  border
+                  border-white/[0.06]
+                  bg-white/[0.025]
+                  text-white/30
+                  transition
+                  hover:bg-white/[0.05]
+                  hover:text-white
+                  disabled:cursor-not-allowed
+                  disabled:opacity-40
+                "
+                aria-label="Refresh transactions"
+                title="Refresh transactions"
+              >
+                <RefreshCw
+                  size={14}
+                  strokeWidth={
+                    1.8
+                  }
+                  className={
+                    loading
+                      ? "animate-spin"
+                      : ""
+                  }
+                />
+              </button>
             </div>
 
             {loading ? (
               <div className="space-y-2">
                 {Array.from(
-                  { length: 3 },
-                  (_, index) => (
+                  {
+                    length: 3,
+                  },
+                  (
+                    _,
+                    index,
+                  ) => (
                     <div
-                      key={index}
+                      key={
+                        index
+                      }
                       className="
                         h-[88px]
                         animate-pulse
@@ -1844,7 +2353,8 @@ export default function LoanTransactionModal({
                   ),
                 )}
               </div>
-            ) : transactions.length === 0 ? (
+            ) : transactions.length ===
+              0 ? (
               <div
                 className="
                   flex
@@ -1875,17 +2385,23 @@ export default function LoanTransactionModal({
                   >
                     <ArrowDownLeft
                       size={21}
-                      strokeWidth={1.7}
+                      strokeWidth={
+                        1.7
+                      }
                     />
                   </div>
 
                   <p className="mt-4 text-sm font-medium text-white/55">
-                    No repayment transactions
+                    No repayment
+                    transactions
                   </p>
 
                   <p className="mt-1 text-xs leading-5 text-white/25">
-                    No repayments have been recorded
-                    against this loan.
+                    No repayments
+                    have been
+                    recorded
+                    against this
+                    loan.
                   </p>
                 </div>
               </div>
@@ -1896,9 +2412,10 @@ export default function LoanTransactionModal({
                     transaction,
                     index,
                   ) => {
-                    const amount = Number(
-                      transaction.amount,
-                    );
+                    const amount =
+                      Number(
+                        transaction.amount,
+                      );
 
                     const validAmount =
                       Number.isFinite(
@@ -1910,9 +2427,9 @@ export default function LoanTransactionModal({
                       amount > 0;
 
                     const transactionDate =
-                      transaction.transactionDate ||
-                      transaction.createdAt ||
-                      transaction.updatedAt;
+                      getTransactionDateValue(
+                        transaction,
+                      );
 
                     const reference =
                       getReference(
@@ -1951,18 +2468,25 @@ export default function LoanTransactionModal({
                               "
                             >
                               <ArrowDownLeft
-                                size={16}
-                                strokeWidth={1.8}
+                                size={
+                                  16
+                                }
+                                strokeWidth={
+                                  1.8
+                                }
                               />
                             </div>
 
                             <div className="min-w-0">
                               <p className="truncate text-xs font-medium text-white/75">
-                                Loan repayment
+                                Loan
+                                repayment
                               </p>
 
                               <p className="mt-0.5 truncate font-mono text-[10px] text-white/25">
-                                {reference}
+                                {
+                                  reference
+                                }
                               </p>
                             </div>
                           </div>
@@ -1979,7 +2503,9 @@ export default function LoanTransactionModal({
                               }
                             `}
                           >
-                            {positive ? "+" : ""}
+                            {positive
+                              ? "+"
+                              : ""}
                             {formatKES(
                               transaction.amount,
                             )}
@@ -1990,8 +2516,12 @@ export default function LoanTransactionModal({
                           <TransactionDetail
                             icon={
                               <Smartphone
-                                size={12}
-                                strokeWidth={1.8}
+                                size={
+                                  12
+                                }
+                                strokeWidth={
+                                  1.8
+                                }
                               />
                             }
                             label="Source"
@@ -2003,8 +2533,12 @@ export default function LoanTransactionModal({
                           <TransactionDetail
                             icon={
                               <Clock3
-                                size={12}
-                                strokeWidth={1.8}
+                                size={
+                                  12
+                                }
+                                strokeWidth={
+                                  1.8
+                                }
                               />
                             }
                             label="Date"
@@ -2018,13 +2552,21 @@ export default function LoanTransactionModal({
                               transaction.status?.toLowerCase() ===
                               "reversed" ? (
                                 <XCircle
-                                  size={12}
-                                  strokeWidth={1.8}
+                                  size={
+                                    12
+                                  }
+                                  strokeWidth={
+                                    1.8
+                                  }
                                 />
                               ) : (
                                 <CheckCircle2
-                                  size={12}
-                                  strokeWidth={1.8}
+                                  size={
+                                    12
+                                  }
+                                  strokeWidth={
+                                    1.8
+                                  }
                                 />
                               )
                             }
@@ -2037,12 +2579,18 @@ export default function LoanTransactionModal({
                           <TransactionDetail
                             icon={
                               <UserRound
-                                size={12}
-                                strokeWidth={1.8}
+                                size={
+                                  12
+                                }
+                                strokeWidth={
+                                  1.8
+                                }
                               />
                             }
                             label="Reference"
-                            value={reference}
+                            value={
+                              reference
+                            }
                           />
                         </div>
 
@@ -2077,7 +2625,8 @@ export default function LoanTransactionModal({
                         {transaction.rawMessage && (
                           <details className="mt-3 rounded-lg bg-black/20">
                             <summary className="cursor-pointer px-3 py-2 text-[9px] uppercase tracking-[0.12em] text-white/20">
-                              Source message
+                              Source
+                              message
                             </summary>
 
                             <p className="border-t border-white/[0.04] px-3 py-2.5 text-[10px] leading-5 text-white/35">
@@ -2096,7 +2645,9 @@ export default function LoanTransactionModal({
           </section>
         </div>
 
-        {/* FOOTER */}
+        {/* =================================================
+            FOOTER
+        ================================================= */}
 
         <footer
           className="
@@ -2112,26 +2663,44 @@ export default function LoanTransactionModal({
             sm:px-5
           "
         >
-          <p className="text-[10px] text-white/20">
-            {transactions.length.toLocaleString(
-              "en-KE",
-            )}{" "}
-            {transactions.length === 1
-              ? "transaction"
-              : "transactions"}{" "}
-            ·{" "}
-            {waivers.length.toLocaleString(
-              "en-KE",
-            )}{" "}
-            {waivers.length === 1
-              ? "waiver"
-              : "waivers"}
-          </p>
+          <div className="min-w-0">
+            <p className="text-[10px] text-white/20">
+              {transactions.length.toLocaleString(
+                "en-KE",
+              )}{" "}
+              {transactions.length ===
+              1
+                ? "transaction"
+                : "transactions"}{" "}
+              ·{" "}
+              {waivers.length.toLocaleString(
+                "en-KE",
+              )}{" "}
+              {waivers.length ===
+              1
+                ? "waiver"
+                : "waivers"}
+            </p>
+
+            {totalRepayments >
+              0 && (
+              <p className="mt-0.5 text-[9px] text-white/15">
+                Total repayments:{" "}
+                <span className="text-emerald-400/50">
+                  {formatKES(
+                    totalRepayments,
+                  )}
+                </span>
+              </p>
+            )}
+          </div>
 
           <button
             type="button"
             onClick={onClose}
-            disabled={waiverSubmitting}
+            disabled={
+              waiverSubmitting
+            }
             className="
               inline-flex
               h-9
