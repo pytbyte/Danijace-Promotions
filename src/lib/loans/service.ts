@@ -1165,6 +1165,11 @@ function toLoan(
 
     memberId:
       document.memberId.toString(),
+
+    // Response-only derived value.
+    // The actual value is attached by getLoanById(),
+    // getLoanByNumber(), and getLoans().
+    completedInstallmentBalance: 0,
   };
 }
 
