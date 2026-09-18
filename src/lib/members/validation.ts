@@ -249,7 +249,7 @@ export function validateMember(
     const statuses: MemberStatus[] = [
       "active",
       "inactive",
-      "blacklisted",
+      "suspended",
     ];
 
     if (!statuses.includes(member.status)) {

@@ -1,7 +1,7 @@
 export type MemberStatus =
   | "active"
   | "inactive"
-  | "blacklisted";
+  | "suspended";
 
 export type MemberGender =
   | "male"
