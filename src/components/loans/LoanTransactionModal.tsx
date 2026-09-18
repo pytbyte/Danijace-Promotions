@@ -682,7 +682,7 @@ export default function LoanTransactionModal({
   const currentInstallmentBalance =
     useMemo(() => {
       const value = Number(
-        loan?.currentInstallmentBalance,
+        loan?.completedInstallmentBalance,
       );
 
       if (!Number.isFinite(value)) {
@@ -691,7 +691,7 @@ export default function LoanTransactionModal({
 
       return Math.max(0, value);
     }, [
-      loan?.currentInstallmentBalance,
+      loan?.completedInstallmentBalance,
     ]);
 
   /* =======================================================
