@@ -2074,7 +2074,7 @@ export async function suspendMember(
    */
   if (
     existing.status ===
-    "blacklisted"
+    "suspended"
   ) {
     return toMember(
       existing,
@@ -2094,7 +2094,7 @@ export async function suspendMember(
       {
         $set: {
           status:
-            "blacklisted",
+            "suspended",
 
           updatedAt:
             now,

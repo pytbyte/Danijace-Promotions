@@ -998,7 +998,7 @@ function StatusBadge({
       dot: "bg-slate-400",
     },
 
-    blacklisted: {
+    suspended: {
       label: "Blacklisted",
       badge:
         "bg-red-50 text-red-700",
@@ -1017,7 +1017,7 @@ function StatusBadge({
       : normalizedStatus === "inactive"
         ? config.inactive
         : normalizedStatus === "blacklisted"
-          ? config.blacklisted
+          ? config.suspended
           : {
               label: "Unknown",
               badge:

@@ -370,7 +370,7 @@ export default function MemberViewModal({
                           "active"
                             ? "bg-emerald-50 text-emerald-700"
                             : member.status ===
-                                "blacklisted"
+                                "suspended"
                               ? "bg-rose-50 text-rose-700"
                               : "bg-slate-100 text-slate-600"
                         }
