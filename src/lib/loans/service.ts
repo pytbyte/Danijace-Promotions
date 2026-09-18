@@ -3162,6 +3162,7 @@ export async function getCompletedInstallmentBalance(
   const {
     loans,
     assessments,
+    repayments: repaymentCollection,
   } =
     await getCollections();
 
@@ -3170,6 +3171,9 @@ export async function getCompletedInstallmentBalance(
       loanId,
     );
 
+  /*
+   * Confirm that the loan exists.
+   */
   const loan =
     await loans.findOne({
       _id:
@@ -3182,39 +3186,190 @@ export async function getCompletedInstallmentBalance(
     );
   }
 
-  const result =
+  /*
+   * Every assessment represents one completed
+   * repayment cycle.
+   */
+  const completedAssessments =
     await assessments
-      .aggregate<{
-        _id: null;
-        total: number;
-      }>(
-        [
-          {
-            $match: {
-              loanId:
-                objectId,
-            },
-          },
-
-          {
-            $group: {
-              _id: null,
-
-              total: {
-                $sum:
-                  "$installmentShortfall",
-              },
-            },
-          },
-        ],
-      )
+      .find({
+        loanId:
+          objectId,
+      })
+      .project<{
+        periodNumber: number;
+        periodStart: CalendarDate;
+        periodEnd: CalendarDate;
+        expectedInstallment: number;
+      }>({
+        periodNumber: 1,
+        periodStart: 1,
+        periodEnd: 1,
+        expectedInstallment: 1,
+      })
+      .sort({
+        periodNumber: 1,
+      })
       .toArray();
 
-  return money(
-    Number(
-      result[0]?.total ??
+  if (
+    completedAssessments.length === 0
+  ) {
+    return 0;
+  }
+
+  /*
+   * Find the complete CalendarDate range covered
+   * by the completed assessments.
+   *
+   * YYYY-MM-DD strings sort chronologically,
+   * so no JavaScript Date conversion is required.
+   */
+  const periodStart =
+    completedAssessments.reduce(
+      (
+        earliest: CalendarDate,
+        assessment,
+      ) =>
+        assessment.periodStart <
+        earliest
+          ? assessment.periodStart
+          : earliest,
+      completedAssessments[0]
+        .periodStart,
+    );
+
+  const periodEnd =
+    completedAssessments.reduce(
+      (
+        latest: CalendarDate,
+        assessment,
+      ) =>
+        assessment.periodEnd >
+        latest
+          ? assessment.periodEnd
+          : latest,
+      completedAssessments[0]
+        .periodEnd,
+    );
+
+  /*
+   * Fetch repayments that fall inside the overall
+   * completed-assessment date range.
+   *
+   * The result is an ARRAY. The collection itself
+   * remains named repaymentCollection.
+   */
+  const repaymentRecords =
+    await repaymentCollection
+      .find({
+        loanId:
+          objectId,
+
+        transactionDate: {
+          $gte:
+            periodStart,
+          $lte:
+            periodEnd,
+        },
+      })
+      .project<{
+        amount: number;
+        transactionDate: CalendarDate;
+      }>({
+        amount: 1,
+        transactionDate: 1,
+      })
+      .toArray();
+
+  /*
+   * Calculate the unpaid portion of every completed
+   * repayment cycle independently.
+   */
+  let completedBalance = 0;
+
+  for (
+    const assessment of completedAssessments
+  ) {
+    const expectedInstallment =
+      Math.max(
         0,
-    ),
+        Number(
+          assessment.expectedInstallment ??
+            0,
+        ),
+      );
+
+    if (
+      expectedInstallment <= 0
+    ) {
+      continue;
+    }
+
+    /*
+     * Allocate repayments to this specific
+     * assessment period.
+     */
+    let paymentsDuringPeriod = 0;
+
+    for (
+      const repayment of repaymentRecords
+    ) {
+      const transactionDate =
+        repayment.transactionDate;
+
+      if (
+        typeof transactionDate !==
+        "string"
+      ) {
+        continue;
+      }
+
+      if (
+        transactionDate <
+          assessment.periodStart ||
+        transactionDate >
+          assessment.periodEnd
+      ) {
+        continue;
+      }
+
+      const amount =
+        Number(
+          repayment.amount ??
+            0,
+        );
+
+      if (
+        !Number.isFinite(
+          amount,
+        ) ||
+        amount <= 0
+      ) {
+        continue;
+      }
+
+      paymentsDuringPeriod +=
+        amount;
+    }
+
+    /*
+     * A payment can never make an installment
+     * balance negative.
+     */
+    const remainingInstallment =
+      Math.max(
+        0,
+        expectedInstallment -
+          paymentsDuringPeriod,
+      );
+
+    completedBalance +=
+      remainingInstallment;
+  }
+
+  return money(
+    completedBalance,
   );
 }
 
