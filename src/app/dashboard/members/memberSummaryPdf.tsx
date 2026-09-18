@@ -538,14 +538,17 @@ function getMemberStatus(
     (member as PdfMember & {
       status?: unknown;
     }).status,
-  );
+  ).toLowerCase();
 
   if (!status) {
     return "Unknown";
   }
 
+  if (status === "suspended") {
+    return "Blacklisted";
+  }
+
   return status
-    .toLowerCase()
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (char) =>
       char.toUpperCase(),
