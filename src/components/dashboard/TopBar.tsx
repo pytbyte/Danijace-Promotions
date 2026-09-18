@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useMemo,
   useState,
 } from "react";
 
@@ -11,6 +12,7 @@ import {
 } from "next-auth/react";
 
 import {
+  Calculator,
   ChevronDown,
   HandCoins,
   LayoutDashboard,
@@ -27,8 +29,10 @@ import {
   useRouter,
 } from "next/navigation";
 
+import type { Loan } from "@/lib/loans/types";
+
 /* =========================================================
-   TYPES
+TYPES
 ========================================================= */
 
 type MenuItem = {
@@ -43,8 +47,21 @@ type AndroidGoogleUser = {
   picture?: string;
 };
 
+type LoanProfitPanelProps = {
+  loans: Loan[];
+  loading: boolean;
+  error: string;
+  from: string;
+  to: string;
+  rate: string;
+  onFromChange: (value: string) => void;
+  onToChange: (value: string) => void;
+  onRateChange: (value: string) => void;
+  onRetry: () => void;
+};
+
 /* =========================================================
-   NAVIGATION
+NAVIGATION
 ========================================================= */
 
 const menuItems: MenuItem[] = [
@@ -101,7 +118,424 @@ const menuItems: MenuItem[] = [
 ];
 
 /* =========================================================
-   TOP BAR
+HELPERS
+========================================================= */
+
+function formatKES(
+  value: number,
+): string {
+  return new Intl.NumberFormat(
+    "en-KE",
+    {
+      style: "currency",
+      currency: "KES",
+      maximumFractionDigits: 0,
+    },
+  ).format(
+    Number.isFinite(value)
+      ? value
+      : 0,
+  );
+}
+
+/* =========================================================
+LOAN PROFIT PANEL
+========================================================= */
+
+function LoanProfitPanel({
+  loans,
+  loading,
+  error,
+  from,
+  to,
+  rate,
+  onFromChange,
+  onToChange,
+  onRateChange,
+  onRetry,
+}: LoanProfitPanelProps) {
+  const result = useMemo(() => {
+    const interestRate =
+      Number(rate);
+
+    if (
+      !Number.isFinite(
+        interestRate,
+      ) ||
+      interestRate < 0
+    ) {
+      return {
+        count: 0,
+        principal: 0,
+        profit: 0,
+        total: 0,
+      };
+    }
+
+    const matchingLoans =
+      loans.filter(
+        (loan) => {
+          const date =
+            loan.disbursementDate;
+
+          /*
+           * Loan calendar dates are stored
+           * exactly as YYYY-MM-DD strings.
+           *
+           * Never convert these to JS Date.
+           */
+          if (
+            typeof date !==
+              "string" ||
+            !/^\d{4}-\d{2}-\d{2}$/.test(
+              date,
+            )
+          ) {
+            return false;
+          }
+
+          if (
+            from &&
+            date < from
+          ) {
+            return false;
+          }
+
+          if (
+            to &&
+            date > to
+          ) {
+            return false;
+          }
+
+          return true;
+        },
+      );
+
+    const principal =
+      matchingLoans.reduce(
+        (
+          total,
+          loan,
+        ) => {
+          const amount =
+            Number(
+              loan.principal ??
+                0,
+            );
+
+          return (
+            total +
+            (
+              Number.isFinite(
+                amount,
+              )
+                ? amount
+                : 0
+            )
+          );
+        },
+        0,
+      );
+
+    const profit =
+      principal *
+      (
+        interestRate /
+        100
+      );
+
+    return {
+      count:
+        matchingLoans.length,
+      principal,
+      profit,
+      total:
+        principal +
+        profit,
+    };
+  }, [
+    loans,
+    from,
+    to,
+    rate,
+  ]);
+
+  if (loading) {
+    return (
+      <div className="px-1 pb-2">
+        <div
+          className="
+            rounded-xl
+            border
+            border-white/[0.08]
+            bg-white/[0.025]
+            p-3
+          "
+        >
+          <div className="flex items-center justify-center gap-2 py-4">
+            <div
+              className="
+                h-3
+                w-3
+                animate-spin
+                rounded-full
+                border
+                border-white/15
+                border-t-yellow-400
+              "
+            />
+
+            <span className="text-[11px] text-white/35">
+              Loading loans...
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="px-1 pb-2">
+        <div
+          className="
+            rounded-xl
+            border
+            border-red-500/10
+            bg-red-500/[0.035]
+            p-3
+          "
+        >
+          <div className="py-2 text-center">
+            <p className="text-[11px] text-red-300/70">
+              {error}
+            </p>
+
+            <button
+              type="button"
+              onClick={onRetry}
+              className="
+                mt-2
+                rounded-lg
+                border
+                border-white/10
+                bg-white/[0.04]
+                px-3
+                py-1.5
+                text-[10px]
+                font-medium
+                text-white/60
+                transition
+                hover:bg-white/[0.08]
+                hover:text-white
+              "
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-1 pb-2">
+      <div
+        className="
+          rounded-xl
+          border
+          border-white/[0.08]
+          bg-white/[0.025]
+          p-3
+        "
+      >
+        {/* =================================================
+        DATE RANGE
+        ================================================= */}
+
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label
+              className="
+                mb-1
+                block
+                text-[9px]
+                uppercase
+                tracking-wide
+                text-white/30
+              "
+            >
+              From
+            </label>
+
+            <input
+              type="date"
+              value={from}
+              onChange={(event) =>
+                onFromChange(
+                  event.target.value,
+                )
+              }
+              className="
+                w-full
+                rounded-lg
+                border
+                border-white/10
+                bg-black/30
+                px-2
+                py-2
+                text-[11px]
+                text-white
+                outline-none
+                focus:border-yellow-500/40
+              "
+            />
+          </div>
+
+          <div>
+            <label
+              className="
+                mb-1
+                block
+                text-[9px]
+                uppercase
+                tracking-wide
+                text-white/30
+              "
+            >
+              To
+            </label>
+
+            <input
+              type="date"
+              value={to}
+              onChange={(event) =>
+                onToChange(
+                  event.target.value,
+                )
+              }
+              className="
+                w-full
+                rounded-lg
+                border
+                border-white/10
+                bg-black/30
+                px-2
+                py-2
+                text-[11px]
+                text-white
+                outline-none
+                focus:border-yellow-500/40
+              "
+            />
+          </div>
+        </div>
+
+        {/* =================================================
+        INTEREST RATE
+        ================================================= */}
+
+        <div className="mt-2">
+          <label
+            className="
+              mb-1
+              block
+              text-[9px]
+              uppercase
+              tracking-wide
+              text-white/30
+            "
+          >
+            Interest %
+          </label>
+
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={rate}
+            onChange={(event) =>
+              onRateChange(
+                event.target.value,
+              )
+            }
+            placeholder="e.g. 15"
+            className="
+              w-full
+              rounded-lg
+              border
+              border-white/10
+              bg-black/30
+              px-2.5
+              py-2
+              text-xs
+              text-white
+              outline-none
+              placeholder:text-white/20
+              focus:border-yellow-500/40
+            "
+          />
+        </div>
+
+        {/* =================================================
+        RESULTS
+        ================================================= */}
+
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="rounded-lg bg-white/[0.035] p-2">
+            <p className="text-[8px] uppercase tracking-wide text-white/30">
+              Loans
+            </p>
+
+            <p className="mt-0.5 text-xs font-semibold text-white">
+              {result.count}
+            </p>
+          </div>
+
+          <div className="rounded-lg bg-white/[0.035] p-2">
+            <p className="text-[8px] uppercase tracking-wide text-white/30">
+              Principal
+            </p>
+
+            <p className="mt-0.5 truncate text-xs font-semibold text-white">
+              {formatKES(
+                result.principal,
+              )}
+            </p>
+          </div>
+
+          <div className="rounded-lg bg-yellow-500/[0.08] p-2">
+            <p className="text-[8px] uppercase tracking-wide text-yellow-500/50">
+              Profit
+            </p>
+
+            <p className="mt-0.5 truncate text-xs font-semibold text-yellow-400">
+              {formatKES(
+                result.profit,
+              )}
+            </p>
+          </div>
+
+          <div className="rounded-lg bg-white/[0.035] p-2">
+            <p className="text-[8px] uppercase tracking-wide text-white/30">
+              Total
+            </p>
+
+            <p className="mt-0.5 truncate text-xs font-semibold text-white">
+              {formatKES(
+                result.total,
+              )}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+TOP BAR
 ========================================================= */
 
 export default function TopBar() {
@@ -116,7 +550,7 @@ export default function TopBar() {
     usePathname();
 
   /* =======================================================
-     UI STATE
+  UI STATE
   ======================================================= */
 
   const [
@@ -129,17 +563,60 @@ export default function TopBar() {
     setMobileOpen,
   ] = useState(false);
 
+  const [
+    profitOpen,
+    setProfitOpen,
+  ] = useState(false);
+
   /* =======================================================
-     ANDROID GOOGLE USER
+  PROFIT CALCULATOR STATE
+  ======================================================= */
+
+  const [
+    loans,
+    setLoans,
+  ] = useState<Loan[]>([]);
+
+  const [
+    loansLoading,
+    setLoansLoading,
+  ] = useState(false);
+
+  const [
+    loansError,
+    setLoansError,
+  ] = useState("");
+
+  const [
+    loanLoadVersion,
+    setLoanLoadVersion,
+  ] = useState(0);
+
+  const [
+    profitFrom,
+    setProfitFrom,
+  ] = useState("");
+
+  const [
+    profitTo,
+    setProfitTo,
+  ] = useState("");
+
+  const [
+    profitRate,
+    setProfitRate,
+  ] = useState("");
+
+  /* =======================================================
+  ANDROID GOOGLE USER
   ======================================================= */
 
   const [
     androidUser,
     setAndroidUser,
-  ] =
-    useState<AndroidGoogleUser | null>(
-      null,
-    );
+  ] = useState<AndroidGoogleUser | null>(
+    null,
+  );
 
   useEffect(() => {
     if (
@@ -161,8 +638,7 @@ export default function TopBar() {
         );
 
       if (
-        authenticated ===
-          "true" &&
+        authenticated === "true" &&
         storedUser
       ) {
         const parsed =
@@ -191,18 +667,172 @@ export default function TopBar() {
   }, []);
 
   /* =======================================================
-     AUTHENTICATED USER
+  LOAD LOANS WHEN PROFIT CALCULATOR OPENS
+  ======================================================= */
+
+  useEffect(() => {
+    if (!profitOpen) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadLoans() {
+      try {
+        setLoansLoading(
+          true,
+        );
+
+        setLoansError("");
+
+        /*
+         * Existing production endpoint:
+         *
+         * GET /api/loans
+         *
+         * The endpoint accepts a maximum limit of 1000.
+         * The profit calculator needs the available loan
+         * collection rather than the default first page.
+         */
+        const response =
+          await fetch(
+            "/api/loans?limit=1000",
+            {
+              method: "GET",
+              cache: "no-store",
+              headers: {
+                Accept:
+                  "application/json",
+              },
+            },
+          );
+
+        const result =
+          await response
+            .json()
+            .catch(
+              () => null,
+            );
+
+        if (
+          !response.ok
+        ) {
+          throw new Error(
+            result?.message ||
+              result?.error ||
+              `Unable to load loans. HTTP ${response.status}`,
+          );
+        }
+
+        if (
+          !result?.success
+        ) {
+          throw new Error(
+            result?.message ||
+              "The loan service returned an unsuccessful response.",
+          );
+        }
+
+        /*
+         * Your GET /api/loans route returns:
+         *
+         * {
+         *   success: true,
+         *   data: Loan[],
+         *   count: number,
+         *   total: number,
+         *   page: number,
+         *   limit: number,
+         *   totalPages: number
+         * }
+         */
+        if (
+          !Array.isArray(
+            result.data,
+          )
+        ) {
+          throw new Error(
+            "The loan service returned an invalid loan list.",
+          );
+        }
+
+        const receivedLoans =
+          result.data as Loan[];
+
+        if (
+          cancelled
+        ) {
+          return;
+        }
+
+        setLoans(
+          receivedLoans,
+        );
+
+        setLoansError("");
+      } catch (error) {
+        if (
+          cancelled
+        ) {
+          return;
+        }
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unable to load loans.";
+
+        console.error(
+          "Unable to load loans for profit calculation:",
+          error,
+        );
+
+        setLoans([]);
+        setLoansError(
+          message,
+        );
+      } finally {
+        if (
+          !cancelled
+        ) {
+          setLoansLoading(
+            false,
+          );
+        }
+      }
+    }
+
+    void loadLoans();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    profitOpen,
+    loanLoadVersion,
+  ]);
+
+  /* =======================================================
+  RETRY LOAN LOAD
+  ======================================================= */
+
+  const retryLoanLoad =
+    () => {
+      setLoans([]);
+      setLoansError("");
+      setLoanLoadVersion(
+        (value) =>
+          value + 1,
+      );
+    };
+
+  /* =======================================================
+  AUTHENTICATED USER
   ======================================================= */
 
   const user =
     session?.user;
 
-  /*
-   * NextAuth takes priority.
-   *
-   * Android falls back to the locally stored Google user
-   * for DISPLAY purposes only.
-   */
   const name =
     user?.name ||
     androidUser?.name ||
@@ -219,13 +849,17 @@ export default function TopBar() {
     null;
 
   /* =======================================================
-     NAVIGATION
+  NAVIGATION
   ======================================================= */
 
   const navigateTo = (
     href: string,
   ) => {
     setProfileOpen(
+      false,
+    );
+
+    setProfitOpen(
       false,
     );
 
@@ -239,15 +873,12 @@ export default function TopBar() {
   };
 
   /* =======================================================
-     SIGN OUT
+  SIGN OUT
   ======================================================= */
 
   const handleSignOut =
     async () => {
       try {
-        /*
-         * Clear Android local authentication data.
-         */
         if (
           typeof window !==
           "undefined"
@@ -265,9 +896,6 @@ export default function TopBar() {
           null,
         );
 
-        /*
-         * Sign out of NextAuth when a server session exists.
-         */
         if (session) {
           await signOut({
             callbackUrl:
@@ -277,9 +905,6 @@ export default function TopBar() {
           return;
         }
 
-        /*
-         * Android/local-only display authentication.
-         */
         router.push(
           "/",
         );
@@ -296,13 +921,33 @@ export default function TopBar() {
     };
 
   /* =======================================================
-     RENDER
+  PROFILE TOGGLE
+  ======================================================= */
+
+  const toggleProfile =
+    () => {
+      setProfileOpen(
+        (value) =>
+          !value,
+      );
+
+      setProfitOpen(
+        false,
+      );
+
+      setMobileOpen(
+        false,
+      );
+    };
+
+  /* =======================================================
+  RENDER
   ======================================================= */
 
   return (
     <>
       {/* =====================================================
-          TOP BAR
+      TOP BAR
       ===================================================== */}
 
       <header
@@ -320,7 +965,7 @@ export default function TopBar() {
         "
       >
         {/* =================================================
-            MOBILE TOP BAR
+        MOBILE TOP BAR
         ================================================= */}
 
         <div
@@ -334,10 +979,6 @@ export default function TopBar() {
             lg:hidden
           "
         >
-          {/* -------------------------------------------------
-              MENU BUTTON
-          ------------------------------------------------- */}
-
           <div className="flex min-w-0 items-center justify-start">
             <button
               type="button"
@@ -372,25 +1013,14 @@ export default function TopBar() {
             </button>
           </div>
 
-          {/* -------------------------------------------------
-              MOBILE PROFILE
-          ------------------------------------------------- */}
+          {/* MOBILE PROFILE */}
 
           <div className="relative flex min-w-0 items-center justify-end">
             <button
               type="button"
-              onClick={() => {
-                setProfileOpen(
-                  (
-                    value,
-                  ) =>
-                    !value,
-                );
-
-                setMobileOpen(
-                  false,
-                );
-              }}
+              onClick={
+                toggleProfile
+              }
               className="
                 flex
                 h-10
@@ -406,12 +1036,8 @@ export default function TopBar() {
             >
               {image ? (
                 <img
-                  src={
-                    image
-                  }
-                  alt={
-                    name
-                  }
+                  src={image}
+                  alt={name}
                   className="
                     h-9
                     w-9
@@ -437,17 +1063,11 @@ export default function TopBar() {
                   "
                 >
                   {name
-                    .charAt(
-                      0,
-                    )
+                    .charAt(0)
                     .toUpperCase()}
                 </div>
               )}
             </button>
-
-            {/* ------------------------------------------------
-                MOBILE PROFILE DROPDOWN
-            ------------------------------------------------ */}
 
             {profileOpen && (
               <div
@@ -456,7 +1076,7 @@ export default function TopBar() {
                   right-0
                   top-12
                   z-[80]
-                  w-[min(285px,calc(100vw-24px))]
+                  w-[min(300px,calc(100vw-24px))]
                   overflow-hidden
                   rounded-2xl
                   border
@@ -467,15 +1087,10 @@ export default function TopBar() {
               >
                 <div className="border-b border-white/[0.08] p-5">
                   <div className="flex items-center gap-3.5">
-
                     {image ? (
                       <img
-                        src={
-                          image
-                        }
-                        alt={
-                          name
-                        }
+                        src={image}
+                        alt={name}
                         className="
                           h-12
                           w-12
@@ -503,34 +1118,107 @@ export default function TopBar() {
                         "
                       >
                         {name
-                          .charAt(
-                            0,
-                          )
+                          .charAt(0)
                           .toUpperCase()}
                       </div>
                     )}
 
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-white">
-                        {
-                          name
-                        }
+                        {name}
                       </p>
 
                       <p className="mt-1 truncate text-xs text-white/35">
-                        {
-                          email ||
-                          "No email"
-                        }
+                        {email ||
+                          "No email"}
                       </p>
                     </div>
-
                   </div>
                 </div>
 
                 <div className="p-2.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setProfitOpen(
+                        (value) =>
+                          !value,
+                      )
+                    }
+                    className="
+                      flex
+                      w-full
+                      items-center
+                      gap-3
+                      rounded-xl
+                      px-3.5
+                      py-3
+                      text-sm
+                      text-white/60
+                      transition
+                      hover:bg-white/[0.06]
+                      hover:text-white
+                    "
+                  >
+                    <Calculator
+                      size={18}
+                      strokeWidth={1.8}
+                      className="text-yellow-400"
+                    />
 
-                 
+                    <span className="flex-1 text-left">
+                      Projections
+                    </span>
+
+                    <ChevronDown
+                      size={15}
+                      strokeWidth={1.8}
+                      className={`
+                        text-white/30
+                        transition-transform
+                        ${
+                          profitOpen
+                            ? "rotate-180"
+                            : ""
+                        }
+                      `}
+                    />
+                  </button>
+
+                  {profitOpen && (
+                    <LoanProfitPanel
+                      loans={
+                        loans
+                      }
+                      loading={
+                        loansLoading
+                      }
+                      error={
+                        loansError
+                      }
+                      from={
+                        profitFrom
+                      }
+                      to={
+                        profitTo
+                      }
+                      rate={
+                        profitRate
+                      }
+                      onFromChange={
+                        setProfitFrom
+                      }
+                      onToChange={
+                        setProfitTo
+                      }
+                      onRateChange={
+                        setProfitRate
+                      }
+                      onRetry={
+                        retryLoanLoad
+                      }
+                    />
+                  )}
 
                   <button
                     type="button"
@@ -561,7 +1249,6 @@ export default function TopBar() {
                       Sign out
                     </span>
                   </button>
-
                 </div>
               </div>
             )}
@@ -569,7 +1256,7 @@ export default function TopBar() {
         </div>
 
         {/* =================================================
-            DESKTOP TOP BAR
+        DESKTOP TOP BAR
         ================================================= */}
 
         <div
@@ -586,9 +1273,7 @@ export default function TopBar() {
             xl:px-10
           "
         >
-          {/* -------------------------------------------------
-              BRAND
-          ------------------------------------------------- */}
+          {/* BRAND */}
 
           <button
             type="button"
@@ -601,7 +1286,6 @@ export default function TopBar() {
             aria-label="Go to dashboard"
           >
             <div className="flex items-center gap-2.5">
-
               <img
                 src="/logo.png"
                 alt="GEO-SHUA"
@@ -614,7 +1298,6 @@ export default function TopBar() {
               />
 
               <div className="hidden text-left xl:block">
-
                 <p
                   className="
                     text-sm
@@ -637,21 +1320,15 @@ export default function TopBar() {
                 >
                   Company
                 </p>
-
               </div>
             </div>
           </button>
 
-          {/* =================================================
-              DESKTOP NAVIGATION
-          ================================================= */}
+          {/* DESKTOP NAVIGATION */}
 
           <nav className="ml-auto flex min-w-0 items-center gap-1">
-
             {menuItems.map(
-              (
-                item,
-              ) => {
+              (item) => {
                 const active =
                   pathname ===
                     item.href ||
@@ -701,13 +1378,7 @@ export default function TopBar() {
                       }
                     </span>
 
-                    <span
-                      className="
-                        hidden
-                        whitespace-nowrap
-                        xl:inline
-                      "
-                    >
+                    <span className="hidden whitespace-nowrap xl:inline">
                       {
                         item.label
                       }
@@ -716,29 +1387,16 @@ export default function TopBar() {
                 );
               },
             )}
-
           </nav>
 
-          {/* =================================================
-              DESKTOP PROFILE
-          ================================================= */}
+          {/* DESKTOP PROFILE */}
 
           <div className="relative ml-3 shrink-0 xl:ml-5">
-
             <button
               type="button"
-              onClick={() => {
-                setProfileOpen(
-                  (
-                    value,
-                  ) =>
-                    !value,
-                );
-
-                setMobileOpen(
-                  false,
-                );
-              }}
+              onClick={
+                toggleProfile
+              }
               className="
                 flex
                 items-center
@@ -752,12 +1410,8 @@ export default function TopBar() {
             >
               {image ? (
                 <img
-                  src={
-                    image
-                  }
-                  alt={
-                    name
-                  }
+                  src={image}
+                  alt={name}
                   className="
                     h-9
                     w-9
@@ -783,9 +1437,7 @@ export default function TopBar() {
                   "
                 >
                   {name
-                    .charAt(
-                      0,
-                    )
+                    .charAt(0)
                     .toUpperCase()}
                 </div>
               )}
@@ -807,10 +1459,6 @@ export default function TopBar() {
               />
             </button>
 
-            {/* =================================================
-                DESKTOP PROFILE DROPDOWN
-            ================================================= */}
-
             {profileOpen && (
               <div
                 className="
@@ -818,7 +1466,7 @@ export default function TopBar() {
                   right-0
                   top-14
                   z-[80]
-                  w-[min(285px,calc(100vw-24px))]
+                  w-[min(300px,calc(100vw-24px))]
                   overflow-hidden
                   rounded-2xl
                   border
@@ -828,17 +1476,11 @@ export default function TopBar() {
                 "
               >
                 <div className="border-b border-white/[0.08] p-5">
-
                   <div className="flex items-center gap-3.5">
-
                     {image ? (
                       <img
-                        src={
-                          image
-                        }
-                        alt={
-                          name
-                        }
+                        src={image}
+                        alt={name}
                         className="
                           h-12
                           w-12
@@ -866,33 +1508,107 @@ export default function TopBar() {
                         "
                       >
                         {name
-                          .charAt(
-                            0,
-                          )
+                          .charAt(0)
                           .toUpperCase()}
                       </div>
                     )}
 
                     <div className="min-w-0 flex-1">
-
                       <p className="truncate text-sm font-semibold text-white">
-                        {
-                          name
-                        }
+                        {name}
                       </p>
 
                       <p className="mt-1 truncate text-xs text-white/35">
-                        {
-                          email ||
-                          "No email"
-                        }
+                        {email ||
+                          "No email"}
                       </p>
-
                     </div>
                   </div>
                 </div>
 
                 <div className="p-2.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setProfitOpen(
+                        (value) =>
+                          !value,
+                      )
+                    }
+                    className="
+                      flex
+                      w-full
+                      items-center
+                      gap-3
+                      rounded-xl
+                      px-3.5
+                      py-3
+                      text-sm
+                      text-white/60
+                      transition
+                      hover:bg-white/[0.06]
+                      hover:text-white
+                    "
+                  >
+                    <Calculator
+                      size={18}
+                      strokeWidth={1.8}
+                      className="text-yellow-400"
+                    />
+
+                    <span className="flex-1 text-left">
+                      Loan profit
+                    </span>
+
+                    <ChevronDown
+                      size={15}
+                      strokeWidth={1.8}
+                      className={`
+                        text-white/30
+                        transition-transform
+                        ${
+                          profitOpen
+                            ? "rotate-180"
+                            : ""
+                        }
+                      `}
+                    />
+                  </button>
+
+                  {profitOpen && (
+                    <LoanProfitPanel
+                      loans={
+                        loans
+                      }
+                      loading={
+                        loansLoading
+                      }
+                      error={
+                        loansError
+                      }
+                      from={
+                        profitFrom
+                      }
+                      to={
+                        profitTo
+                      }
+                      rate={
+                        profitRate
+                      }
+                      onFromChange={
+                        setProfitFrom
+                      }
+                      onToChange={
+                        setProfitTo
+                      }
+                      onRateChange={
+                        setProfitRate
+                      }
+                      onRetry={
+                        retryLoanLoad
+                      }
+                    />
+                  )}
 
                   <button
                     type="button"
@@ -955,17 +1671,15 @@ export default function TopBar() {
                       Sign out
                     </span>
                   </button>
-
                 </div>
               </div>
             )}
-
           </div>
         </div>
       </header>
 
       {/* =====================================================
-          MOBILE BACKDROP
+      MOBILE BACKDROP
       ===================================================== */}
 
       {mobileOpen && (
@@ -989,7 +1703,7 @@ export default function TopBar() {
       )}
 
       {/* =====================================================
-          MOBILE SIDEBAR
+      MOBILE SIDEBAR
       ===================================================== */}
 
       <aside
@@ -1016,9 +1730,7 @@ export default function TopBar() {
           }
         `}
       >
-        {/* =================================================
-            MOBILE SIDEBAR HEADER
-        ================================================= */}
+        {/* MOBILE SIDEBAR HEADER */}
 
         <div
           className="
@@ -1033,7 +1745,6 @@ export default function TopBar() {
           "
         >
           <div className="flex items-center gap-2.5">
-
             <img
               src="/logo.png"
               alt="GEO-SHUA"
@@ -1045,7 +1756,6 @@ export default function TopBar() {
             />
 
             <div>
-
               <p
                 className="
                   text-xs
@@ -1067,7 +1777,6 @@ export default function TopBar() {
               >
                 Company
               </p>
-
             </div>
           </div>
 
@@ -1100,9 +1809,7 @@ export default function TopBar() {
           </button>
         </div>
 
-        {/* =================================================
-            MOBILE USER
-        ================================================= */}
+        {/* MOBILE USER */}
 
         <div
           className="
@@ -1113,15 +1820,10 @@ export default function TopBar() {
           "
         >
           <div className="flex items-center gap-3.5">
-
             {image ? (
               <img
-                src={
-                  image
-                }
-                alt={
-                  name
-                }
+                src={image}
+                alt={name}
                 className="
                   h-11
                   w-11
@@ -1148,15 +1850,12 @@ export default function TopBar() {
                 "
               >
                 {name
-                  .charAt(
-                    0,
-                  )
+                  .charAt(0)
                   .toUpperCase()}
               </div>
             )}
 
             <div className="min-w-0 flex-1">
-
               <p
                 className="
                   truncate
@@ -1165,9 +1864,7 @@ export default function TopBar() {
                   text-white
                 "
               >
-                {
-                  name
-                }
+                {name}
               </p>
 
               <p
@@ -1178,19 +1875,14 @@ export default function TopBar() {
                   text-white/35
                 "
               >
-                {
-                  email ||
-                  "No email"
-                }
+                {email ||
+                  "No email"}
               </p>
-
             </div>
           </div>
         </div>
 
-        {/* =================================================
-            MOBILE NAVIGATION
-        ================================================= */}
+        {/* MOBILE NAVIGATION */}
 
         <nav
           className="
@@ -1215,11 +1907,8 @@ export default function TopBar() {
           </p>
 
           <div className="space-y-1">
-
             {menuItems.map(
-              (
-                item,
-              ) => {
+              (item) => {
                 const active =
                   pathname ===
                     item.href ||
@@ -1275,13 +1964,10 @@ export default function TopBar() {
                 );
               },
             )}
-
           </div>
         </nav>
 
-        {/* =================================================
-            MOBILE FOOTER
-        ================================================= */}
+        {/* MOBILE FOOTER */}
 
         <div
           className="
