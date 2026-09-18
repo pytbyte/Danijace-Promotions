@@ -33,7 +33,18 @@ type LoanTransaction = {
   amount?: number | string;
   transactionReference?: string;
   reference?: string;
+
+  /**
+   * Financial transaction date.
+   *
+   * This may be:
+   *
+   * YYYY-MM-DD
+   *
+   * or an actual timestamp returned by the API.
+   */
   transactionDate?: string;
+
   createdAt?: string;
   updatedAt?: string;
   source?: string;
@@ -111,23 +122,81 @@ function formatKES(value: unknown): string {
   })}`;
 }
 
+/* =========================================================
+   CALENDAR DATE HELPERS
+========================================================= */
+
 /**
  * GEO-SHUA financial dates are CalendarDate strings:
  *
  * YYYY-MM-DD
  *
- * These dates must never be passed through JavaScript Date.
+ * These values represent a calendar day.
+ *
+ * IMPORTANT:
+ *
+ * Never do:
+ *
+ * new Date("2026-09-18")
+ *
+ * because that introduces JavaScript timezone semantics into
+ * a value that is supposed to remain an exact calendar date.
  */
-function formatCalendarDate(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(value)
-  ) {
+function isCalendarDate(
+  value: unknown,
+): value is string {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(
+      value.trim(),
+    )
+  );
+}
+
+/**
+ * Converts YYYY-MM-DD into a numeric calendar key.
+ *
+ * Example:
+ *
+ * 2026-09-18 -> 20260918
+ * 2026-09-17 -> 20260917
+ *
+ * This is string manipulation only.
+ * No JavaScript Date is involved.
+ */
+function getCalendarDateKey(
+  value: string,
+): number {
+  if (!isCalendarDate(value)) {
+    return 0;
+  }
+
+  const numeric = Number(
+    value.replaceAll("-", ""),
+  );
+
+  return Number.isFinite(numeric)
+    ? numeric
+    : 0;
+}
+
+/**
+ * Validates and formats a CalendarDate.
+ */
+function formatCalendarDate(
+  value: unknown,
+): string {
+  if (!isCalendarDate(value)) {
     return "";
   }
 
-  const [year, month, day] =
-    value.split("-");
+  const trimmed = value.trim();
+
+  const [
+    year,
+    month,
+    day,
+  ] = trimmed.split("-");
 
   const parsedYear = Number(year);
   const parsedMonth = Number(month);
@@ -163,12 +232,20 @@ function formatCalendarDate(value: unknown): string {
   return `${monthNames[parsedMonth - 1]} ${parsedDay}, ${parsedYear}`;
 }
 
+/* =========================================================
+   TIMESTAMP HELPERS
+========================================================= */
+
 /**
- * Formats actual timestamps such as createdAt/updatedAt.
+ * Formats actual timestamps such as:
+ *
+ * 2026-09-18T14:32:00.000Z
  *
  * These are different from financial CalendarDate fields.
  */
-function formatTimestamp(value: unknown): string {
+function formatTimestamp(
+  value: unknown,
+): string {
   if (
     typeof value !== "string" &&
     !(value instanceof Date)
@@ -192,7 +269,7 @@ function formatTimestamp(value: unknown): string {
 }
 
 /**
- * Displays either a CalendarDate or a real timestamp.
+ * Displays either a CalendarDate or an actual timestamp.
  */
 function formatTransactionDate(
   value: unknown,
@@ -215,85 +292,296 @@ function formatTransactionDate(
   return "Unknown date";
 }
 
+/* =========================================================
+   TRANSACTION DATE
+========================================================= */
+
 /**
- * Returns the transaction's primary date.
+ * Returns the transaction's authoritative date.
  *
- * transactionDate is preferred because it represents the
- * actual repayment transaction date.
+ * transactionDate is always preferred because it represents
+ * the actual financial transaction date.
  *
- * createdAt/updatedAt are only fallbacks.
+ * createdAt/updatedAt are only fallbacks when transactionDate
+ * is absent.
  */
 function getTransactionDateValue(
   transaction: LoanTransaction,
 ): string | undefined {
+  const transactionDate =
+    typeof transaction.transactionDate ===
+    "string"
+      ? transaction.transactionDate.trim()
+      : "";
+
+  if (transactionDate) {
+    return transactionDate;
+  }
+
+  const createdAt =
+    typeof transaction.createdAt ===
+    "string"
+      ? transaction.createdAt.trim()
+      : "";
+
+  if (createdAt) {
+    return createdAt;
+  }
+
+  const updatedAt =
+    typeof transaction.updatedAt ===
+    "string"
+      ? transaction.updatedAt.trim()
+      : "";
+
+  if (updatedAt) {
+    return updatedAt;
+  }
+
+  return undefined;
+}
+
+/* =========================================================
+   TRANSACTION SORTING
+========================================================= */
+
+type TransactionSortKey = {
+  /**
+   * Calendar day:
+   *
+   * YYYYMMDD
+   *
+   * Example:
+   *
+   * 20260918
+   */
+  day: number;
+
+  /**
+   * Time inside that calendar day.
+   *
+   * For CalendarDate-only values this is 0.
+   *
+   * For timestamps this is the timestamp.
+   */
+  time: number;
+
+  /**
+   * Whether the source value was an exact CalendarDate.
+   */
+  isCalendarDate: boolean;
+};
+
+/**
+ * Extracts the calendar day from an actual timestamp WITHOUT
+ * converting the timestamp into the user's local calendar.
+ *
+ * Example:
+ *
+ * 2026-09-18T05:20:00.000Z
+ *
+ * gives:
+ *
+ * 20260918
+ *
+ * The date portion supplied by the backend remains authoritative.
+ */
+function getTimestampCalendarDay(
+  value: string,
+): number {
+  const trimmed = value.trim();
+
+  /*
+   * ISO-like timestamp beginning with YYYY-MM-DD.
+   *
+   * We intentionally use the date portion directly instead of
+   * converting it through Date -> local timezone.
+   */
+  const isoDateMatch =
+    trimmed.match(
+      /^(\d{4})-(\d{2})-(\d{2})(?:T|\s)/,
+    );
+
+  if (isoDateMatch) {
+    const year = Number(
+      isoDateMatch[1],
+    );
+
+    const month = Number(
+      isoDateMatch[2],
+    );
+
+    const day = Number(
+      isoDateMatch[3],
+    );
+
+    if (
+      Number.isInteger(year) &&
+      Number.isInteger(month) &&
+      Number.isInteger(day) &&
+      month >= 1 &&
+      month <= 12 &&
+      day >= 1 &&
+      day <= 31
+    ) {
+      return (
+        year * 10000 +
+        month * 100 +
+        day
+      );
+    }
+  }
+
+  /*
+   * Fallback for timestamps that do not expose their date in
+   * the expected ISO format.
+   *
+   * This is only used for actual timestamps, never for
+   * CalendarDate values.
+   */
+  const timestamp =
+    Date.parse(trimmed);
+
+  if (!Number.isFinite(timestamp)) {
+    return 0;
+  }
+
+  /*
+   * UTC is used here only as a fallback for a timestamp whose
+   * original date portion could not be extracted.
+   *
+   * This does NOT apply to YYYY-MM-DD financial dates.
+   */
+  const date =
+    new Date(timestamp);
+
   return (
-    transaction.transactionDate ||
-    transaction.createdAt ||
-    transaction.updatedAt
+    date.getUTCFullYear() *
+      10000 +
+    (date.getUTCMonth() + 1) *
+      100 +
+    date.getUTCDate()
   );
 }
 
 /**
- * Converts a transaction date into a sortable value.
+ * Creates a normalized transaction sort key.
  *
- * Important:
+ * This is the important part of the ordering fix.
  *
- * - YYYY-MM-DD is treated as a CalendarDate.
- * - CalendarDate is NOT converted using new Date().
- * - Actual timestamps are parsed normally.
- * - Invalid/missing values return 0 and therefore sort last.
+ * We NEVER compare:
+ *
+ * 20260918
+ *
+ * directly against:
+ *
+ * 1758192000000
+ *
+ * anymore.
+ *
+ * Everything is first normalized into:
+ *
+ * {
+ *   day: YYYYMMDD,
+ *   time: timestamp
+ * }
+ *
+ * Therefore:
+ *
+ * Jan 14 > Jan 13
+ *
+ * regardless of whether one record is a CalendarDate and the
+ * other is an ISO timestamp.
  */
-function getTransactionSortValue(
+function getTransactionSortKey(
   transaction: LoanTransaction,
-): number {
+): TransactionSortKey {
   const value =
     getTransactionDateValue(
       transaction,
     );
 
-  if (typeof value !== "string") {
-    return 0;
+  if (!value) {
+    return {
+      day: 0,
+      time: 0,
+      isCalendarDate: false,
+    };
   }
 
   const trimmed = value.trim();
 
   if (!trimmed) {
-    return 0;
+    return {
+      day: 0,
+      time: 0,
+      isCalendarDate: false,
+    };
   }
 
   /*
-   * Financial CalendarDate.
+   * Exact GEO-SHUA CalendarDate.
    *
-   * Because YYYY-MM-DD is lexicographically chronological,
-   * removing the hyphens gives us a safe sortable number.
-   *
-   * Example:
-   *
-   * 2026-09-18 -> 20260918
-   * 2026-09-17 -> 20260917
+   * NEVER use Date.parse here.
    */
-  if (
-    /^\d{4}-\d{2}-\d{2}$/.test(
-      trimmed,
-    )
-  ) {
-    const numeric = Number(
-      trimmed.replaceAll("-", ""),
-    );
-
-    return Number.isFinite(numeric)
-      ? numeric
-      : 0;
+  if (isCalendarDate(trimmed)) {
+    return {
+      day: getCalendarDateKey(
+        trimmed,
+      ),
+      time: 0,
+      isCalendarDate: true,
+    };
   }
 
   /*
    * Actual timestamp.
-   *
-   * createdAt / updatedAt are real timestamps, so Date.parse
-   * is appropriate here.
    */
   const timestamp =
     Date.parse(trimmed);
+
+  if (!Number.isFinite(timestamp)) {
+    return {
+      day: 0,
+      time: 0,
+      isCalendarDate: false,
+    };
+  }
+
+  return {
+    day: getTimestampCalendarDay(
+      trimmed,
+    ),
+    time: timestamp,
+    isCalendarDate: false,
+  };
+}
+
+/**
+ * Returns a createdAt timestamp for tie-breaking.
+ *
+ * createdAt is an actual timestamp and therefore Date.parse is
+ * appropriate here.
+ */
+function getCreatedAtSortValue(
+  transaction: LoanTransaction,
+): number {
+  if (
+    typeof transaction.createdAt !==
+    "string"
+  ) {
+    return 0;
+  }
+
+  const value =
+    transaction.createdAt.trim();
+
+  if (!value) {
+    return 0;
+  }
+
+  const timestamp =
+    Date.parse(value);
 
   return Number.isFinite(timestamp)
     ? timestamp
@@ -303,9 +591,21 @@ function getTransactionSortValue(
 /**
  * Sort repayment transactions latest first.
  *
- * The API/database ordering is never trusted as the final UI
- * ordering. The client applies this ordering every time the
- * records are loaded.
+ * Ordering priority:
+ *
+ * 1. transaction calendar day
+ * 2. transaction time when available
+ * 3. createdAt
+ * 4. updatedAt
+ * 5. ID
+ *
+ * Example:
+ *
+ * 2026-09-14
+ * 2026-09-13
+ * 2026-09-12
+ *
+ * will ALWAYS appear in that order.
  *
  * The original array is not mutated.
  */
@@ -314,43 +614,114 @@ function sortTransactionsLatestFirst(
 ): LoanTransaction[] {
   return [...records].sort(
     (a, b) => {
-      const bDate =
-        getTransactionSortValue(b);
+      const aKey =
+        getTransactionSortKey(a);
 
-      const aDate =
-        getTransactionSortValue(a);
+      const bKey =
+        getTransactionSortKey(b);
 
       /*
-       * Latest transaction first.
+       * =====================================================
+       * 1. CALENDAR DAY
+       * =====================================================
+       *
+       * This is the most important comparison.
+       *
+       * Example:
+       *
+       * b = 20260914
+       * a = 20260913
+       *
+       * b comes first.
        */
-      if (bDate !== aDate) {
-        return bDate - aDate;
+      if (aKey.day !== bKey.day) {
+        return bKey.day - aKey.day;
       }
 
       /*
-       * If transactionDate is identical, use createdAt
-       * as the second-level ordering.
+       * =====================================================
+       * 2. TIME WITHIN SAME DAY
+       * =====================================================
+       *
+       * If both records belong to the same calendar day and
+       * contain actual timestamps, newest timestamp comes
+       * first.
+       *
+       * CalendarDate-only values have time = 0.
        */
-      const bCreated =
-        typeof b.createdAt === "string"
-          ? Date.parse(b.createdAt)
-          : 0;
+      if (aKey.time !== bKey.time) {
+        return bKey.time - aKey.time;
+      }
 
+      /*
+       * =====================================================
+       * 3. CREATED AT
+       * =====================================================
+       *
+       * Useful when two SMS/payment records have the same
+       * transaction date.
+       */
       const aCreated =
-        typeof a.createdAt === "string"
-          ? Date.parse(a.createdAt)
-          : 0;
+        getCreatedAtSortValue(a);
+
+      const bCreated =
+        getCreatedAtSortValue(b);
 
       if (
-        Number.isFinite(bCreated) &&
-        Number.isFinite(aCreated) &&
-        bCreated !== aCreated
+        aCreated !== bCreated
       ) {
         return bCreated - aCreated;
       }
 
       /*
-       * Final deterministic fallback.
+       * =====================================================
+       * 4. UPDATED AT
+       * =====================================================
+       */
+      const aUpdated =
+        typeof a.updatedAt ===
+        "string"
+          ? Date.parse(
+              a.updatedAt,
+            )
+          : 0;
+
+      const bUpdated =
+        typeof b.updatedAt ===
+        "string"
+          ? Date.parse(
+              b.updatedAt,
+            )
+          : 0;
+
+      const safeAUpdated =
+        Number.isFinite(
+          aUpdated,
+        )
+          ? aUpdated
+          : 0;
+
+      const safeBUpdated =
+        Number.isFinite(
+          bUpdated,
+        )
+          ? bUpdated
+          : 0;
+
+      if (
+        safeAUpdated !==
+        safeBUpdated
+      ) {
+        return (
+          safeBUpdated -
+          safeAUpdated
+        );
+      }
+
+      /*
+       * =====================================================
+       * 5. DETERMINISTIC ID FALLBACK
+       * =====================================================
        */
       return String(
         b.id || "",
@@ -361,6 +732,10 @@ function sortTransactionsLatestFirst(
   );
 }
 
+/* =========================================================
+   WAIVER SORTING
+========================================================= */
+
 /**
  * Waivers use createdAt as their authoritative ordering
  * timestamp.
@@ -369,7 +744,8 @@ function getWaiverSortValue(
   waiver: LoanWaiver,
 ): number {
   if (
-    typeof waiver.createdAt !== "string" ||
+    typeof waiver.createdAt !==
+      "string" ||
     !waiver.createdAt.trim()
   ) {
     return 0;
@@ -411,6 +787,10 @@ function sortWaiversLatestFirst(
     },
   );
 }
+
+/* =========================================================
+   DISPLAY HELPERS
+========================================================= */
 
 function getReference(
   transaction: LoanTransaction,
@@ -692,15 +1072,27 @@ export default function LoanTransactionModal({
               : [];
 
         /*
-         * Always sort locally.
+         * ===================================================
+         * ALWAYS SORT LOCALLY
+         * ===================================================
          *
-         * This guarantees latest-first presentation even if
-         * MongoDB/API ordering changes.
+         * We do not depend on MongoDB/API ordering.
+         *
+         * The final UI order is:
+         *
+         * newest calendar date
+         *       ↓
+         * newest transaction time
+         *       ↓
+         * newest createdAt
          */
-        setTransactions(
+        const sortedRecords =
           sortTransactionsLatestFirst(
             records,
-          ),
+          );
+
+        setTransactions(
+          sortedRecords,
         );
       } catch (requestError) {
         console.error(
@@ -960,9 +1352,9 @@ export default function LoanTransactionModal({
 
   /* =======================================================
      CURRENT INSTALLMENT BALANCE
-     
+
      SERVER-DERIVED ONLY.
-     
+
      The frontend does NOT calculate:
      - repayment periods
      - expected installments
