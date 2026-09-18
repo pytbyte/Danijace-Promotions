@@ -299,6 +299,9 @@ export default function LoanForm({
   /* =======================================================
      MEMBER
   ======================================================= */
+  const [guaranteeWarningAccepted, setGuaranteeWarningAccepted] =
+  useState(false);
+
   const [existingGuarantees, setExistingGuarantees] =
   useState<ExistingGuarantee[]>([]);
 
@@ -2423,181 +2426,163 @@ return (
                 MOVED DIRECTLY UNDER MEMBER SELECTION
             ================================================= */}
 
-            {!isEditMode && member && (
-              <div className="mt-3">
-                {checkingGuarantees ? (
-                  <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-xs text-white/40">
-                    <Loader2
-                      size={14}
-                      className="animate-spin"
-                    />
+      
+            {!isEditMode &&
+              member &&
+              !guaranteeWarningAccepted && (
+                <div className="mt-3">
+                  {checkingGuarantees ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-xs text-white/40">
+                      <Loader2
+                        size={14}
+                        className="animate-spin"
+                      />
 
-                    Checking existing guarantor commitments...
-                  </div>
-                ) : existingGuarantees.length > 0 ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-semibold text-amber-300">
-                          Existing guarantor commitments
-                        </p>
+                      Checking existing guarantor commitments...
+                    </div>
+                  ) : existingGuarantees.length > 0 ? (
+                    <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.03] p-3">
+                      {/* Header */}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-amber-300">
+                            Existing guarantor commitments
+                          </p>
 
-                        <p className="mt-0.5 text-[11px] leading-4 text-white/40">
-                          This member is already listed as a
-                          guarantor on the following loan
-                          {existingGuarantees.length === 1
-                            ? ""
-                            : "s"}.
-                        </p>
+                          <p className="mt-0.5 text-[11px] leading-4 text-white/40">
+                            This member is already guaranteeing{" "}
+                            {existingGuarantees.length}{" "}
+                            {existingGuarantees.length === 1
+                              ? "loan"
+                              : "loans"}.
+                          </p>
+                        </div>
+
+                        <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-300">
+                          {existingGuarantees.length}
+                        </span>
                       </div>
 
-                      <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-300">
-                        {existingGuarantees.length}{" "}
-                        {existingGuarantees.length === 1
-                          ? "loan"
-                          : "loans"}
-                      </span>
-                    </div>
-
-                    <div className="space-y-2">
-                      {existingGuarantees.map(
-                        (guarantee) => {
-                          const decision =
-                            guaranteeDecision[
-                              guarantee.loanId
-                            ];
-
-                          return (
-                            <div
-                              key={guarantee.loanId}
-                              className="rounded-2xl border border-amber-500/15 bg-amber-500/[0.04] p-3"
-                            >
-                              <div className="flex items-start gap-3">
-                                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-300">
-                                  <CircleDollarSign
-                                    size={16}
-                                  />
-                                </div>
-
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <p className="text-sm font-semibold text-white">
-                                      {guarantee.loanNumber}
-                                    </p>
-
-                                    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] capitalize text-white/50">
-                                      {guarantee.status ||
-                                        "unknown"}
-                                    </span>
-                                  </div>
-
-                                  <p className="mt-1 text-xs text-white/45">
-                                    Borrower
-                                  </p>
-
-                                  <p className="text-sm font-medium text-white">
-                                    {guarantee.borrowerName ||
-                                      "Unknown member"}
-                                  </p>
-
-                                  <div className="mt-2">
-                                    <p className="text-[10px] uppercase tracking-wide text-white/30">
-                                      Principal
-                                    </p>
-
-                                    <p className="mt-0.5 text-sm font-semibold text-white">
-                                      {formatKES(
-                                        guarantee.principal,
-                                      )}
-                                    </p>
-                                  </div>
-                                </div>
+                      {/* Scrollable commitments */}
+                      <div className="mt-3 max-h-[85px] space-y-2 overflow-y-auto pr-1">
+                        {existingGuarantees.map((guarantee) => (
+                          <div
+                            key={guarantee.loanId}
+                            className="rounded-xl border border-white/10 bg-black/20 p-3"
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-300">
+                                <CircleDollarSign size={15} />
                               </div>
 
-                              <div className="mt-3 flex gap-2 border-t border-white/10 pt-3">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setGuaranteeDecision(
-                                      (current) => ({
-                                        ...current,
-                                        [guarantee.loanId]:
-                                          "allow",
-                                      }),
-                                    )
-                                  }
-                                  className={`flex-1 rounded-xl border px-3 py-2 text-xs font-medium transition ${
-                                    decision === "allow"
-                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                                      : "border-white/10 bg-white/[0.03] text-white/50 hover:bg-white/[0.06] hover:text-white"
-                                  }`}
-                                >
-                                  Allow
-                                </button>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-semibold text-white">
+                                    {guarantee.loanNumber}
+                                  </p>
 
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setGuaranteeDecision(
-                                      (current) => ({
-                                        ...current,
-                                        [guarantee.loanId]:
-                                          "cancel",
-                                      }),
-                                    );
+                                  <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[9px] capitalize text-white/45">
+                                    {guarantee.status || "unknown"}
+                                  </span>
+                                </div>
 
-                                    /*
-                                     * Cancel means:
-                                     * abandon this member selection
-                                     * and return to member search.
-                                     *
-                                     * It does NOT modify the
-                                     * existing guaranteed loan.
-                                     */
-                                    setMember(null);
-                                    setMemberSearch("");
-                                    setMembers([]);
-                                    setExistingGuarantees([]);
-                                    setCheckingGuarantees(false);
-                                    clearError();
-                                  }}
-                                  className={`flex-1 rounded-xl border px-3 py-2 text-xs font-medium transition ${
-                                    decision === "cancel"
-                                      ? "border-red-500/30 bg-red-500/10 text-red-300"
-                                      : "border-white/10 bg-white/[0.03] text-white/50 hover:bg-white/[0.06] hover:text-white"
-                                  }`}
-                                >
-                                  Cancel
-                                </button>
+                                <p className="mt-1 text-[10px] uppercase tracking-wide text-white/30">
+                                  Borrower
+                                </p>
+
+                                <p className="truncate text-sm font-medium text-white">
+                                  {guarantee.borrowerName ||
+                                    "Unknown member"}
+                                </p>
+
+                                <div className="mt-2 flex items-center justify-between">
+                                  <span className="text-[10px] uppercase tracking-wide text-white/30">
+                                    Principal
+                                  </span>
+
+                                  <span className="text-sm font-semibold text-white">
+                                    {formatKES(guarantee.principal)}
+                                  </span>
+                                </div>
                               </div>
                             </div>
-                          );
-                        },
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-start gap-2 rounded-xl border border-emerald-500/15 bg-emerald-500/[0.04] px-3 py-3">
-                    <CheckCircle2
-                      size={14}
-                      className="mt-0.5 shrink-0 text-emerald-400"
-                    />
+                          </div>
+                        ))}
+                      </div>
 
-                    <div>
-                      <p className="text-xs font-medium text-emerald-300">
-                        No existing guarantor commitments
-                      </p>
+                      {/* Single decision */}
+                      <div className="mt-3 grid grid-cols-2 gap-2 border-t border-white/10 pt-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGuaranteeDecision((current) => {
+                              const next = { ...current };
 
-                      <p className="mt-0.5 text-[11px] leading-4 text-white/35">
-                        This member is not currently listed as
-                        a guarantor on another pending or active
-                        loan.
-                      </p>
+                              existingGuarantees.forEach((guarantee) => {
+                                next[guarantee.loanId] = "allow";
+                              });
+
+                              return next;
+                            });
+
+                            // Hide the entire guarantor warning.
+                            setGuaranteeWarningAccepted(true);
+                          }}
+                          className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/15"
+                        >
+                          Accept
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGuaranteeDecision((current) => {
+                              const next = { ...current };
+
+                              existingGuarantees.forEach((guarantee) => {
+                                next[guarantee.loanId] = "cancel";
+                              });
+
+                              return next;
+                            });
+
+                            setMember(null);
+                            setMemberSearch("");
+                            setMembers([]);
+                            setExistingGuarantees([]);
+                            setCheckingGuarantees(false);
+                            setGuaranteeWarningAccepted(false);
+                            clearError();
+                          }}
+                          className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs font-semibold text-white/55 transition hover:bg-white/[0.06] hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            )}
+                  ) : (
+                    <div className="flex items-start gap-2 rounded-xl border border-emerald-500/15 bg-emerald-500/[0.04] px-3 py-3">
+                      <CheckCircle2
+                        size={14}
+                        className="mt-0.5 shrink-0 text-emerald-400"
+                      />
+
+                      <div>
+                        <p className="text-xs font-medium text-emerald-300">
+                          No existing guarantor commitments
+                        </p>
+
+                        <p className="mt-0.5 text-[11px] leading-4 text-white/35">
+                          This member is not currently listed as a guarantor
+                          on another pending or active loan.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+
 
             {/* =================================================
                 FIXED SAVINGS
