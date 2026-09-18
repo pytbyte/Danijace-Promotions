@@ -11,6 +11,8 @@
  *     ↓
  * parser.ts
  *     ↓
+ * 36-hour SMS validation
+ *     ↓
  * bank destination classification
  *     ↓
  * member resolution
@@ -80,6 +82,21 @@
  * Date/timestamp values and are NOT converted here.
  *
  * =========================================================
+ *
+ * SMS WINDOW
+ * ---------------------------------------------------------
+ *
+ * Only SMS messages received within the previous 36 hours
+ * are eligible for automatic processing.
+ *
+ * The 36-hour window is based on the SMS timestamp, NOT
+ * the financial transaction date.
+ *
+ * This allows a payment from the previous calendar day to
+ * be processed while still preventing stale SMS messages
+ * from entering automatic financial processing.
+ *
+ * =========================================================
  */
 
 import {
@@ -117,23 +134,27 @@ import type {
  *
  * These are routing identifiers from the bank SMS.
  */
-const LOAN_BANK_ACCOUNT =
-  "082083";
+const LOAN_BANK_ACCOUNT = "082083";
 
-const SAVINGS_BANK_ACCOUNT =
-  "2650821";
+const SAVINGS_BANK_ACCOUNT = "2650821";
 
 /**
  * Financial calendar timezone.
- *
- * Kenya is UTC+03:00.
- *
- * We use the named timezone instead of UTC because a
- * timestamp near midnight UTC can belong to the next
- * Kenyan calendar day.
  */
-const FINANCIAL_TIME_ZONE =
-  "Africa/Nairobi";
+const FINANCIAL_TIME_ZONE = "Africa/Nairobi";
+
+/**
+ * Automatic SMS processing window.
+ *
+ * SMS messages older than this are rejected.
+ */
+const SMS_LOOKBACK_HOURS = 36;
+
+const SMS_LOOKBACK_MS =
+  SMS_LOOKBACK_HOURS *
+  60 *
+  60 *
+  1000;
 
 /* =========================================================
    TYPES
@@ -155,8 +176,7 @@ type BankPaymentType =
 
 type ClassifiedBankTransaction =
   ParsedBankSms & {
-    transactionType:
-      BankPaymentType;
+    transactionType: BankPaymentType;
   };
 
 type ResolvedMember = {
@@ -171,9 +191,7 @@ type ResolvedLoan =
 
 type LoanRepayment =
   Awaited<
-    ReturnType<
-      typeof createLoanRepayment
-    >
+    ReturnType<typeof createLoanRepayment>
   >;
 
 type FinancialDateInput =
@@ -184,32 +202,21 @@ type FinancialDateInput =
 export type ProcessIncomingTransactionResult =
   | {
       status: "processed";
-
       type: "savings";
-
       transaction: ParsedBankSms;
-
       member: ResolvedMember;
-
       savingsAccount: {
         id: string;
         accountNumber: string;
       };
-
-      savingsTransaction:
-        SavingsTransaction;
+      savingsTransaction: SavingsTransaction;
     }
   | {
       status: "processed";
-
       type: "loan";
-
       transaction: ParsedBankSms;
-
       member: ResolvedMember;
-
       loan: ResolvedLoan;
-
       repayment: LoanRepayment;
     };
 
@@ -271,8 +278,7 @@ function isValidCalendarDate(
   value: unknown,
 ): value is string {
   if (
-    typeof value !==
-    "string"
+    typeof value !== "string"
   ) {
     return false;
   }
@@ -286,14 +292,9 @@ function isValidCalendarDate(
     return false;
   }
 
-  const year =
-    Number(match[1]);
-
-  const month =
-    Number(match[2]);
-
-  const day =
-    Number(match[3]);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
 
   if (
     !Number.isInteger(year) ||
@@ -353,15 +354,9 @@ function dateToNairobiCalendarDate(
       {
         timeZone:
           FINANCIAL_TIME_ZONE,
-
-        year:
-          "numeric",
-
-        month:
-          "2-digit",
-
-        day:
-          "2-digit",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
       },
     ).formatToParts(
       value,
@@ -370,22 +365,19 @@ function dateToNairobiCalendarDate(
   const year =
     parts.find(
       (part) =>
-        part.type ===
-        "year",
+        part.type === "year",
     )?.value;
 
   const month =
     parts.find(
       (part) =>
-        part.type ===
-        "month",
+        part.type === "month",
     )?.value;
 
   const day =
     parts.find(
       (part) =>
-        part.type ===
-        "day",
+        part.type === "day",
     )?.value;
 
   if (
@@ -425,27 +417,21 @@ function dateToNairobiCalendarDate(
  *   Date
  *   numeric timestamp
  *
- * Returned value is ALWAYS:
+ * Returned value is always:
  *
  *   YYYY-MM-DD
  */
 function toCalendarDate(
   value: FinancialDateInput,
 ): string {
-  /* -------------------------------------------------------
-     STRING
-  ------------------------------------------------------- */
-
   if (
-    typeof value ===
-    "string"
+    typeof value === "string"
   ) {
     const clean =
       value.trim();
 
     if (
-      clean.length ===
-      0
+      clean.length === 0
     ) {
       throw new Error(
         "Financial date cannot be empty.",
@@ -486,10 +472,6 @@ function toCalendarDate(
     );
   }
 
-  /* -------------------------------------------------------
-     JAVASCRIPT / MONGODB DATE
-  ------------------------------------------------------- */
-
   if (
     value instanceof Date
   ) {
@@ -498,18 +480,11 @@ function toCalendarDate(
     );
   }
 
-  /* -------------------------------------------------------
-     NUMERIC TIMESTAMP
-  ------------------------------------------------------- */
-
   if (
-    typeof value ===
-    "number"
+    typeof value === "number"
   ) {
     if (
-      !Number.isFinite(
-        value,
-      )
+      !Number.isFinite(value)
     ) {
       throw new Error(
         "Financial timestamp is invalid.",
@@ -542,9 +517,8 @@ function toCalendarDate(
 /**
  * Normalize a potentially legacy database financial date.
  *
- * This deliberately accepts unknown because MongoDB legacy
- * documents may contain a BSON Date even if the current
- * TypeScript domain type says string.
+ * MongoDB legacy documents may contain a BSON Date even
+ * when the current TypeScript domain type is string.
  */
 function normalizeFinancialDate(
   value: unknown,
@@ -552,11 +526,9 @@ function normalizeFinancialDate(
 ): string {
   try {
     if (
-      typeof value !==
-        "string" &&
+      typeof value !== "string" &&
       !(value instanceof Date) &&
-      typeof value !==
-        "number"
+      typeof value !== "number"
     ) {
       throw new Error(
         "Unsupported financial date type.",
@@ -569,6 +541,184 @@ function normalizeFinancialDate(
   } catch {
     throw new Error(
       `${fieldName} is invalid. Expected YYYY-MM-DD or a valid legacy timestamp.`,
+    );
+  }
+}
+
+/* =========================================================
+   SMS TIMESTAMP HELPERS
+========================================================= */
+
+/**
+ * Convert an SMS timestamp into milliseconds.
+ *
+ * Android normally supplies milliseconds since Unix epoch.
+ *
+ * The helper also safely accepts:
+ *
+ *   Date
+ *   numeric milliseconds
+ *   numeric seconds
+ *   ISO timestamp strings
+ *
+ * This is intentionally separate from financial-date
+ * normalization because the 36-hour window requires the
+ * actual SMS instant, not only its YYYY-MM-DD calendar date.
+ */
+function toSmsTimestamp(
+  value: unknown,
+): number {
+  if (
+    value instanceof Date
+  ) {
+    const timestamp =
+      value.getTime();
+
+    if (
+      Number.isFinite(
+        timestamp,
+      )
+    ) {
+      return timestamp;
+    }
+
+    throw new Error(
+      "SMS timestamp is invalid.",
+    );
+  }
+
+  if (
+    typeof value === "number"
+  ) {
+    if (
+      !Number.isFinite(value)
+    ) {
+      throw new Error(
+        "SMS timestamp is invalid.",
+      );
+    }
+
+    /**
+     * Android timestamps are normally milliseconds.
+     *
+     * Ten-digit Unix timestamps are interpreted as
+     * seconds for legacy compatibility.
+     */
+    if (
+      Math.abs(value) <
+      100_000_000_000
+    ) {
+      return value * 1000;
+    }
+
+    return value;
+  }
+
+  if (
+    typeof value === "string"
+  ) {
+    const clean =
+      value.trim();
+
+    if (
+      clean.length === 0
+    ) {
+      throw new Error(
+        "SMS timestamp is empty.",
+      );
+    }
+
+    /**
+     * Numeric timestamp supplied as a string.
+     */
+    if (
+      /^\d+$/.test(clean)
+    ) {
+      const numeric =
+        Number(clean);
+
+      if (
+        !Number.isFinite(
+          numeric,
+        )
+      ) {
+        throw new Error(
+          "SMS timestamp is invalid.",
+        );
+      }
+
+      if (
+        Math.abs(numeric) <
+        100_000_000_000
+      ) {
+        return numeric * 1000;
+      }
+
+      return numeric;
+    }
+
+    const parsed =
+      new Date(clean);
+
+    if (
+      Number.isNaN(
+        parsed.getTime(),
+      )
+    ) {
+      throw new Error(
+        "SMS timestamp is invalid.",
+      );
+    }
+
+    return parsed.getTime();
+  }
+
+  throw new Error(
+    "SMS timestamp is missing or unsupported.",
+  );
+}
+
+/**
+ * Validate that the SMS belongs to the automatic
+ * processing window.
+ *
+ * Window:
+ *
+ *   now - 36 hours
+ *   through now
+ *
+ * Future-dated SMS messages are rejected.
+ */
+function validateSmsWindow(
+  smsDate: unknown,
+): void {
+  const smsTimestamp =
+    toSmsTimestamp(
+      smsDate,
+    );
+
+  const now =
+    Date.now();
+
+  const oldestAllowed =
+    now -
+    SMS_LOOKBACK_MS;
+
+  if (
+    smsTimestamp >
+    now
+  ) {
+    throw new Error(
+      "SMS timestamp is in the future and cannot be automatically processed.",
+    );
+  }
+
+  if (
+    smsTimestamp <
+    oldestAllowed
+  ) {
+    throw new Error(
+      `SMS is outside the automatic ${SMS_LOOKBACK_HOURS}-hour processing window.`,
     );
   }
 }
@@ -588,11 +738,6 @@ function normalizeFinancialDate(
 function classifyBankAccount(
   destinationAccountNumber: string,
 ): BankPaymentType {
-  /**
-   * Account numbers MUST remain strings.
-   *
-   * "082083" must not become "82083".
-   */
   const clean =
     destinationAccountNumber
       .trim()
@@ -627,7 +772,6 @@ function classifyTransaction(
 ): ClassifiedBankTransaction {
   return {
     ...parsed,
-
     transactionType:
       classifyBankAccount(
         parsed.destinationAccountNumber,
@@ -698,8 +842,7 @@ function getMemberName(
       .trim();
 
   if (
-    composed.length >
-    0
+    composed.length > 0
   ) {
     return composed;
   }
@@ -736,8 +879,7 @@ async function resolveMemberBySmsName(
     );
 
   if (
-    cleanName.length ===
-    0
+    cleanName.length === 0
   ) {
     throw new Error(
       "Bank SMS sender name is required.",
@@ -758,8 +900,7 @@ async function resolveMemberBySmsName(
     );
 
   if (
-    tokens.length ===
-    0
+    tokens.length === 0
   ) {
     throw new Error(
       "Bank SMS sender name is required.",
@@ -792,9 +933,7 @@ async function resolveMemberBySmsName(
     const result =
       await getMembers({
         page: 1,
-
         limit: 100,
-
         search:
           searchTerm,
       });
@@ -810,8 +949,7 @@ async function resolveMemberBySmsName(
           : "";
 
       if (
-        memberId.length ===
-        0
+        memberId.length === 0
       ) {
         continue;
       }
@@ -824,8 +962,7 @@ async function resolveMemberBySmsName(
   }
 
   if (
-    candidates.size ===
-    0
+    candidates.size === 0
   ) {
     throw new Error(
       `No GEO-SHUA member could be found for bank sender "${senderName}".`,
@@ -836,18 +973,10 @@ async function resolveMemberBySmsName(
     Array.from(
       candidates.values(),
     ).filter(
-      (
-        candidate,
-      ) => {
+      (candidate) => {
         const candidateName =
           getMemberName(
-            candidate as {
-              firstName?: string;
-              middleName?: string;
-              lastName?: string;
-              name?: string;
-              fullName?: string;
-            },
+            candidate,
           );
 
         return (
@@ -862,8 +991,7 @@ async function resolveMemberBySmsName(
     );
 
   if (
-    exactMatches.length ===
-    0
+    exactMatches.length === 0
   ) {
     throw new Error(
       `Bank sender "${senderName}" did not exactly match a registered GEO-SHUA member.`,
@@ -871,8 +999,7 @@ async function resolveMemberBySmsName(
   }
 
   if (
-    exactMatches.length >
-    1
+    exactMatches.length > 1
   ) {
     throw new Error(
       `Multiple GEO-SHUA members exactly match bank sender "${senderName}". Automatic processing is blocked.`,
@@ -895,8 +1022,7 @@ async function resolveMemberBySmsName(
       : "";
 
   if (
-    memberId.length ===
-    0
+    memberId.length === 0
   ) {
     throw new Error(
       `Resolved member "${senderName}" has no valid member ID.`,
@@ -912,8 +1038,7 @@ async function resolveMemberBySmsName(
       : "";
 
   if (
-    memberStatus !==
-    "active"
+    memberStatus !== "active"
   ) {
     throw new Error(
       `Member "${senderName}" is not active and cannot receive automatic financial processing.`,
@@ -922,18 +1047,11 @@ async function resolveMemberBySmsName(
 
   const canonicalName =
     getMemberName(
-      member as {
-        firstName?: string;
-        middleName?: string;
-        lastName?: string;
-        name?: string;
-        fullName?: string;
-      },
+      member,
     );
 
   if (
-    canonicalName.length ===
-    0
+    canonicalName.length === 0
   ) {
     throw new Error(
       `Resolved member "${senderName}" has no valid registered name.`,
@@ -941,11 +1059,8 @@ async function resolveMemberBySmsName(
   }
 
   return {
-    id:
-      memberId,
-
-    name:
-      canonicalName,
+    id: memberId,
+    name: canonicalName,
   };
 }
 
@@ -963,7 +1078,6 @@ async function resolveSavingsAccount(
     await getOrCreateSavingsAccount({
       memberId:
         member.id,
-
       memberName:
         member.name,
     });
@@ -975,8 +1089,7 @@ async function resolveSavingsAccount(
   }
 
   if (
-    account.status !==
-    "active"
+    account.status !== "active"
   ) {
     throw new Error(
       `Savings account "${account.accountNumber}" is inactive.`,
@@ -984,8 +1097,7 @@ async function resolveSavingsAccount(
   }
 
   if (
-    account.accountType !==
-    "fixed"
+    account.accountType !== "fixed"
   ) {
     throw new Error(
       `Savings account "${account.accountNumber}" is not the required fixed savings account.`,
@@ -993,10 +1105,8 @@ async function resolveSavingsAccount(
   }
 
   if (
-    typeof account.id !==
-      "string" ||
-    account.id.trim().length ===
-      0
+    typeof account.id !== "string" ||
+    account.id.trim().length === 0
   ) {
     throw new Error(
       `Savings account "${account.accountNumber}" has no valid account ID.`,
@@ -1004,9 +1114,7 @@ async function resolveSavingsAccount(
   }
 
   return {
-    id:
-      account.id,
-
+    id: account.id,
     accountNumber:
       account.accountNumber,
   };
@@ -1027,8 +1135,6 @@ async function resolveSavingsAccount(
  *   numeric timestamp
  *
  * They are normalized before comparison.
- *
- * IMPORTANT:
  *
  * A payment BEFORE the disbursement date is invalid.
  *
@@ -1051,12 +1157,9 @@ async function resolveLoanForTransaction(
   const result =
     await getLoans({
       page: 1,
-
       limit: 100,
-
       memberId:
         member.id,
-
       status:
         "active",
     });
@@ -1065,8 +1168,7 @@ async function resolveLoanForTransaction(
     result.loans || [];
 
   if (
-    loans.length ===
-    0
+    loans.length === 0
   ) {
     throw new Error(
       `No active GEO-SHUA loan could be found for member "${member.name}".`,
@@ -1074,8 +1176,7 @@ async function resolveLoanForTransaction(
   }
 
   if (
-    loans.length >
-    1
+    loans.length > 1
   ) {
     const loanNumbers =
       loans
@@ -1096,8 +1197,7 @@ async function resolveLoanForTransaction(
 
     throw new Error(
       `Member "${member.name}" has multiple active loans${
-        loanNumbers.length >
-        0
+        loanNumbers.length > 0
           ? ` (${loanNumbers})`
           : ""
       }. Automatic SMS repayment allocation is blocked.`,
@@ -1120,8 +1220,6 @@ async function resolveLoanForTransaction(
     );
 
   /**
-   * IMPORTANT:
-   *
    * Same-day repayment is valid.
    *
    * Only an earlier calendar date is invalid.
@@ -1142,18 +1240,20 @@ async function resolveLoanForTransaction(
    SMS IDENTITY
 ========================================================= */
 
+/**
+ * Build the SMS-level idempotency identifier.
+ *
+ * The external bank reference remains the authoritative
+ * transaction identity inside the financial services.
+ */
 function createSmsId(
   transaction: ParsedBankSms,
 ): string {
   return [
     transaction.reference,
-
     transaction.smsDate,
-
     transaction.destinationAccountNumber,
-
-    transaction.address ||
-      "",
+    transaction.address || "",
   ].join(":");
 }
 
@@ -1163,20 +1263,16 @@ function createSmsId(
 
 async function processSavingsTransaction(
   transaction: ParsedBankSms,
-  classified:
-    ClassifiedBankTransaction,
+  classified: ClassifiedBankTransaction,
   member: ResolvedMember,
   transactionDate: string,
-  options:
-    ProcessIncomingTransactionOptions,
+  options: ProcessIncomingTransactionOptions,
 ): Promise<{
   savingsAccount: {
     id: string;
     accountNumber: string;
   };
-
-  savingsTransaction:
-    SavingsTransaction;
+  savingsTransaction: SavingsTransaction;
 }> {
   const savingsAccount =
     await resolveSavingsAccount(
@@ -1217,9 +1313,7 @@ async function processSavingsTransaction(
         classified.destinationAccountNumber,
 
       /**
-       * Canonical financial date:
-       *
-       * YYYY-MM-DD
+       * Canonical financial date.
        */
       transactionAt:
         transactionDate,
@@ -1229,7 +1323,6 @@ async function processSavingsTransaction(
             recordedBy: {
               name:
                 options.recordedBy.name,
-
               email:
                 options.recordedBy.email,
             },
@@ -1239,7 +1332,6 @@ async function processSavingsTransaction(
 
   return {
     savingsAccount,
-
     savingsTransaction,
   };
 }
@@ -1250,15 +1342,12 @@ async function processSavingsTransaction(
 
 async function processLoanTransaction(
   transaction: ParsedBankSms,
-  classified:
-    ClassifiedBankTransaction,
+  classified: ClassifiedBankTransaction,
   member: ResolvedMember,
   transactionDate: string,
-  options:
-    ProcessIncomingTransactionOptions,
+  options: ProcessIncomingTransactionOptions,
 ): Promise<{
   loan: ResolvedLoan;
-
   repayment: LoanRepayment;
 }> {
   const loan =
@@ -1268,10 +1357,8 @@ async function processLoanTransaction(
     );
 
   if (
-    typeof loan.id !==
-      "string" ||
-    loan.id.trim().length ===
-      0
+    typeof loan.id !== "string" ||
+    loan.id.trim().length === 0
   ) {
     throw new Error(
       `Resolved loan "${loan.loanNumber}" has no valid loan ID.`,
@@ -1293,9 +1380,7 @@ async function processLoanTransaction(
         classified.reference,
 
       /**
-       * Canonical financial date:
-       *
-       * YYYY-MM-DD
+       * Canonical financial date.
        */
       transactionDate,
 
@@ -1310,7 +1395,6 @@ async function processLoanTransaction(
             recordedBy: {
               name:
                 options.recordedBy.name,
-
               email:
                 options.recordedBy.email,
             },
@@ -1320,7 +1404,6 @@ async function processLoanTransaction(
 
   return {
     loan,
-
     repayment,
   };
 }
@@ -1331,11 +1414,8 @@ async function processLoanTransaction(
 
 export async function processIncomingTransaction(
   parsedTransaction: ParsedBankSms,
-  options:
-    ProcessIncomingTransactionOptions = {},
-): Promise<
-  ProcessIncomingTransactionResult
-> {
+  options: ProcessIncomingTransactionOptions = {},
+): Promise<ProcessIncomingTransactionResult> {
   /* =======================================================
      BASIC VALIDATION
   ======================================================= */
@@ -1353,9 +1433,9 @@ export async function processIncomingTransaction(
   if (
     typeof parsedTransaction.reference !==
       "string" ||
-    parsedTransaction.reference.trim()
-      .length ===
-      0
+    parsedTransaction.reference
+      .trim()
+      .length === 0
   ) {
     throw new Error(
       "Parsed bank transaction reference is required.",
@@ -1366,8 +1446,7 @@ export async function processIncomingTransaction(
     !Number.isFinite(
       parsedTransaction.amount,
     ) ||
-    parsedTransaction.amount <=
-      0
+    parsedTransaction.amount <= 0
   ) {
     throw new Error(
       "Parsed bank transaction amount must be greater than zero.",
@@ -1377,9 +1456,9 @@ export async function processIncomingTransaction(
   if (
     typeof parsedTransaction.senderName !==
       "string" ||
-    parsedTransaction.senderName.trim()
-      .length ===
-      0
+    parsedTransaction.senderName
+      .trim()
+      .length === 0
   ) {
     throw new Error(
       "Parsed bank transaction sender name is required.",
@@ -1391,8 +1470,7 @@ export async function processIncomingTransaction(
       "string" ||
     parsedTransaction.destinationAccountNumber
       .trim()
-      .length ===
-      0
+      .length === 0
   ) {
     throw new Error(
       "Parsed bank transaction bank destination account number is required.",
@@ -1409,17 +1487,30 @@ export async function processIncomingTransaction(
   }
 
   /* =======================================================
+     36-HOUR SMS WINDOW
+  ======================================================= */
+
+  /**
+   * Validate the actual SMS timestamp.
+   *
+   * This is intentionally separate from transactionDate.
+   *
+   * transactionDate = financial date of the payment.
+   *
+   * smsDate = timestamp of the SMS received by Android.
+   */
+  validateSmsWindow(
+    parsedTransaction.smsDate,
+  );
+
+  /* =======================================================
      NORMALIZE TRANSACTION DATE
   ======================================================= */
 
   /**
    * Normalize the parser/external date ONCE.
    *
-   * From this point onward:
-   *
-   *   transactionDate
-   *
-   * is always:
+   * From this point onward transactionDate is always:
    *
    *   YYYY-MM-DD
    */
@@ -1547,16 +1638,11 @@ export async function processIncomingTransaction(
 
 export async function processBankSms(
   rawMessage: string,
-  options:
-    ProcessIncomingTransactionOptions = {},
-): Promise<
-  ProcessIncomingTransactionResult
-> {
+  options: ProcessIncomingTransactionOptions = {},
+): Promise<ProcessIncomingTransactionResult> {
   if (
-    typeof rawMessage !==
-      "string" ||
-    rawMessage.trim().length ===
-      0
+    typeof rawMessage !== "string" ||
+    rawMessage.trim().length === 0
   ) {
     throw new Error(
       "Raw bank SMS message is required.",
@@ -1569,18 +1655,22 @@ export async function processBankSms(
     "@/lib/sms/parser"
   );
 
+  const smsTimestamp =
+    Date.now();
+
   const parsed =
     parseBankSms({
-      address:
-        null,
-
-      body:
-        rawMessage,
-
-      date:
-        Date.now(),
+      address: null,
+      body: rawMessage,
+      date: smsTimestamp,
     });
 
+  /**
+   * The raw-SMS compatibility path has no separate
+   * Android inbox timestamp, so the parser timestamp is
+   * used. This keeps manually supplied/raw SMS compatible
+   * with the same 36-hour validation contract.
+   */
   return processIncomingTransaction(
     parsed,
     options,

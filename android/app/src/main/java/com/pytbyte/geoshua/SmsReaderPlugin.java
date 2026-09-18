@@ -24,20 +24,20 @@ import com.getcapacitor.annotation.PermissionCallback;
  * FOREGROUND SMS READER
  * =========================================================
  *
-<<<<<<< HEAD
- * Reads ONLY SMS received within the last 24 hours.
+ * Reads SMS messages from the Android inbox within the
+ * previous 36 hours.
  *
- * Important:
+ * This plugin:
  *
- * - No BroadcastReceiver
- * - No SMS_RECEIVED listener
- * - No background SMS processing
- * - No boot recovery
- * - No periodic sweep
- * - No background HTTP processing
-=======
- * Reads ONLY SMS received during the previous 24 hours.
->>>>>>> 028000f (update sms reader 24hr lookback)
+ * - Reads the Android SMS inbox only.
+ * - Requires READ_SMS permission.
+ * - Does not listen for incoming SMS broadcasts.
+ * - Does not process SMS in the background.
+ * - Does not perform financial/business decisions.
+ * - Does not submit HTTP requests.
+ * - Returns raw SMS data to JavaScript.
+ *
+ * Financial processing remains server-side.
  *
  * Flow:
  *
@@ -51,19 +51,12 @@ import com.getcapacitor.annotation.PermissionCallback;
  *           ↓
  *      Android SMS inbox
  *           ↓
-<<<<<<< HEAD
- *      LAST 24 HOURS ONLY
-=======
- *      ONLY last 24 hours
->>>>>>> 028000f (update sms reader 24hr lookback)
+ *      LAST 36 HOURS
  *           ↓
  *      JavaScript receives messages
  *           ↓
  *      JavaScript submits messages to
  *      /api/sms/process
- *
- * Financial decisions are NOT made here.
- * The server remains authoritative.
  */
 @CapacitorPlugin(
     name = "SmsReader",
@@ -84,16 +77,13 @@ public class SmsReaderPlugin extends Plugin {
     private static final String SMS_INBOX_URI =
         "content://sms/inbox";
 
-    /*
-<<<<<<< HEAD
-     * SMS timestamps returned by Android are milliseconds
-     * since Unix epoch.
-=======
-     * Exactly 24 hours in milliseconds.
->>>>>>> 028000f (update sms reader 24hr lookback)
+    /**
+     * Exactly 36 hours in milliseconds.
+     *
+     * 36 hours = 1.5 days.
      */
-    private static final long TWENTY_FOUR_HOURS_MS =
-        24L * 60L * 60L * 1000L;
+    private static final long THIRTY_SIX_HOURS_MS =
+        36L * 60L * 60L * 1000L;
 
 
     /* =========================================================
@@ -117,26 +107,15 @@ public class SmsReaderPlugin extends Plugin {
 
             Log.e(
                 TAG,
-                "Android context is NULL."
+                "Android context is unavailable."
             );
 
-            JSObject diagnostic =
-                new JSObject();
-
-            diagnostic.put(
-                "stage",
-                "context"
-            );
-
-            diagnostic.put(
-                "error",
-                "Android context unavailable."
-            );
-
-            call.reject(
+            rejectWithDiagnostic(
+                call,
                 "Android context unavailable.",
                 "SMS_CONTEXT_UNAVAILABLE",
-                diagnostic
+                "context",
+                "Android context is unavailable."
             );
 
             return;
@@ -160,15 +139,6 @@ public class SmsReaderPlugin extends Plugin {
         );
 
 
-<<<<<<< HEAD
-        /*
-         * Only READ_SMS is required.
-         *
-         * RECEIVE_SMS is deliberately NOT requested because
-         * GEO-SHUA does not listen for incoming SMS broadcasts.
-         */
-=======
->>>>>>> 028000f (update sms reader 24hr lookback)
         if (!readGranted) {
 
             Log.d(
@@ -176,11 +146,30 @@ public class SmsReaderPlugin extends Plugin {
                 "READ_SMS permission missing. Requesting..."
             );
 
-            requestPermissionForAlias(
-                "sms",
-                call,
-                "smsPermissionCallback"
-            );
+            try {
+
+                requestPermissionForAlias(
+                    "sms",
+                    call,
+                    "smsPermissionCallback"
+                );
+
+            } catch (Exception e) {
+
+                Log.e(
+                    TAG,
+                    "Failed to request READ_SMS permission.",
+                    e
+                );
+
+                rejectWithDiagnostic(
+                    call,
+                    "Unable to request SMS permission.",
+                    "SMS_PERMISSION_REQUEST_FAILED",
+                    "permission",
+                    e.getClass().getName()
+                );
+            }
 
             return;
         }
@@ -214,23 +203,17 @@ public class SmsReaderPlugin extends Plugin {
 
         if (context == null) {
 
-            JSObject diagnostic =
-                new JSObject();
-
-            diagnostic.put(
-                "stage",
-                "permission_callback"
+            Log.e(
+                TAG,
+                "Android context unavailable after permission request."
             );
 
-            diagnostic.put(
-                "error",
-                "Android context unavailable."
-            );
-
-            call.reject(
+            rejectWithDiagnostic(
+                call,
                 "Android context unavailable.",
                 "SMS_CONTEXT_UNAVAILABLE",
-                diagnostic
+                "permission_callback",
+                "Android context unavailable."
             );
 
             return;
@@ -252,7 +235,7 @@ public class SmsReaderPlugin extends Plugin {
 
         if (!readGranted) {
 
-            Log.e(
+            Log.w(
                 TAG,
                 "READ_SMS permission was not granted."
             );
@@ -312,23 +295,12 @@ public class SmsReaderPlugin extends Plugin {
 
         if (context == null) {
 
-            JSObject diagnostic =
-                new JSObject();
-
-            diagnostic.put(
-                "stage",
-                "query_context"
-            );
-
-            diagnostic.put(
-                "error",
-                "Android context unavailable."
-            );
-
-            call.reject(
+            rejectWithDiagnostic(
+                call,
                 "Android context unavailable.",
                 "SMS_CONTEXT_UNAVAILABLE",
-                diagnostic
+                "query_context",
+                "Android context unavailable."
             );
 
             return;
@@ -336,6 +308,26 @@ public class SmsReaderPlugin extends Plugin {
 
 
         Cursor cursor = null;
+
+        /*
+         * Capture the scan time once.
+         *
+         * This gives the entire query one consistent
+         * 36-hour reference point.
+         */
+        final long now =
+            System.currentTimeMillis();
+
+        final long cutoff =
+            now - THIRTY_SIX_HOURS_MS;
+
+
+        int count = 0;
+        int skippedEmptyBody = 0;
+        int skippedInvalidDate = 0;
+        int skippedFutureDate = 0;
+        int skippedInvalidRow = 0;
+
 
         try {
 
@@ -346,48 +338,41 @@ public class SmsReaderPlugin extends Plugin {
 
 
             /* =================================================
-               24-HOUR WINDOW
+               36-HOUR WINDOW
             ================================================= */
-
-            long now =
-                System.currentTimeMillis();
-
-<<<<<<< HEAD
-            long cutoff =
-=======
-            long twentyFourHoursAgo =
->>>>>>> 028000f (update sms reader 24hr lookback)
-                now - TWENTY_FOUR_HOURS_MS;
-
 
             Log.d(
                 TAG,
-<<<<<<< HEAD
-                "Current time: "
-=======
                 "Current timestamp: "
->>>>>>> 028000f (update sms reader 24hr lookback)
                     + now
             );
 
             Log.d(
                 TAG,
-<<<<<<< HEAD
-                "24-hour cutoff: "
+                "36-hour cutoff: "
                     + cutoff
-=======
-                "Reading SMS since: "
-                    + twentyFourHoursAgo
->>>>>>> 028000f (update sms reader 24hr lookback)
             );
 
 
+            /*
+             * Only request SMS whose timestamp is at least
+             * 36 hours old or newer.
+             *
+             * The individual date is also validated below.
+             */
+            String selection =
+                "date >= ?";
+
+
+            String[] selectionArgs = {
+                String.valueOf(
+                    cutoff
+                )
+            };
+
+
             /* =================================================
-<<<<<<< HEAD
-               PROJECTION
-=======
                SMS PROJECTION
->>>>>>> 028000f (update sms reader 24hr lookback)
             ================================================= */
 
             String[] projection = {
@@ -399,48 +384,19 @@ public class SmsReaderPlugin extends Plugin {
 
 
             /*
-             * IMPORTANT:
+             * Newest messages first.
              *
-<<<<<<< HEAD
-             * The 24-hour filter is applied directly by the
-             * Android SMS ContentProvider.
-             *
-             * This means Android does NOT return the old
-             * messages to GEO-SHUA in the first place.
-             *
-             * date >= cutoff
-             * date <= now
-=======
-             * The filtering happens inside the Android
-             * ContentResolver query.
-             *
-             * Android therefore does NOT return the entire
-             * SMS inbox to GEO-SHUA.
-             *
-             * Only messages where:
-             *
-             *     date >= now - 24 hours
-             *
-             * are returned.
->>>>>>> 028000f (update sms reader 24hr lookback)
+             * _id is used as a deterministic tie-breaker when
+             * multiple SMS records have the same timestamp.
              */
-            String selection =
-                "date >= ? AND date <= ?";
+            String sortOrder =
+                "date DESC, _id DESC";
 
 
-            String[] selectionArgs = {
-<<<<<<< HEAD
-                String.valueOf(cutoff),
-                String.valueOf(now)
-=======
-                String.valueOf(
-                    twentyFourHoursAgo
-                ),
-                String.valueOf(
-                    now
-                )
->>>>>>> 028000f (update sms reader 24hr lookback)
-            };
+            Log.d(
+                TAG,
+                "Querying Android SMS inbox."
+            );
 
 
             cursor =
@@ -451,7 +407,7 @@ public class SmsReaderPlugin extends Plugin {
                         projection,
                         selection,
                         selectionArgs,
-                        "date DESC"
+                        sortOrder
                     );
 
 
@@ -473,6 +429,21 @@ public class SmsReaderPlugin extends Plugin {
                 diagnostic.put(
                     "uri",
                     SMS_INBOX_URI
+                );
+
+                diagnostic.put(
+                    "windowHours",
+                    36
+                );
+
+                diagnostic.put(
+                    "fromTimestamp",
+                    cutoff
+                );
+
+                diagnostic.put(
+                    "toTimestamp",
+                    now
                 );
 
                 diagnostic.put(
@@ -532,13 +503,10 @@ public class SmsReaderPlugin extends Plugin {
 
 
             /*
-             * Body and date are required.
-<<<<<<< HEAD
+             * Body and date are required because the SMS
+             * cannot be meaningfully processed without them.
              *
-             * _id and address are useful but are not considered
-             * fatal if a provider does not expose them.
-=======
->>>>>>> 028000f (update sms reader 24hr lookback)
+             * _id and address are optional.
              */
             if (
                 bodyIndex < 0 ||
@@ -578,6 +546,11 @@ public class SmsReaderPlugin extends Plugin {
                     dateIndex
                 );
 
+                diagnostic.put(
+                    "windowHours",
+                    36
+                );
+
                 call.reject(
                     "Android SMS inbox has an unexpected format.",
                     "SMS_COLUMNS_INVALID",
@@ -595,15 +568,6 @@ public class SmsReaderPlugin extends Plugin {
             JSArray messages =
                 new JSArray();
 
-            int count =
-                0;
-
-            int skippedEmptyBody =
-                0;
-
-            int skippedInvalidDate =
-                0;
-
 
             /* =================================================
                READ CURSOR
@@ -613,103 +577,198 @@ public class SmsReaderPlugin extends Plugin {
                 cursor.moveToNext()
             ) {
 
-                String id =
-                    idIndex >= 0
-                        ? cursor.getString(
-                            idIndex
-                        )
-                        : null;
+                try {
+
+                    /*
+                     * ID is optional.
+                     */
+                    String id =
+                        idIndex >= 0
+                            ? cursor.getString(
+                                idIndex
+                            )
+                            : null;
 
 
-                String address =
-                    addressIndex >= 0
-                        ? cursor.getString(
-                            addressIndex
-                        )
-                        : null;
+                    /*
+                     * Address is optional.
+                     */
+                    String address =
+                        addressIndex >= 0
+                            ? cursor.getString(
+                                addressIndex
+                            )
+                            : null;
 
 
-                String body =
-                    cursor.getString(
-                        bodyIndex
+                    /*
+                     * Body is required.
+                     */
+                    String body =
+                        cursor.getString(
+                            bodyIndex
+                        );
+
+
+                    /*
+                     * Date is required.
+                     */
+                    long date =
+                        cursor.getLong(
+                            dateIndex
+                        );
+
+
+                    /* =========================================
+                       VALIDATE BODY
+                    ========================================= */
+
+                    if (
+                        body == null ||
+                        body.trim().isEmpty()
+                    ) {
+
+                        skippedEmptyBody++;
+
+                        continue;
+                    }
+
+
+                    /* =========================================
+                       VALIDATE DATE
+                    ========================================= */
+
+                    if (date <= 0L) {
+
+                        skippedInvalidDate++;
+
+                        continue;
+                    }
+
+
+                    /*
+                     * Protect against a provider/device clock
+                     * returning a timestamp in the future.
+                     *
+                     * Such a message is not considered part of
+                     * this scan's 36-hour window.
+                     */
+                    if (date > now) {
+
+                        skippedFutureDate++;
+
+                        continue;
+                    }
+
+
+                    /*
+                     * The ContentProvider already applied the
+                     * lower 36-hour boundary, but keep this
+                     * defensive check at row level.
+                     */
+                    if (date < cutoff) {
+
+                        skippedInvalidRow++;
+
+                        continue;
+                    }
+
+
+                    /* =========================================
+                       BUILD MESSAGE
+                    ========================================= */
+
+                    JSObject message =
+                        new JSObject();
+
+
+                    message.put(
+                        "id",
+                        id
                     );
 
 
-                long date =
-                    cursor.getLong(
-                        dateIndex
+                    message.put(
+                        "address",
+                        address == null
+                            ? ""
+                            : address
                     );
 
 
-                /*
-                 * Ignore empty SMS rows.
-                 */
-                if (
-                    body == null ||
-                    body.trim().isEmpty()
-                ) {
+                    message.put(
+                        "body",
+                        body
+                    );
 
-                    skippedEmptyBody++;
 
-                    continue;
+                    /*
+                     * Keep Android's original epoch timestamp.
+                     *
+                     * Do not convert this to a Java Date.
+                     * The JavaScript/server layer remains
+                     * responsible for application-specific
+                     * date handling.
+                     */
+                    message.put(
+                        "date",
+                        date
+                    );
+
+
+                    messages.put(
+                        message
+                    );
+
+
+                    count++;
+
+
+                } catch (Exception rowException) {
+
+                    /*
+                     * A malformed individual SMS must never
+                     * terminate the entire inbox scan.
+                     */
+                    skippedInvalidRow++;
+
+                    Log.w(
+                        TAG,
+                        "Skipping malformed SMS row.",
+                        rowException
+                    );
                 }
-
-
-                /*
-                 * Ignore malformed timestamps.
-                 *
-                 * Normally this should never happen because
-                 * the query itself filters the date.
-                 */
-                if (date <= 0L) {
-
-                    skippedInvalidDate++;
-
-                    continue;
-                }
-
-
-                JSObject message =
-                    new JSObject();
-
-
-                message.put(
-                    "id",
-                    id
-                );
-
-
-                message.put(
-                    "address",
-                    address
-                );
-
-
-                message.put(
-                    "body",
-                    body
-                );
-
-
-                message.put(
-                    "date",
-                    date
-                );
-
-
-                messages.put(
-                    message
-                );
-
-
-                count++;
             }
 
 
             Log.d(
                 TAG,
-                "SMS messages read from last 24 hours: "
+                "SMS messages read from last 36 hours: "
                     + count
+            );
+
+            Log.d(
+                TAG,
+                "Skipped empty body: "
+                    + skippedEmptyBody
+            );
+
+            Log.d(
+                TAG,
+                "Skipped invalid date: "
+                    + skippedInvalidDate
+            );
+
+            Log.d(
+                TAG,
+                "Skipped future date: "
+                    + skippedFutureDate
+            );
+
+            Log.d(
+                TAG,
+                "Skipped invalid rows: "
+                    + skippedInvalidRow
             );
 
 
@@ -741,18 +800,18 @@ public class SmsReaderPlugin extends Plugin {
 
             diagnostic.put(
                 "windowHours",
-                24
+                36
             );
 
 
             diagnostic.put(
-                "cutoff",
+                "fromTimestamp",
                 cutoff
             );
 
 
             diagnostic.put(
-                "now",
+                "toTimestamp",
                 now
             );
 
@@ -770,20 +829,14 @@ public class SmsReaderPlugin extends Plugin {
 
 
             diagnostic.put(
-                "windowHours",
-                24
+                "skippedFutureDate",
+                skippedFutureDate
             );
 
 
             diagnostic.put(
-                "fromTimestamp",
-                twentyFourHoursAgo
-            );
-
-
-            diagnostic.put(
-                "toTimestamp",
-                now
+                "skippedInvalidRow",
+                skippedInvalidRow
             );
 
 
@@ -838,22 +891,88 @@ public class SmsReaderPlugin extends Plugin {
 
 
             diagnostic.put(
-                "exception",
-                e.getClass().getName()
+                "permission",
+                "READ_SMS"
             );
 
 
             diagnostic.put(
-                "message",
-                e.getMessage() != null
-                    ? e.getMessage()
-                    : "No exception message"
+                "windowHours",
+                36
+            );
+
+
+            diagnostic.put(
+                "fromTimestamp",
+                cutoff
+            );
+
+
+            diagnostic.put(
+                "toTimestamp",
+                now
+            );
+
+
+            diagnostic.put(
+                "exception",
+                e.getClass().getName()
             );
 
 
             call.reject(
                 "Android denied access to the SMS inbox.",
                 "SMS_SECURITY_EXCEPTION",
+                diagnostic
+            );
+
+
+        } catch (IllegalArgumentException e) {
+
+            Log.e(
+                TAG,
+                "INVALID ARGUMENT reading SMS inbox.",
+                e
+            );
+
+
+            JSObject diagnostic =
+                new JSObject();
+
+
+            diagnostic.put(
+                "stage",
+                "query"
+            );
+
+
+            diagnostic.put(
+                "windowHours",
+                36
+            );
+
+
+            diagnostic.put(
+                "fromTimestamp",
+                cutoff
+            );
+
+
+            diagnostic.put(
+                "toTimestamp",
+                now
+            );
+
+
+            diagnostic.put(
+                "exception",
+                e.getClass().getName()
+            );
+
+
+            call.reject(
+                "Android could not query the SMS inbox.",
+                "SMS_QUERY_INVALID",
                 diagnostic
             );
 
@@ -874,6 +993,24 @@ public class SmsReaderPlugin extends Plugin {
             diagnostic.put(
                 "stage",
                 "exception"
+            );
+
+
+            diagnostic.put(
+                "windowHours",
+                36
+            );
+
+
+            diagnostic.put(
+                "fromTimestamp",
+                cutoff
+            );
+
+
+            diagnostic.put(
+                "toTimestamp",
+                now
             );
 
 
@@ -902,7 +1039,18 @@ public class SmsReaderPlugin extends Plugin {
 
             if (cursor != null) {
 
-                cursor.close();
+                try {
+
+                    cursor.close();
+
+                } catch (Exception closeException) {
+
+                    Log.w(
+                        TAG,
+                        "Failed to close SMS cursor.",
+                        closeException
+                    );
+                }
             }
 
 
@@ -911,5 +1059,41 @@ public class SmsReaderPlugin extends Plugin {
                 "========== SMS QUERY END =========="
             );
         }
+    }
+
+
+    /* =========================================================
+       ERROR HELPER
+    ========================================================= */
+
+    private void rejectWithDiagnostic(
+        PluginCall call,
+        String message,
+        String code,
+        String stage,
+        String error
+    ) {
+
+        JSObject diagnostic =
+            new JSObject();
+
+
+        diagnostic.put(
+            "stage",
+            stage
+        );
+
+
+        diagnostic.put(
+            "error",
+            error
+        );
+
+
+        call.reject(
+            message,
+            code,
+            diagnostic
+        );
     }
 }
