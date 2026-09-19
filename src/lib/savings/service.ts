@@ -47,6 +47,9 @@ import {
 } from "mongodb";
 
 import clientPromise from "@/lib/mongodb";
+import {
+  queueSavingsDepositSms,
+} from "@/lib/sms/outbox/notifications";
 
 import type {
   SavingsAccount,
@@ -978,6 +981,8 @@ export async function getSavingsTransactionById(
    CREATE DEPOSIT
 ========================================================= */
 
+
+
 export async function createSavingsDeposit(
   data: CreateSavingsDepositInput,
 ): Promise<SavingsTransaction> {
@@ -1034,207 +1039,346 @@ export async function createSavingsDeposit(
     undefined;
 
   const {
+    db,
     accounts,
     transactions,
   } =
     await getCollections();
 
   /*
-   * Idempotency check by SMS ID.
+   * -------------------------------------------------------
+   * Find an existing transaction first.
+   *
+   * We still queue/ensure its notification below. This is
+   * important because the financial transaction may already
+   * exist while its SMS outbox record does not.
+   * -------------------------------------------------------
    */
+
+  let existingTransaction:
+    SavingsTransactionDocument | null =
+    null;
+
   if (smsId) {
-    const existingBySms =
+    existingTransaction =
       await transactions.findOne({
         smsId,
       });
-
-    if (existingBySms) {
-      return toPublicSavingsTransaction(
-        existingBySms,
-      );
-    }
   }
 
-  /*
-   * Idempotency check by source/reference.
-   */
   if (
-    data.source &&
+    !existingTransaction &&
     reference
   ) {
-    const existingByReference =
+    existingTransaction =
       await transactions.findOne({
         source:
           data.source,
 
         reference,
       });
+  }
 
-    if (existingByReference) {
-      return toPublicSavingsTransaction(
-        existingByReference,
+  /*
+   * -------------------------------------------------------
+   * Create the financial transaction only when it does not
+   * already exist.
+   * -------------------------------------------------------
+   */
+
+  if (!existingTransaction) {
+    const client =
+      await clientPromise;
+
+    const session =
+      client.startSession();
+
+    try {
+      let createdTransaction:
+        SavingsTransactionDocument | null =
+        null;
+
+      await session.withTransaction(
+        async () => {
+          const account =
+            await lockSavingsAccount(
+              accounts,
+              savingsAccountObjectId,
+              session,
+            );
+
+          assertAccountOwnership(
+            account,
+            memberObjectId,
+          );
+
+          const now =
+            new Date();
+
+          const transaction:
+            SavingsTransactionDocument =
+            {
+              _id:
+                randomUUID(),
+
+              savingsAccountId:
+                savingsAccountObjectId,
+
+              memberId:
+                memberObjectId,
+
+              memberName,
+
+              type:
+                "deposit",
+
+              amount,
+
+              source:
+                data.source,
+
+              status:
+                "confirmed",
+
+              reference,
+
+              smsId,
+
+              sourceReference,
+
+              transactionAt,
+
+              recordedBy:
+                data.recordedBy,
+
+              synced:
+                false,
+
+              createdAt:
+                now,
+
+              updatedAt:
+                now,
+            };
+
+          try {
+            await transactions.insertOne(
+              transaction,
+              {
+                session,
+              },
+            );
+
+            await updateCachedBalance(
+              accounts,
+              transactions,
+              savingsAccountObjectId,
+              session,
+            );
+
+            createdTransaction =
+              transaction;
+          } catch (error) {
+            /*
+             * Another request may have created the same
+             * transaction concurrently.
+             *
+             * Resolve the duplicate inside the transaction
+             * so the operation remains idempotent.
+             */
+            if (
+              error instanceof Error &&
+              (
+                error.message.includes(
+                  "E11000",
+                ) ||
+                error.message.includes(
+                  "duplicate",
+                )
+              )
+            ) {
+              const duplicate =
+                await transactions.findOne(
+                  {
+                    $or: [
+                      ...(smsId
+                        ? [
+                            {
+                              smsId,
+                            },
+                          ]
+                        : []),
+
+                      ...(reference
+                        ? [
+                            {
+                              source:
+                                data.source,
+
+                              reference,
+                            },
+                          ]
+                        : []),
+                    ],
+                  },
+                  {
+                    session,
+                  },
+                );
+
+              if (duplicate) {
+                createdTransaction =
+                  duplicate;
+
+                return;
+              }
+            }
+
+            throw error;
+          }
+        },
       );
+
+      if (!createdTransaction) {
+        throw new Error(
+          "Failed to create savings deposit.",
+        );
+      }
+
+      existingTransaction =
+        createdTransaction;
+    } finally {
+      await session.endSession();
     }
   }
 
-  const client =
-    await clientPromise;
+  /*
+   * -------------------------------------------------------
+   * At this point the financial transaction is committed.
+   *
+   * SMS processing is deliberately outside the MongoDB
+   * financial transaction.
+   * -------------------------------------------------------
+   */
 
-  const session =
-    client.startSession();
+  if (!existingTransaction) {
+    throw new Error(
+      "Savings transaction could not be resolved.",
+    );
+  }
 
-  try {
-    let createdTransaction:
-      SavingsTransactionDocument | null =
-      null;
+  /*
+   * -------------------------------------------------------
+   * Resolve the member's current phone number.
+   *
+   * The existing financial transaction is authoritative,
+   * so use its memberId rather than the incoming memberId.
+   * -------------------------------------------------------
+   */
 
-    await session.withTransaction(
-      async () => {
-        const account =
-          await lockSavingsAccount(
-            accounts,
-            savingsAccountObjectId,
-            session,
-          );
+  const member =
+    await db
+      .collection<{
+        _id: ObjectId;
+        phone?: string;
+      }>("members")
+      .findOne(
+        {
+          _id:
+            existingTransaction.memberId,
+        },
+        {
+          projection: {
+            phone: 1,
+          },
+        },
+      );
 
-        assertAccountOwnership(
-          account,
-          memberObjectId,
-        );
+  const recipient =
+    typeof member?.phone ===
+    "string"
+      ? member.phone.trim()
+      : "";
 
-        const now =
-          new Date();
+  /*
+   * -------------------------------------------------------
+   * Queue the savings receipt.
+   *
+   * This happens only after the financial transaction has
+   * committed successfully.
+   *
+   * The outbox uses:
+   *
+   * savings_deposit:<transactionId>
+   *
+   * as its idempotency key, so retries cannot create
+   * duplicate notification records.
+   * -------------------------------------------------------
+   */
 
-        const transaction:
-          SavingsTransactionDocument =
-          {
-            _id:
-              randomUUID(),
+  if (recipient) {
+    try {
+      await queueSavingsDepositSms({
+        transactionId:
+          existingTransaction._id,
 
-            savingsAccountId:
-              savingsAccountObjectId,
+        memberId:
+          existingTransaction.memberId.toString(),
 
-            memberId:
-              memberObjectId,
+        recipient,
 
-            memberName,
+        memberName:
+          existingTransaction.memberName,
 
-            type:
-              "deposit",
+        amount:
+          existingTransaction.amount,
+      });
+    } catch (error) {
+      /*
+       * The financial transaction is already committed.
+       *
+       * Never roll back or reject a successful deposit because
+       * the notification queue failed.
+       */
+      console.error(
+        "Failed to queue savings deposit SMS.",
+        {
+          transactionId:
+            existingTransaction._id,
 
-            amount,
+          memberId:
+            existingTransaction.memberId.toString(),
 
-            source:
-              data.source,
+          error,
+        },
+      );
+    }
+  } else {
+    /*
+     * No phone number means there is no valid SMS recipient.
+     *
+     * The financial transaction remains successful.
+     */
+    console.warn(
+      "Savings deposit SMS not queued: member has no phone number.",
+      {
+        transactionId:
+          existingTransaction._id,
 
-            status:
-              "confirmed",
-
-            reference,
-
-            smsId,
-
-            sourceReference,
-
-            transactionAt,
-
-            recordedBy:
-              data.recordedBy,
-
-            synced:
-              false,
-
-            createdAt:
-              now,
-
-            updatedAt:
-              now,
-          };
-
-        try {
-          await transactions.insertOne(
-            transaction,
-            {
-              session,
-            },
-          );
-
-          await updateCachedBalance(
-            accounts,
-            transactions,
-            savingsAccountObjectId,
-            session,
-          );
-
-          createdTransaction =
-            transaction;
-        } catch (error) {
-          if (
-            error instanceof Error &&
-            (
-              error.message.includes(
-                "E11000",
-              ) ||
-              error.message.includes(
-                "duplicate",
-              )
-            )
-          ) {
-            const duplicate =
-              await transactions.findOne(
-                {
-                  $or: [
-                    ...(smsId
-                      ? [
-                          {
-                            smsId,
-                          },
-                        ]
-                      : []),
-
-                    ...(reference
-                      ? [
-                          {
-                            source:
-                              data.source,
-
-                            reference,
-                          },
-                        ]
-                      : []),
-                  ],
-                },
-                {
-                  session,
-                },
-              );
-
-            if (duplicate) {
-              createdTransaction =
-                duplicate;
-
-              return;
-            }
-          }
-
-          throw error;
-        }
+        memberId:
+          existingTransaction.memberId.toString(),
       },
     );
-
-    if (!createdTransaction) {
-      throw new Error(
-        "Failed to create savings deposit.",
-      );
-    }
-
-    return toPublicSavingsTransaction(
-      createdTransaction,
-    );
-  } finally {
-    await session.endSession();
   }
+
+  return toPublicSavingsTransaction(
+    existingTransaction,
+  );
 }
+
+
+
+
 
 /* =========================================================
    GET TRANSACTIONS

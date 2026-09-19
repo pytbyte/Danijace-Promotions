@@ -45,13 +45,20 @@ export interface ResolvedAccount {
 ========================================================= */
 
 export const SMS_TYPES = {
-  LOAN_DISBURSEMENT: "loan_disbursement",
-  LOAN_PAYMENT_RECEIVED: "loan_payment_received",
-  LOAN_PAYMENT_REMINDER: "loan_payment_reminder",
-  LOAN_INSTALLMENT_CLEARED: "loan_installment_cleared",
+  LOAN_DISBURSEMENT:
+    "loan_disbursement",
 
-  SAVINGS_DEPOSIT: "savings_deposit",
-  SAVINGS_WITHDRAWAL: "savings_withdrawal",
+  LOAN_PAYMENT_RECEIVED:
+    "loan_payment_received",
+
+  LOAN_PAYMENT_REMINDER:
+    "loan_payment_reminder",
+
+  LOAN_CLEARED:
+    "loan_cleared",
+
+  SAVINGS_DEPOSIT:
+    "savings_deposit",
 } as const;
 
 export type SmsType =
