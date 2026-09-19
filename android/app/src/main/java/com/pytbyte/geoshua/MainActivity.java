@@ -15,6 +15,18 @@ public class MainActivity extends BridgeActivity {
 
         super.onCreate(savedInstanceState);
 
+        /*
+         * Start and maintain the native background SMS outbox worker.
+         *
+         * This schedules:
+         * - an immediate queue check
+         * - persistent WorkManager polling
+         *
+         * The worker can continue running when the
+         * Capacitor/WebView UI is closed.
+         */
+        SmsOutboxWorker.schedule(this);
+
         handleDeepLink(getIntent());
     }
 
@@ -66,3 +78,4 @@ public class MainActivity extends BridgeActivity {
             "\"";
     }
 }
+
