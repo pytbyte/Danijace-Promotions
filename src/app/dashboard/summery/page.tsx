@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
+
 import {
   AlertCircle,
   ArrowRight,
@@ -20,6 +21,9 @@ import {
 } from "lucide-react";
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+
+
 
 import SmsInboxMonitor from "@/components/sms/SmsInboxMonitor";
 import TopBar from "@/components/dashboard/TopBar";
@@ -1455,6 +1459,14 @@ export default function DashboardPage() {
 
                   Refresh
                 </button>
+               
+
+              <Link
+                href="/sms-test"
+                className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white"
+              >
+                SMS Test
+              </Link>
               </div>
             </section>
 
