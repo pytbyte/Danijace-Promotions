@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from "react";
 
-
 import {
   AlertCircle,
   ArrowRight,
@@ -21,9 +20,6 @@ import {
 } from "lucide-react";
 
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-
-
 
 import SmsInboxMonitor from "@/components/sms/SmsInboxMonitor";
 import TopBar from "@/components/dashboard/TopBar";
@@ -1459,14 +1455,6 @@ export default function DashboardPage() {
 
                   Refresh
                 </button>
-               
-
-              <Link
-                href="/sms-test"
-                className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white"
-              >
-                SMS Test
-              </Link>
               </div>
             </section>
 
@@ -2025,6 +2013,24 @@ function MobileDashboard({
 
         <div className="flex items-center gap-2">
 
+          {/* SMS TEST */}
+
+          <button
+            type="button"
+            onClick={() =>
+              router.push(
+                "/sms-test",
+              )
+            }
+            aria-label="Open SMS test"
+            title="SMS Test"
+            className="flex h-10 items-center justify-center rounded-xl bg-blue-600 px-3 text-[10px] font-semibold text-white shadow-sm transition active:scale-95 hover:bg-blue-700"
+          >
+            SMS Test
+          </button>
+
+          {/* AMOUNT VISIBILITY */}
+
           <button
             type="button"
             onClick={() =>
@@ -2058,6 +2064,8 @@ function MobileDashboard({
               </span>
             )}
           </button>
+
+          {/* REFRESH */}
 
           <button
             type="button"
