@@ -1,191 +1,94 @@
-import { Capacitor, registerPlugin } from "@capacitor/core";
-
-/* =========================================================
-   TYPES
-========================================================= */
+import { registerPlugin } from "@capacitor/core";
 
 export interface SmsPermissionResult {
-  granted: boolean;
-}
-
-export interface SmsPermissionsResult {
-  sms: boolean;
-  phone: boolean;
-  granted: boolean;
+granted: boolean;
 }
 
 export interface SmsSubscription {
-  subscriptionId: number;
-  simSlotIndex: number;
-  carrierName?: string;
+subscriptionId: number;
+simSlotIndex: number;
+carrierName?: string;
 }
 
 export interface SmsSubscriptionsResult {
-  subscriptions: SmsSubscription[];
+subscriptions: SmsSubscription[];
 }
 
 export interface SendSmsOptions {
-  phone: string;
-  message: string;
-  subscriptionId?: number;
+phone: string;
+message: string;
+subscriptionId?: number;
 }
 
 export interface SendSmsResult {
-  success: boolean;
-  accepted: boolean;
-  multipart: boolean;
-  parts: number;
-  completedParts?: number;
+success: boolean;
+accepted?: boolean;
+multipart?: boolean;
+parts?: number;
+completedParts?: number;
+errorCode?: number;
+error?: string;
 }
 
-export interface SmsSenderPlugin {
-  /**
-   * Request SEND_SMS permission.
-   */
-  requestPermission(): Promise<SmsPermissionResult>;
+interface NativeSmsSenderPlugin {
+requestPermission(): Promise<SmsPermissionResult>;
 
-  /**
-   * Check SEND_SMS permission without prompting.
-   */
-  checkPermission(): Promise<SmsPermissionResult>;
+checkPermission(): Promise<SmsPermissionResult>;
 
-  /**
-   * Request all SMS-related permissions exposed by
-   * the native plugin.
-   */
-  requestPermissions?(): Promise<SmsPermissionsResult>;
+requestPermissions(): Promise<SmsPermissionResult>;
 
-  /**
-   * Check all SMS-related permissions without prompting.
-   */
-  checkPermissions?(): Promise<SmsPermissionsResult>;
+checkPermissions(): Promise<SmsPermissionResult>;
 
-  /**
-   * Send an SMS through the Android SIM.
-   *
-   * The native plugin waits for Android's send result
-   * before resolving successfully.
-   */
-  send(
-    options: SendSmsOptions,
-  ): Promise<SendSmsResult>;
+requestPhonePermission(): Promise<SmsPermissionResult>;
 
-  /**
-   * Return active SIM subscriptions.
-   */
-  getSubscriptions(): Promise<SmsSubscriptionsResult>;
+checkPhonePermission(): Promise<SmsPermissionResult>;
+
+getSubscriptions(): Promise<SmsSubscriptionsResult>;
+
+send(
+options: SendSmsOptions
+): Promise<SendSmsResult>;
 }
-
-/* =========================================================
-   NATIVE PLUGIN
-========================================================= */
 
 const NativeSmsSender =
-  registerPlugin<SmsSenderPlugin>(
-    "SmsSender",
-  );
+registerPlugin<NativeSmsSenderPlugin>(
+"SmsSender"
+);
 
-/* =========================================================
-   PLATFORM HELPERS
-========================================================= */
+const SmsSender = {
+async requestPermission(): Promise<SmsPermissionResult> {
+return NativeSmsSender.requestPermission();
+},
 
-function ensureAndroid(): void {
-  if (
-    !Capacitor.isNativePlatform() ||
-    Capacitor.getPlatform() !== "android"
-  ) {
-    throw new Error(
-      "SMS sending is only available on the Android GEO-SHUA app.",
-    );
-  }
-}
+async checkPermission(): Promise<SmsPermissionResult> {
+return NativeSmsSender.checkPermission();
+},
 
-/* =========================================================
-   PUBLIC API
-========================================================= */
+async requestPermissions(): Promise<SmsPermissionResult> {
+return NativeSmsSender.requestPermissions();
+},
 
-export const SmsSender = {
-  async requestPermission(): Promise<SmsPermissionResult> {
-    ensureAndroid();
+async checkPermissions(): Promise<SmsPermissionResult> {
+return NativeSmsSender.checkPermissions();
+},
 
-    return NativeSmsSender.requestPermission();
-  },
+async requestPhonePermission(): Promise<SmsPermissionResult> {
+return NativeSmsSender.requestPhonePermission();
+},
 
-  async checkPermission(): Promise<SmsPermissionResult> {
-    ensureAndroid();
+async checkPhonePermission(): Promise<SmsPermissionResult> {
+return NativeSmsSender.checkPhonePermission();
+},
 
-    return NativeSmsSender.checkPermission();
-  },
+async getSubscriptions(): Promise<SmsSubscriptionsResult> {
+return NativeSmsSender.getSubscriptions();
+},
 
-  async requestPermissions(): Promise<SmsPermissionsResult> {
-    ensureAndroid();
-
-    if (
-      !NativeSmsSender.requestPermissions
-    ) {
-      throw new Error(
-        "The installed Android SMS plugin does not support requestPermissions().",
-      );
-    }
-
-    return NativeSmsSender.requestPermissions();
-  },
-
-  async checkPermissions(): Promise<SmsPermissionsResult> {
-    ensureAndroid();
-
-    if (
-      !NativeSmsSender.checkPermissions
-    ) {
-      throw new Error(
-        "The installed Android SMS plugin does not support checkPermissions().",
-      );
-    }
-
-    return NativeSmsSender.checkPermissions();
-  },
-
-  async getSubscriptions(): Promise<SmsSubscriptionsResult> {
-    ensureAndroid();
-
-    return NativeSmsSender.getSubscriptions();
-  },
-
-  async send(
-    options: SendSmsOptions,
-  ): Promise<SendSmsResult> {
-    ensureAndroid();
-
-    const phone =
-      options.phone?.trim();
-
-    const message =
-      options.message?.trim();
-
-    if (!phone) {
-      throw new Error(
-        "Recipient phone number is required.",
-      );
-    }
-
-    if (!message) {
-      throw new Error(
-        "SMS message is required.",
-      );
-    }
-
-    return NativeSmsSender.send({
-      phone,
-      message,
-      ...(options.subscriptionId !== undefined
-        ? {
-            subscriptionId:
-              options.subscriptionId,
-          }
-        : {}),
-    });
-  },
+async send(
+options: SendSmsOptions
+): Promise<SendSmsResult> {
+return NativeSmsSender.send(options);
+},
 };
 
 export default SmsSender;
-
