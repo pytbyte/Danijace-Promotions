@@ -1,16 +1,9 @@
 package com.pytbyte.geoshua;
 
 import android.Manifest;
-import android.app.Activity;
-import android.app.PendingIntent;
-import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Build;
-import android.os.Handler;
-import android.os.Looper;
 import android.telephony.SmsManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
@@ -26,8 +19,6 @@ import com.getcapacitor.annotation.PermissionCallback;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 @CapacitorPlugin(
     name = "SmsSender",
@@ -47,13 +38,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
     }
 )
 public class SmsSenderPlugin extends Plugin {
-
-    private static final long SEND_RESULT_TIMEOUT_MS = 60_000L;
-
-    private final Handler mainHandler =
-        new Handler(
-            Looper.getMainLooper()
-        );
 
     /* =====================================================
        SMS PERMISSION
@@ -166,8 +150,8 @@ public class SmsSenderPlugin extends Plugin {
     /**
      * Do not call this hasPermission().
      *
-     * Capacitor's Plugin class already exposes a public
-     * hasPermission(String) method.
+     * Capacitor's Plugin class already exposes
+     * a public hasPermission(String) method.
      */
     private boolean hasAndroidPermission(
         String permission
@@ -201,6 +185,10 @@ public class SmsSenderPlugin extends Plugin {
             call.getInt(
                 "subscriptionId"
             );
+
+        /* -------------------------------------------------
+           VALIDATION
+        ------------------------------------------------- */
 
         if (
             phone == null ||
@@ -245,6 +233,10 @@ public class SmsSenderPlugin extends Plugin {
         String normalizedMessage =
             message.trim();
 
+        /* -------------------------------------------------
+           SEND
+        ------------------------------------------------- */
+
         try {
             SmsManager smsManager =
                 getSmsManager(
@@ -268,24 +260,62 @@ public class SmsSenderPlugin extends Plugin {
                 return;
             }
 
+            /*
+             * IMPORTANT:
+             *
+             * We intentionally do NOT wait for an SMS_SENT
+             * BroadcastReceiver here.
+             *
+             * Android's sendTextMessage() and
+             * sendMultipartTextMessage() hand the SMS to
+             * the Android telephony subsystem. On some
+             * devices/networks the SENT PendingIntent is
+             * not delivered reliably to a dynamically
+             * registered receiver.
+             *
+             * Waiting for that callback caused GEO-SHUA to
+             * report:
+             *
+             *     "SMS send timed out"
+             *
+             * even though the SMS was actually sent.
+             *
+             * An explicit Android exception is still treated
+             * as a genuine send failure.
+             */
+
             if (
                 parts.size() == 1
             ) {
-                sendSingleMessage(
-                    smsManager,
+                smsManager.sendTextMessage(
                     normalizedPhone,
+                    null,
                     normalizedMessage,
-                    call
+                    null,
+                    null
+                );
+
+                resolveAccepted(
+                    call,
+                    false,
+                    1
                 );
 
                 return;
             }
 
-            sendMultipartMessage(
-                smsManager,
+            smsManager.sendMultipartTextMessage(
                 normalizedPhone,
+                null,
                 parts,
-                call
+                null,
+                null
+            );
+
+            resolveAccepted(
+                call,
+                true,
+                parts.size()
             );
 
         } catch (SecurityException error) {
@@ -320,6 +350,60 @@ public class SmsSenderPlugin extends Plugin {
         }
     }
 
+    /* =====================================================
+       ACCEPTED RESULT
+    ===================================================== */
+
+    private void resolveAccepted(
+        PluginCall call,
+        boolean multipart,
+        int parts
+    ) {
+        JSObject result =
+            new JSObject();
+
+        /*
+         * success means Android accepted the SMS operation
+         * without throwing an error.
+         */
+        result.put(
+            "success",
+            true
+        );
+
+        /*
+         * accepted explicitly tells the JS layer that
+         * Android accepted the SMS for processing.
+         */
+        result.put(
+            "accepted",
+            true
+        );
+
+        result.put(
+            "multipart",
+            multipart
+        );
+
+        result.put(
+            "parts",
+            parts
+        );
+
+        result.put(
+            "completedParts",
+            parts
+        );
+
+        call.resolve(
+            result
+        );
+    }
+
+    /* =====================================================
+       SMS MANAGER
+    ===================================================== */
+
     private SmsManager getSmsManager(
         Integer subscriptionId
     ) {
@@ -335,483 +419,6 @@ public class SmsSenderPlugin extends Plugin {
         }
 
         return SmsManager.getDefault();
-    }
-
-    /* =====================================================
-       SINGLE SMS
-    ===================================================== */
-
-    private void sendSingleMessage(
-        SmsManager smsManager,
-        String phone,
-        String message,
-        PluginCall call
-    ) {
-        final String callbackId =
-            UUID
-                .randomUUID()
-                .toString();
-
-        final AtomicBoolean completed =
-            new AtomicBoolean(false);
-
-        final String action =
-            buildSendAction(
-                callbackId
-            );
-
-        final BroadcastReceiver receiver =
-            createSendReceiver(
-                call,
-                1,
-                completed
-            );
-
-        try {
-            registerReceiver(
-                receiver,
-                action
-            );
-
-            Intent sentIntent =
-                new Intent(
-                    action
-                );
-
-            PendingIntent sentPendingIntent =
-                PendingIntent.getBroadcast(
-                    getContext(),
-                    createRequestCode(),
-                    sentIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT |
-                        PendingIntent.FLAG_IMMUTABLE
-                );
-
-            smsManager.sendTextMessage(
-                phone,
-                null,
-                message,
-                sentPendingIntent,
-                null
-            );
-
-            scheduleTimeout(
-                receiver,
-                call,
-                completed,
-                "SMS send timed out."
-            );
-
-        } catch (Exception error) {
-            unregisterReceiverSafely(
-                receiver
-            );
-
-            if (
-                completed.compareAndSet(
-                    false,
-                    true
-                )
-            ) {
-                call.reject(
-                    error.getMessage() != null
-                        ? error.getMessage()
-                        : "Failed to send SMS.",
-                    "SMS_SEND_FAILED"
-                );
-            }
-        }
-    }
-
-    /* =====================================================
-       MULTIPART SMS
-    ===================================================== */
-
-    private void sendMultipartMessage(
-        SmsManager smsManager,
-        String phone,
-        ArrayList<String> parts,
-        PluginCall call
-    ) {
-        final String callbackId =
-            UUID
-                .randomUUID()
-                .toString();
-
-        final AtomicBoolean completed =
-            new AtomicBoolean(false);
-
-        final String action =
-            buildSendAction(
-                callbackId
-            );
-
-        final BroadcastReceiver receiver =
-            createSendReceiver(
-                call,
-                parts.size(),
-                completed
-            );
-
-        ArrayList<PendingIntent> sentIntents =
-            new ArrayList<>();
-
-        try {
-            registerReceiver(
-                receiver,
-                action
-            );
-
-            for (
-                int index = 0;
-                index < parts.size();
-                index++
-            ) {
-                Intent sentIntent =
-                    new Intent(
-                        action
-                    );
-
-                sentIntent.putExtra(
-                    "partIndex",
-                    index
-                );
-
-                PendingIntent pendingIntent =
-                    PendingIntent.getBroadcast(
-                        getContext(),
-                        createRequestCode(),
-                        sentIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT |
-                            PendingIntent.FLAG_IMMUTABLE
-                    );
-
-                sentIntents.add(
-                    pendingIntent
-                );
-            }
-
-            smsManager.sendMultipartTextMessage(
-                phone,
-                null,
-                parts,
-                sentIntents,
-                null
-            );
-
-            scheduleTimeout(
-                receiver,
-                call,
-                completed,
-                "Multipart SMS send timed out."
-            );
-
-        } catch (Exception error) {
-            unregisterReceiverSafely(
-                receiver
-            );
-
-            if (
-                completed.compareAndSet(
-                    false,
-                    true
-                )
-            ) {
-                call.reject(
-                    error.getMessage() != null
-                        ? error.getMessage()
-                        : "Failed to send multipart SMS.",
-                    "SMS_SEND_FAILED"
-                );
-            }
-        }
-    }
-
-    /* =====================================================
-       SEND RESULT RECEIVER
-    ===================================================== */
-
-    private BroadcastReceiver createSendReceiver(
-        PluginCall call,
-        int expectedParts,
-        AtomicBoolean completed
-    ) {
-        return new BroadcastReceiver() {
-
-            private int completedParts = 0;
-
-            @Override
-            public void onReceive(
-                Context context,
-                Intent intent
-            ) {
-                if (
-                    completed.get()
-                ) {
-                    return;
-                }
-
-                int resultCode =
-                    getResultCode();
-
-                completedParts++;
-
-                /*
-                 * Any failed part means the complete SMS
-                 * operation is considered failed.
-                 */
-                if (
-                    resultCode !=
-                        Activity.RESULT_OK
-                ) {
-                    if (
-                        completed.compareAndSet(
-                            false,
-                            true
-                        )
-                    ) {
-                        unregisterReceiverSafely(
-                            this
-                        );
-
-                        String error =
-                            getSmsResultMessage(
-                                resultCode
-                            );
-
-                        JSObject result =
-                            new JSObject();
-
-                        result.put(
-                            "success",
-                            false
-                        );
-
-                        result.put(
-                            "accepted",
-                            false
-                        );
-
-                        result.put(
-                            "multipart",
-                            expectedParts > 1
-                        );
-
-                        result.put(
-                            "parts",
-                            expectedParts
-                        );
-
-                        result.put(
-                            "completedParts",
-                            completedParts
-                        );
-
-                        result.put(
-                            "errorCode",
-                            resultCode
-                        );
-
-                        result.put(
-                            "error",
-                            error
-                        );
-
-                        call.reject(
-                            error,
-                            "SMS_SEND_FAILED",
-                            result
-                        );
-                    }
-
-                    return;
-                }
-
-                /*
-                 * For multipart messages, wait for every
-                 * part to report success.
-                 */
-                if (
-                    completedParts <
-                    expectedParts
-                ) {
-                    return;
-                }
-
-                if (
-                    completed.compareAndSet(
-                        false,
-                        true
-                    )
-                ) {
-                    unregisterReceiverSafely(
-                        this
-                    );
-
-                    JSObject result =
-                        new JSObject();
-
-                    result.put(
-                        "success",
-                        true
-                    );
-
-                    result.put(
-                        "accepted",
-                        true
-                    );
-
-                    result.put(
-                        "multipart",
-                        expectedParts > 1
-                    );
-
-                    result.put(
-                        "parts",
-                        expectedParts
-                    );
-
-                    result.put(
-                        "completedParts",
-                        completedParts
-                    );
-
-                    call.resolve(
-                        result
-                    );
-                }
-            }
-        };
-    }
-
-    /* =====================================================
-       TIMEOUT
-    ===================================================== */
-
-    private void scheduleTimeout(
-        BroadcastReceiver receiver,
-        PluginCall call,
-        AtomicBoolean completed,
-        String message
-    ) {
-        mainHandler.postDelayed(
-            () -> {
-                if (
-                    completed.compareAndSet(
-                        false,
-                        true
-                    )
-                ) {
-                    unregisterReceiverSafely(
-                        receiver
-                    );
-
-                    call.reject(
-                        message,
-                        "SMS_SEND_TIMEOUT"
-                    );
-                }
-            },
-            SEND_RESULT_TIMEOUT_MS
-        );
-    }
-
-    /* =====================================================
-       ANDROID SMS ERROR MESSAGES
-    ===================================================== */
-
-    private String getSmsResultMessage(
-        int resultCode
-    ) {
-        switch (resultCode) {
-
-            case SmsManager.RESULT_ERROR_GENERIC_FAILURE:
-                return "SMS failed due to a generic Android error.";
-
-            case SmsManager.RESULT_ERROR_RADIO_OFF:
-                return "The mobile radio is turned off.";
-
-            case SmsManager.RESULT_ERROR_NULL_PDU:
-                return "Android could not create the SMS PDU.";
-
-            case SmsManager.RESULT_ERROR_NO_SERVICE:
-                return "No mobile network service is currently available.";
-
-            case SmsManager.RESULT_ERROR_LIMIT_EXCEEDED:
-                return "The SMS sending limit was exceeded.";
-
-            case SmsManager.RESULT_ERROR_FDN_CHECK_FAILURE:
-                return "The SIM fixed dialing check blocked the SMS.";
-
-            default:
-                return "Android failed to send the SMS. Result code: "
-                    + resultCode;
-        }
-    }
-
-    /* =====================================================
-       RECEIVER REGISTRATION
-    ===================================================== */
-
-    private void registerReceiver(
-        BroadcastReceiver receiver,
-        String action
-    ) {
-        IntentFilter filter =
-            new IntentFilter(
-                action
-            );
-
-        if (
-            Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.TIRAMISU
-        ) {
-            getContext().registerReceiver(
-                receiver,
-                filter,
-                Context.RECEIVER_NOT_EXPORTED
-            );
-
-            return;
-        }
-
-        getContext().registerReceiver(
-            receiver,
-            filter
-        );
-    }
-
-    private void unregisterReceiverSafely(
-        BroadcastReceiver receiver
-    ) {
-        try {
-            getContext().unregisterReceiver(
-                receiver
-            );
-        } catch (
-            IllegalArgumentException ignored
-        ) {
-            /*
-             * Receiver was already unregistered.
-             */
-        }
-    }
-
-    /* =====================================================
-       UNIQUE IDS
-    ===================================================== */
-
-    private int createRequestCode() {
-        return UUID
-            .randomUUID()
-            .hashCode();
-    }
-
-    private String buildSendAction(
-        String callbackId
-    ) {
-        return "com.pytbyte.geoshua.SMS_SENT."
-            + callbackId;
     }
 
     /* =====================================================
@@ -854,7 +461,9 @@ public class SmsSenderPlugin extends Plugin {
                             SubscriptionManager.class
                         );
 
-            if (manager == null) {
+            if (
+                manager == null
+            ) {
                 call.reject(
                     "Subscription manager is unavailable."
                 );
