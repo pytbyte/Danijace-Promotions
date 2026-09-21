@@ -58,11 +58,14 @@ import {
 } from "mongodb";
 
 import clientPromise from "@/lib/mongodb";
+
 import {
   queueLoanDisbursementSms,
 } from "@/lib/sms/outbox/notifications";
 
+
 import {
+  queueLoanClearedSms,
   queueLoanPaymentReceivedSms,
 } from "@/lib/sms/outbox/notifications";
 
@@ -6300,6 +6303,9 @@ export async function createLoanRepayment(
   let loanPaymentRemainingBalance =
     0;
 
+  let loanWasCleared =
+    false;
+
   /* =======================================================
      DATABASE TRANSACTION
   ======================================================= */
@@ -6390,7 +6396,7 @@ export async function createLoanRepayment(
 
              The member is already part of the repayment
              transaction. We only retrieve the fields needed
-             for the SMS notification.
+             for SMS notifications.
 
              This does NOT alter any financial logic.
           ================================================= */
@@ -6661,7 +6667,7 @@ export async function createLoanRepayment(
               : loan.status;
 
           /* =================================================
-             CAPTURE SMS BALANCE
+             CAPTURE SMS FINANCIAL STATE
 
              This is the actual outstanding balance AFTER
              this repayment.
@@ -6669,6 +6675,10 @@ export async function createLoanRepayment(
 
           loanPaymentRemainingBalance =
             newOutstanding;
+
+          loanWasCleared =
+            newStatus ===
+            "completed";
 
           /* =================================================
              UPDATE LOAN
@@ -6872,18 +6882,20 @@ export async function createLoanRepayment(
       );
 
     /* =====================================================
-       QUEUE LOAN PAYMENT SMS
+       TRANSACTION COMMITTED
 
-       IMPORTANT:
-       The database transaction has successfully committed
-       at this point.
+       Everything below this point is notification work.
 
-       SMS failure must NEVER roll back a successful
-       financial repayment.
+       Financial success has already been committed.
+       SMS failures must NEVER roll back the repayment.
     ===================================================== */
 
     const repayment =
       transactionResult.repayment;
+
+    /* =====================================================
+       LOAN PAYMENT RECEIVED SMS
+    ===================================================== */
 
     if (loanPaymentRecipient) {
       try {
@@ -6932,6 +6944,77 @@ export async function createLoanRepayment(
     } else {
       console.warn(
         "Loan payment received SMS skipped: member has no phone number.",
+        {
+          repaymentId:
+            repayment.id,
+
+          transactionReference:
+            repayment.transactionReference,
+
+          loanId:
+            repayment.loanId,
+
+          memberId:
+            repayment.memberId,
+        },
+      );
+    }
+
+    /* =====================================================
+       LOAN CLEARED SMS
+
+       Only send this when THIS repayment actually
+       completed the loan.
+
+       queueLoanClearedSms() uses the loan ID as part of
+       its idempotency key, preventing duplicate clearance
+       notifications.
+    ===================================================== */
+
+    if (
+      loanWasCleared &&
+      loanPaymentRecipient
+    ) {
+      try {
+        await queueLoanClearedSms({
+          loanId:
+            repayment.loanId,
+
+          memberId:
+            repayment.memberId,
+
+          recipient:
+            loanPaymentRecipient,
+
+          memberName:
+            loanPaymentMemberName,
+        });
+      } catch (error) {
+        console.error(
+          "Failed to queue loan cleared SMS.",
+          {
+            repaymentId:
+              repayment.id,
+
+            transactionReference:
+              repayment.transactionReference,
+
+            loanId:
+              repayment.loanId,
+
+            memberId:
+              repayment.memberId,
+
+            error,
+          },
+        );
+      }
+    } else if (
+      loanWasCleared &&
+      !loanPaymentRecipient
+    ) {
+      console.warn(
+        "Loan cleared SMS skipped: member has no phone number.",
         {
           repaymentId:
             repayment.id,
