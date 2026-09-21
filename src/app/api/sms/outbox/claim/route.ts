@@ -6,12 +6,18 @@ import {
   claimSmsBatch,
 } from "@/lib/sms/outbox/service";
 
+import {
+  isSmsWorkerRequest,
+} from "@/lib/sms/outbox/workerAuth";
+
 /* =========================================================
    POST /api/sms/outbox/claim
 
    Android asks for SMS messages that are ready to send.
 
-   Only authenticated GEO-SHUA sessions may claim messages.
+   Authentication:
+   - Normal authenticated GEO-SHUA session
+   - OR trusted Android SMS worker token
 ========================================================= */
 
 export async function POST(
@@ -20,21 +26,30 @@ export async function POST(
   try {
     /* -----------------------------------------------------
        AUTHENTICATION
+
+       Android background workers do not have a
+       NextAuth session, so allow the configured
+       SMS worker authentication mechanism.
     ----------------------------------------------------- */
 
-    const session =
-      await auth();
+    const workerRequest =
+      isSmsWorkerRequest(request);
 
-    if (!session?.user) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Unauthorized.",
-        },
-        {
-          status: 401,
-        },
-      );
+    if (!workerRequest) {
+      const session =
+        await auth();
+
+      if (!session?.user) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Unauthorized.",
+          },
+          {
+            status: 401,
+          },
+        );
+      }
     }
 
     /* -----------------------------------------------------
