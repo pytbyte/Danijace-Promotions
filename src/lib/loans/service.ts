@@ -7,7 +7,8 @@
  * CORE LOAN MODEL
  * ---------------------------------------------------------------
  * principal            = total amount disbursed.
- * interestAmount       = principal × applicable interest rate.
+ * interestAmount       = princi
+ * pal × applicable interest rate.
  * totalDue             = principal + interestAmount.
  * installmentAmount    = contractual amount expected each cycle.
  * amountDue            = amount expected for one specific cycle,
@@ -57,6 +58,9 @@ import {
 } from "mongodb";
 
 import clientPromise from "@/lib/mongodb";
+import {
+  queueLoanDisbursementSms,
+} from "@/lib/sms/outbox/notifications";
 
 import type {
   CreateLoanInput,
@@ -1936,18 +1940,28 @@ export async function updateLoanSettings(
 
 type MemberForLoan = {
   _id: ObjectId;
+
   membershipNumber: string;
+
   firstName: string;
+
   middleName?: string;
+
   lastName: string;
+
   status: string;
 
+  phone?: string;
+
   hasExistingLoan: boolean;
+
   existingLoanStatus:
     LoanStatus | null;
+
   existingLoanNumber:
     string | null;
 };
+
 
 type SavingsAccountForLoan = {
   _id?: ObjectId;
@@ -1987,6 +2001,7 @@ async function getMemberForLoan(
             middleName: 1,
             lastName: 1,
             status: 1,
+            phone: 1,
           },
         },
       );
@@ -2637,6 +2652,14 @@ export async function createLoan(
   const session =
     client.startSession();
 
+  /*
+   * Captured from the member already loaded inside the
+   * transaction. It is intentionally used only after the
+   * transaction has successfully committed.
+   */
+  let loanDisbursementRecipient =
+    "";
+
   try {
     const createdLoan =
       await session.withTransaction(
@@ -2954,6 +2977,19 @@ export async function createLoan(
                 .join(" "),
             );
 
+          /*
+           * Capture the member phone from the member that
+           * was already loaded for this loan.
+           *
+           * This is only data capture. The SMS is NOT queued
+           * until after the transaction commits successfully.
+           */
+          loanDisbursementRecipient =
+            typeof member.phone ===
+            "string"
+              ? member.phone.trim()
+              : "";
+
           const now =
             new Date();
 
@@ -3118,6 +3154,77 @@ export async function createLoan(
             10_000,
         },
       );
+
+    /* =====================================================
+       LOAN DISBURSEMENT SMS
+
+       The transaction has successfully committed before
+       reaching this point.
+
+       SMS failure must NEVER affect the successful loan.
+    ===================================================== */
+
+    if (
+      loanDisbursementRecipient
+    ) {
+      try {
+        await queueLoanDisbursementSms({
+          loanId:
+            createdLoan.id,
+
+          memberId:
+            createdLoan.memberId,
+
+          recipient:
+            loanDisbursementRecipient,
+
+          memberName:
+            createdLoan.memberName,
+
+          amount:
+            createdLoan.principal,
+
+          installmentAmount:
+            createdLoan.installmentAmount,
+
+          firstDueDate:
+            createdLoan.firstDueDate,
+        });
+      } catch (error) {
+        console.error(
+          "Failed to queue loan disbursement SMS.",
+          {
+            loanId:
+              createdLoan.id,
+
+            loanNumber:
+              createdLoan.loanNumber,
+
+            memberId:
+              createdLoan.memberId,
+
+            memberName:
+              createdLoan.memberName,
+
+            error,
+          },
+        );
+      }
+    } else {
+      console.warn(
+        "Loan disbursement SMS skipped: member has no phone number.",
+        {
+          loanId:
+            createdLoan.id,
+
+          loanNumber:
+            createdLoan.loanNumber,
+
+          memberId:
+            createdLoan.memberId,
+        },
+      );
+    }
 
     return createdLoan;
   } finally {
