@@ -6,11 +6,19 @@ import {
   reportSmsResult,
 } from "@/lib/sms/outbox/service";
 
+import {
+  isSmsWorkerRequest,
+} from "@/lib/sms/outbox/workerAuth";
+
 /* =========================================================
    POST /api/sms/outbox/result
 
    Android reports whether a claimed SMS was successfully
    sent or failed.
+
+   Authentication:
+   - Android worker: x-geoshua-sms-worker
+   - Web/admin callers: NextAuth session
 ========================================================= */
 
 export async function POST(
@@ -21,19 +29,24 @@ export async function POST(
        AUTHENTICATION
     ----------------------------------------------------- */
 
-    const session =
-      await auth();
+    const workerRequest =
+      isSmsWorkerRequest(request);
 
-    if (!session?.user) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Unauthorized.",
-        },
-        {
-          status: 401,
-        },
-      );
+    if (!workerRequest) {
+      const session =
+        await auth();
+
+      if (!session?.user) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Unauthorized.",
+          },
+          {
+            status: 401,
+          },
+        );
+      }
     }
 
     /* -----------------------------------------------------
