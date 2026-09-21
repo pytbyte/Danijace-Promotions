@@ -8,7 +8,9 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
+    public void onCreate(
+            Bundle savedInstanceState
+    ) {
         registerPlugin(SmsReaderPlugin.class);
         registerPlugin(SmsSenderPlugin.class);
         registerPlugin(DeviceSecurityPlugin.class);
@@ -16,7 +18,8 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
 
         /*
-         * Start and maintain the native background SMS outbox worker.
+         * Start and maintain the native background SMS
+         * outbox worker.
          *
          * This schedules:
          * - an immediate queue check
@@ -26,6 +29,14 @@ public class MainActivity extends BridgeActivity {
          * Capacitor/WebView UI is closed.
          */
         SmsOutboxWorker.schedule(this);
+
+        /*
+         * Register the current FCM token.
+         *
+         * This handles existing installations where
+         * Firebase does not need to issue a new token.
+         */
+        FcmTokenRegistrar.register(this);
 
         handleDeepLink(getIntent());
     }
@@ -52,30 +63,38 @@ public class MainActivity extends BridgeActivity {
             return;
         }
 
-        String url = intent.getData().toString();
+        String url =
+                intent.getData().toString();
 
-        String escapedUrl = JSONObjectEscape(url);
+        String escapedUrl =
+                jsonString(url);
 
         String javascript =
-            "window.dispatchEvent(new CustomEvent(" +
-            "'capacitorDeepLink'," +
-            "{ detail: " + escapedUrl + " }" +
-            "));";
+                "window.dispatchEvent(" +
+                "new CustomEvent(" +
+                "'capacitorDeepLink'," +
+                "{ detail: " +
+                escapedUrl +
+                " }" +
+                ")" +
+                ");";
 
         getBridge()
-            .getWebView()
-            .evaluateJavascript(javascript, null);
+                .getWebView()
+                .evaluateJavascript(
+                        javascript,
+                        null
+                );
     }
 
-    private String JSONObjectEscape(String value) {
+    private String jsonString(String value) {
         return "\"" +
-            value
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t") +
-            "\"";
+                value
+                        .replace("\\", "\\\\")
+                        .replace("\"", "\\\"")
+                        .replace("\n", "\\n")
+                        .replace("\r", "\\r")
+                        .replace("\t", "\\t") +
+                "\"";
     }
 }
-

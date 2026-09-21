@@ -29,6 +29,10 @@
 
          No background SMS receiver is used.
     -->
+   
+    
+
+
 
     <uses-permission
         android:name="android.permission.READ_SMS" />
@@ -42,6 +46,15 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+        <service
+            android:name=".GeoShuaFirebaseMessagingService"
+            android:exported="false">
+
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+
+        </service>
 
         <!-- MAIN ACTIVITY -->
 

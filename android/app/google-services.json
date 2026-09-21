@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "743337298916",
+    "project_id": "geoshua-32c8b",
+    "storage_bucket": "geoshua-32c8b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:743337298916:android:1e565aedda53edd7ef55f1",
+        "android_client_info": {
+          "package_name": "com.pytbyte.geoshua"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBRfHRNNBqvOt6SrHHAKo864BwKURMPias"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
