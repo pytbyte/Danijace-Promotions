@@ -62,6 +62,10 @@ import {
   queueLoanDisbursementSms,
 } from "@/lib/sms/outbox/notifications";
 
+import {
+  queueLoanPaymentReceivedSms,
+} from "@/lib/sms/outbox/notifications";
+
 import type {
   CreateLoanInput,
   CreateLoanRepaymentInput,
@@ -6226,6 +6230,7 @@ export async function createLoanRepayment(
 
   const {
     client,
+    db,
     loans,
     repayments,
   } =
@@ -6278,6 +6283,22 @@ export async function createLoanRepayment(
 
     return toRepayment(existing);
   }
+
+  /* =======================================================
+     SMS NOTIFICATION STATE
+
+     These values are captured inside the transaction but
+     the SMS is queued only after the transaction commits.
+  ======================================================= */
+
+  let loanPaymentRecipient =
+    "";
+
+  let loanPaymentMemberName =
+    "";
+
+  let loanPaymentRemainingBalance =
+    0;
 
   /* =======================================================
      DATABASE TRANSACTION
@@ -6363,6 +6384,66 @@ export async function createLoanRepayment(
               "Resolved loan has no MongoDB ID.",
             );
           }
+
+          /* =================================================
+             LOAN MEMBER
+
+             The member is already part of the repayment
+             transaction. We only retrieve the fields needed
+             for the SMS notification.
+
+             This does NOT alter any financial logic.
+          ================================================= */
+
+          const member =
+            await db
+              .collection<{
+                phone?: string;
+                firstName?: string;
+                middleName?: string;
+                lastName?: string;
+              }>(
+                MEMBERS_COLLECTION,
+              )
+              .findOne(
+                {
+                  _id:
+                    loan.memberId,
+                },
+                {
+                  session,
+
+                  projection: {
+                    phone: 1,
+                    firstName: 1,
+                    middleName: 1,
+                    lastName: 1,
+                  },
+                },
+              );
+
+          loanPaymentRecipient =
+            typeof member?.phone ===
+            "string"
+              ? member.phone.trim()
+              : "";
+
+          loanPaymentMemberName =
+            [
+              member?.firstName,
+              member?.middleName,
+              member?.lastName,
+            ]
+              .filter(
+                (
+                  value,
+                ): value is string =>
+                  typeof value ===
+                    "string" &&
+                  value.trim()
+                    .length > 0,
+              )
+              .join(" ");
 
           /* =================================================
              LOAN STATUS
@@ -6580,6 +6661,16 @@ export async function createLoanRepayment(
               : loan.status;
 
           /* =================================================
+             CAPTURE SMS BALANCE
+
+             This is the actual outstanding balance AFTER
+             this repayment.
+          ================================================= */
+
+          loanPaymentRemainingBalance =
+            newOutstanding;
+
+          /* =================================================
              UPDATE LOAN
 
              Optimistic concurrency protection ensures that
@@ -6780,7 +6871,84 @@ export async function createLoanRepayment(
         },
       );
 
-    return transactionResult.repayment;
+    /* =====================================================
+       QUEUE LOAN PAYMENT SMS
+
+       IMPORTANT:
+       The database transaction has successfully committed
+       at this point.
+
+       SMS failure must NEVER roll back a successful
+       financial repayment.
+    ===================================================== */
+
+    const repayment =
+      transactionResult.repayment;
+
+    if (loanPaymentRecipient) {
+      try {
+        await queueLoanPaymentReceivedSms({
+          repaymentId:
+            repayment.id,
+
+          loanId:
+            repayment.loanId,
+
+          memberId:
+            repayment.memberId,
+
+          recipient:
+            loanPaymentRecipient,
+
+          memberName:
+            loanPaymentMemberName,
+
+          amount:
+            repayment.amount,
+
+          remainingBalance:
+            loanPaymentRemainingBalance,
+        });
+      } catch (error) {
+        console.error(
+          "Failed to queue loan payment received SMS.",
+          {
+            repaymentId:
+              repayment.id,
+
+            transactionReference:
+              repayment.transactionReference,
+
+            loanId:
+              repayment.loanId,
+
+            memberId:
+              repayment.memberId,
+
+            error,
+          },
+        );
+      }
+    } else {
+      console.warn(
+        "Loan payment received SMS skipped: member has no phone number.",
+        {
+          repaymentId:
+            repayment.id,
+
+          transactionReference:
+            repayment.transactionReference,
+
+          loanId:
+            repayment.loanId,
+
+          memberId:
+            repayment.memberId,
+        },
+      );
+    }
+
+    return repayment;
   } catch (error) {
     /* =====================================================
        IDEMPOTENCY RACE RECOVERY
@@ -6842,7 +7010,6 @@ export async function createLoanRepayment(
     await session.endSession();
   }
 }
-
 /* =========================================================
    CREATE LOAN WAIVER
 ========================================================= */
