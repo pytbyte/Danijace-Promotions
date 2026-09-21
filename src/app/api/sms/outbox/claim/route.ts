@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
-import { claimSms } from "@/lib/sms/outbox";
+
+import {
+  claimSmsBatch,
+} from "@/lib/sms/outbox/service";
 
 /* =========================================================
    POST /api/sms/outbox/claim
@@ -19,7 +22,8 @@ export async function POST(
        AUTHENTICATION
     ----------------------------------------------------- */
 
-    const session = await auth();
+    const session =
+      await auth();
 
     if (!session?.user) {
       return NextResponse.json(
@@ -40,12 +44,14 @@ export async function POST(
     let body: unknown;
 
     try {
-      body = await request.json();
+      body =
+        await request.json();
     } catch {
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid JSON request body.",
+          error:
+            "Invalid JSON request body.",
         },
         {
           status: 400,
@@ -60,7 +66,8 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid request body.",
+          error:
+            "Invalid request body.",
         },
         {
           status: 400,
@@ -69,10 +76,14 @@ export async function POST(
     }
 
     const data =
-      body as Record<string, unknown>;
+      body as Record<
+        string,
+        unknown
+      >;
 
     const deviceId =
-      typeof data.deviceId === "string"
+      typeof data.deviceId ===
+      "string"
         ? data.deviceId.trim()
         : "";
 
@@ -80,7 +91,8 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error: "deviceId is required.",
+          error:
+            "deviceId is required.",
         },
         {
           status: 400,
@@ -89,7 +101,8 @@ export async function POST(
     }
 
     const limit =
-      typeof data.limit === "number"
+      typeof data.limit ===
+      "number"
         ? data.limit
         : 10;
 
@@ -97,10 +110,15 @@ export async function POST(
        CLAIM
     ----------------------------------------------------- */
 
-    const messages = await claimSms({
-      deviceId,
-      limit,
-    });
+    const messages =
+      await claimSmsBatch({
+        deviceId,
+        limit,
+      });
+
+    /* -----------------------------------------------------
+       RESPONSE
+    ----------------------------------------------------- */
 
     return NextResponse.json({
       success: true,
@@ -116,7 +134,8 @@ export async function POST(
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to claim SMS messages.",
+        error:
+          "Failed to claim SMS messages.",
       },
       {
         status: 500,
@@ -124,4 +143,3 @@ export async function POST(
     );
   }
 }
-

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
-import { reportSmsResult } from "@/lib/sms/outbox";
+
+import {
+  reportSmsResult,
+} from "@/lib/sms/outbox/service";
 
 /* =========================================================
    POST /api/sms/outbox/result
@@ -18,7 +21,8 @@ export async function POST(
        AUTHENTICATION
     ----------------------------------------------------- */
 
-    const session = await auth();
+    const session =
+      await auth();
 
     if (!session?.user) {
       return NextResponse.json(
@@ -39,12 +43,14 @@ export async function POST(
     let body: unknown;
 
     try {
-      body = await request.json();
+      body =
+        await request.json();
     } catch {
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid JSON request body.",
+          error:
+            "Invalid JSON request body.",
         },
         {
           status: 400,
@@ -59,7 +65,8 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid request body.",
+          error:
+            "Invalid request body.",
         },
         {
           status: 400,
@@ -68,15 +75,20 @@ export async function POST(
     }
 
     const data =
-      body as Record<string, unknown>;
+      body as Record<
+        string,
+        unknown
+      >;
 
     const deviceId =
-      typeof data.deviceId === "string"
+      typeof data.deviceId ===
+      "string"
         ? data.deviceId.trim()
         : "";
 
     const smsId =
-      typeof data.smsId === "string"
+      typeof data.smsId ===
+      "string"
         ? data.smsId.trim()
         : "";
 
@@ -93,7 +105,8 @@ export async function POST(
         : undefined;
 
     const error =
-      typeof data.error === "string"
+      typeof data.error ===
+      "string"
         ? data.error.trim()
         : undefined;
 
@@ -105,7 +118,8 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error: "deviceId is required.",
+          error:
+            "deviceId is required.",
         },
         {
           status: 400,
@@ -117,7 +131,8 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error: "smsId is required.",
+          error:
+            "smsId is required.",
         },
         {
           status: 400,
