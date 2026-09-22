@@ -1148,7 +1148,7 @@ export default function LoansPage() {
       )}
     </div>
   </div>
-</div>>
+</div>
 
                       {/* MOBILE CAROUSEL INDICATOR */}
 
