@@ -41,7 +41,6 @@ import type {
 ========================================================= */
 
 const LOANS_API = "/api/loans";
-const REPAYMENT_API = "/api/loans/repayments";
 
 /* =========================================================
    RESPONSE TYPES
@@ -51,12 +50,6 @@ type LoansResponse = {
   success: boolean;
   data?: Loan[];
   count?: number;
-  error?: string;
-};
-
-type RepaymentResponse = {
-  success: boolean;
-  data?: unknown;
   error?: string;
 };
 
@@ -88,8 +81,11 @@ export default function LoansPage() {
      LOAN MODALS
   ======================================================= */
 
-  const [loanFormOpen, setLoanFormOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [loanFormOpen, setLoanFormOpen] =
+    useState(false);
+
+  const [settingsOpen, setSettingsOpen] =
+    useState(false);
 
   const [editingLoan, setEditingLoan] =
     useState<Loan | null>(null);
@@ -101,7 +97,8 @@ export default function LoansPage() {
   const [repaymentLoan, setRepaymentLoan] =
     useState<Loan | null>(null);
 
-  const [repaymentOpen, setRepaymentOpen] = useState(false);
+  const [repaymentOpen, setRepaymentOpen] =
+    useState(false);
 
   const [repaymentLoading, setRepaymentLoading] =
     useState(false);
@@ -141,16 +138,20 @@ export default function LoansPage() {
 
         setError("");
 
-        const response = await fetch(LOANS_API, {
-          method: "GET",
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: {
-            Accept: "application/json",
+        const response = await fetch(
+          LOANS_API,
+          {
+            method: "GET",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: {
+              Accept: "application/json",
+            },
           },
-        });
+        );
 
-        let result: LoansResponse | null = null;
+        let result: LoansResponse | null =
+          null;
 
         try {
           result =
@@ -161,7 +162,10 @@ export default function LoansPage() {
           );
         }
 
-        if (!response.ok || !result?.success) {
+        if (
+          !response.ok ||
+          !result?.success
+        ) {
           throw new Error(
             result?.error ||
               `Unable to load loans. Server returned ${response.status}.`,
@@ -246,7 +250,9 @@ export default function LoansPage() {
           .join(" ")
           .toLowerCase();
 
-        if (!searchableText.includes(search)) {
+        if (
+          !searchableText.includes(search)
+        ) {
           return false;
         }
       }
@@ -269,7 +275,9 @@ export default function LoansPage() {
       if (
         loanFilters.type &&
         loan.type.trim().toLowerCase() !==
-          loanFilters.type.trim().toLowerCase()
+          loanFilters.type
+            .trim()
+            .toLowerCase()
       ) {
         return false;
       }
@@ -283,9 +291,10 @@ export default function LoansPage() {
           return false;
         }
 
-        const loanDate = getCalendarDate(
-          loan.repaymentDate,
-        );
+        const loanDate =
+          getCalendarDate(
+            loan.repaymentDate,
+          );
 
         if (loanDate !== repaymentDate) {
           return false;
@@ -308,11 +317,16 @@ export default function LoansPage() {
         ? value
         : new Date(value);
 
-    if (Number.isNaN(date.getTime())) {
+    if (
+      Number.isNaN(
+        date.getTime(),
+      )
+    ) {
       return "";
     }
 
-    const year = date.getFullYear();
+    const year =
+      date.getFullYear();
 
     const month = String(
       date.getMonth() + 1,
@@ -334,7 +348,8 @@ export default function LoansPage() {
       new Set(
         loans
           .map((loan) =>
-            typeof loan.type === "string"
+            typeof loan.type ===
+            "string"
               ? loan.type.trim()
               : "",
           )
@@ -347,337 +362,402 @@ export default function LoansPage() {
      REFRESH
   ======================================================= */
 
-  const handleRefresh = useCallback(() => {
-    if (loading || refreshing) {
-      return;
-    }
+  const handleRefresh =
+    useCallback(() => {
+      if (loading || refreshing) {
+        return;
+      }
 
-    void loadLoans(true);
-  }, [loading, refreshing, loadLoans]);
+      void loadLoans(true);
+    }, [
+      loading,
+      refreshing,
+      loadLoans,
+    ]);
 
   /* =======================================================
      NEW LOAN
   ======================================================= */
 
-  const handleNewLoan = useCallback(() => {
-    setError("");
-    setEditingLoan(null);
-    setLoanFormOpen(true);
-  }, []);
+  const handleNewLoan =
+    useCallback(() => {
+      setError("");
+      setEditingLoan(null);
+      setLoanFormOpen(true);
+    }, []);
 
   /* =======================================================
      EDIT LOAN
   ======================================================= */
 
-  const handleEditLoan = useCallback(
-    (loan: Loan) => {
-      if (
-        !loan ||
-        typeof loan.id !== "string" ||
-        !loan.id.trim()
-      ) {
-        setError(
-          "This loan does not have a valid ID and cannot be edited.",
-        );
+  const handleEditLoan =
+    useCallback(
+      (loan: Loan) => {
+        if (
+          !loan ||
+          typeof loan.id !==
+            "string" ||
+          !loan.id.trim()
+        ) {
+          setError(
+            "This loan does not have a valid ID and cannot be edited.",
+          );
 
-        return;
-      }
+          return;
+        }
 
-      if (
-        loan.status === "completed" ||
-        loan.status === "cancelled"
-      ) {
-        setError(
-          "Completed or cancelled loans cannot be edited.",
-        );
+        if (
+          loan.status ===
+            "completed" ||
+          loan.status ===
+            "cancelled"
+        ) {
+          setError(
+            "Completed or cancelled loans cannot be edited.",
+          );
 
-        return;
-      }
+          return;
+        }
 
-      setError("");
-      setEditingLoan(loan);
-      setLoanFormOpen(true);
-    },
-    [],
-  );
+        setError("");
+        setEditingLoan(loan);
+        setLoanFormOpen(true);
+      },
+      [],
+    );
 
   /* =======================================================
      LOAN FORM SUCCESS
   ======================================================= */
 
-  const handleLoanFormSuccess = useCallback(() => {
-    setLoanFormOpen(false);
-    setEditingLoan(null);
-    void loadLoans(true);
-  }, [loadLoans]);
+  const handleLoanFormSuccess =
+    useCallback(() => {
+      setLoanFormOpen(false);
+      setEditingLoan(null);
+
+      void loadLoans(true);
+    }, [loadLoans]);
 
   /* =======================================================
      DELETE LOAN
   ======================================================= */
 
-  const handleDeleteLoan = useCallback(
-    (loanId: string) => {
-      setLoans((currentLoans) =>
-        currentLoans.filter(
-          (loan) => loan.id !== loanId,
-        ),
-      );
+  const handleDeleteLoan =
+    useCallback(
+      (loanId: string) => {
+        setLoans(
+          (currentLoans) =>
+            currentLoans.filter(
+              (loan) =>
+                loan.id !== loanId,
+            ),
+        );
 
-      setSelectedLoan((currentLoan) =>
-        currentLoan?.id === loanId
-          ? null
-          : currentLoan,
-      );
+        setSelectedLoan(
+          (currentLoan) =>
+            currentLoan?.id ===
+            loanId
+              ? null
+              : currentLoan,
+        );
 
-      setRepaymentLoan((currentLoan) =>
-        currentLoan?.id === loanId
-          ? null
-          : currentLoan,
-      );
+        setRepaymentLoan(
+          (currentLoan) =>
+            currentLoan?.id ===
+            loanId
+              ? null
+              : currentLoan,
+        );
 
-      setError("");
-    },
-    [],
-  );
+        setError("");
+      },
+      [],
+    );
 
   /* =======================================================
      SETTINGS
   ======================================================= */
 
-  const handleOpenSettings = useCallback(() => {
-    setSettingsOpen(true);
-  }, []);
+  const handleOpenSettings =
+    useCallback(() => {
+      setSettingsOpen(true);
+    }, []);
 
-  const handleCloseSettings = useCallback(() => {
-    setSettingsOpen(false);
-  }, []);
+  const handleCloseSettings =
+    useCallback(() => {
+      setSettingsOpen(false);
+    }, []);
 
   /* =======================================================
      REPAYMENT
   ======================================================= */
 
-  const handleOpenRepayment = useCallback(
-    (loan: Loan) => {
-      if (!isRepayable(loan)) {
+  const handleOpenRepayment =
+    useCallback(
+      (loan: Loan) => {
+        if (!isRepayable(loan)) {
+          return;
+        }
+
+        setError("");
+        setRepaymentLoan(loan);
+        setRepaymentOpen(true);
+      },
+      [],
+    );
+
+  const handleCloseRepayment =
+    useCallback(() => {
+      if (repaymentLoading) {
         return;
       }
 
-      setError("");
-      setRepaymentLoan(loan);
-      setRepaymentOpen(true);
-    },
-    [],
-  );
-
-  const handleCloseRepayment = useCallback(() => {
-    if (repaymentLoading) {
-      return;
-    }
-
-    setRepaymentOpen(false);
-    setRepaymentLoan(null);
-  }, [repaymentLoading]);
+      setRepaymentOpen(false);
+      setRepaymentLoan(null);
+    }, [repaymentLoading]);
 
   /* =======================================================
      VIEW LOAN TRANSACTION HISTORY
   ======================================================= */
 
-  const handleViewLoanHistory = useCallback(
-    (loan: Loan) => {
-      if (
-        !loan ||
-        typeof loan.id !== "string" ||
-        !loan.id.trim()
-      ) {
-        setError(
-          "This loan does not have a valid ID.",
+  const handleViewLoanHistory =
+    useCallback(
+      (loan: Loan) => {
+        if (
+          !loan ||
+          typeof loan.id !==
+            "string" ||
+          !loan.id.trim()
+        ) {
+          setError(
+            "This loan does not have a valid ID.",
+          );
+
+          return;
+        }
+
+        setSelectedLoan(loan);
+        setTransactionHistoryOpen(
+          true,
         );
+      },
+      [],
+    );
 
-        return;
-      }
+  const handleCloseLoanHistory =
+    useCallback(() => {
+      setTransactionHistoryOpen(
+        false,
+      );
 
-      setSelectedLoan(loan);
-      setTransactionHistoryOpen(true);
-    },
-    [],
-  );
-
-  const handleCloseLoanHistory = useCallback(() => {
-    setTransactionHistoryOpen(false);
-    setSelectedLoan(null);
-  }, []);
+      setSelectedLoan(null);
+    }, []);
 
   /* =======================================================
      REPAYMENT SUBMISSION
   ======================================================= */
 
-    /* =======================================================
-     REPAYMENT SUBMISSION
-  ======================================================= */
+  const handleRepaymentSubmit =
+    useCallback(
+      async (data: {
+        loanId: string;
+        amount: number;
+        transactionReference: string;
+        transactionDate: string;
+        source: TransactionSource;
+        rawMessage?: string;
+      }) => {
+        const currentLoan =
+          repaymentLoan;
 
-  const handleRepaymentSubmit = useCallback(
-  async (data: {
-    loanId: string;
-    amount: number;
-    transactionReference: string;
-    transactionDate: string;
-    source: TransactionSource;
-    rawMessage?: string;
-  }) => {
-    const currentLoan = repaymentLoan;
+        if (!currentLoan) {
+          throw new Error(
+            "No repayment loan is selected.",
+          );
+        }
 
-    if (!currentLoan) {
-      throw new Error(
-        "No repayment loan is selected.",
-      );
-    }
+        if (
+          currentLoan.id !==
+          data.loanId
+        ) {
+          throw new Error(
+            "The selected loan has changed. Please reopen the repayment form.",
+          );
+        }
 
-    if (currentLoan.id !== data.loanId) {
-      throw new Error(
-        "The selected loan has changed. Please reopen the repayment form.",
-      );
-    }
+        if (
+          !Number.isFinite(
+            data.amount,
+          ) ||
+          data.amount <= 0
+        ) {
+          throw new Error(
+            "Repayment amount must be greater than zero.",
+          );
+        }
 
-    if (
-      !Number.isFinite(data.amount) ||
-      data.amount <= 0
-    ) {
-      throw new Error(
-        "Repayment amount must be greater than zero.",
-      );
-    }
+        if (
+          typeof data.transactionReference !==
+            "string" ||
+          !data.transactionReference.trim()
+        ) {
+          throw new Error(
+            "Transaction reference is required.",
+          );
+        }
 
-    if (
-      typeof data.transactionReference !== "string" ||
-      !data.transactionReference.trim()
-    ) {
-      throw new Error(
-        "Transaction reference is required.",
-      );
-    }
+        /* ===================================================
+           CALENDAR DATE
+        =================================================== */
 
-    /* =====================================================
-       CALENDAR DATE
-    ===================================================== */
+        const transactionDate =
+          typeof data.transactionDate ===
+          "string"
+            ? data.transactionDate.trim()
+            : "";
 
-    const transactionDate =
-      typeof data.transactionDate === "string"
-        ? data.transactionDate.trim()
-        : "";
-
-    if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(
-        transactionDate,
-      )
-    ) {
-      throw new Error(
-        "Transaction date must be a valid date in YYYY-MM-DD format.",
-      );
-    }
-
-    const [
-      yearString,
-      monthString,
-      dayString,
-    ] = transactionDate.split("-");
-
-    const year = Number(yearString);
-    const month = Number(monthString);
-    const day = Number(dayString);
-
-    const calendarCheck = new Date(
-      Date.UTC(
-        year,
-        month - 1,
-        day,
-      ),
-    );
-
-    if (
-      calendarCheck.getUTCFullYear() !== year ||
-      calendarCheck.getUTCMonth() !== month - 1 ||
-      calendarCheck.getUTCDate() !== day
-    ) {
-      throw new Error(
-        "Transaction date must be a valid calendar date.",
-      );
-    }
-
-    /* =====================================================
-       SUBMIT
-    ===================================================== */
-
-    setRepaymentLoading(true);
-
-    try {
-      const response = await fetch(
-        "/api/loans/repayments",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            loanId: data.loanId,
-            amount: data.amount,
-            transactionReference:
-              data.transactionReference.trim(),
-
-            /*
-             * Financial dates are calendar dates.
-             *
-             * Example:
-             *   "2026-09-12"
-             *
-             * Never convert this to:
-             *   new Date(...)
-             *
-             * Never send:
-             *   "2026-09-12T00:00:00.000Z"
-             */
+        if (
+          !/^\d{4}-\d{2}-\d{2}$/.test(
             transactionDate,
+          )
+        ) {
+          throw new Error(
+            "Transaction date must be a valid date in YYYY-MM-DD format.",
+          );
+        }
 
-            source: data.source,
+        const [
+          yearString,
+          monthString,
+          dayString,
+        ] =
+          transactionDate.split(
+            "-",
+          );
 
-            ...(data.rawMessage !== undefined
-              ? {
-                  rawMessage: data.rawMessage,
-                }
-              : {}),
-          }),
-        },
-      );
+        const year =
+          Number(yearString);
 
-      const result = await response.json();
+        const month =
+          Number(monthString);
 
-      if (!response.ok || !result.success) {
-        throw new Error(
-          result.error ||
-            result.message ||
-            "Failed to record loan repayment.",
-        );
-      }
+        const day =
+          Number(dayString);
 
-      setRepaymentOpen(false);
-      setRepaymentLoan(null);
+        const calendarCheck =
+          new Date(
+            Date.UTC(
+              year,
+              month - 1,
+              day,
+            ),
+          );
 
-      await loadLoans(true);
-    } catch (error) {
-      console.error(
-        "Failed to record loan repayment:",
-        error,
-      );
+        if (
+          calendarCheck.getUTCFullYear() !==
+            year ||
+          calendarCheck.getUTCMonth() !==
+            month - 1 ||
+          calendarCheck.getUTCDate() !==
+            day
+        ) {
+          throw new Error(
+            "Transaction date must be a valid calendar date.",
+          );
+        }
 
-      throw error;
-    } finally {
-      setRepaymentLoading(false);
-    }
-  },
-  [
-    repaymentLoan,
-    loadLoans,
-  ],
-);
+        /* ===================================================
+           SUBMIT
+        =================================================== */
+
+        setRepaymentLoading(true);
+
+        try {
+          const response =
+            await fetch(
+              "/api/loans/repayments",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type":
+                    "application/json",
+                },
+                body: JSON.stringify({
+                  loanId:
+                    data.loanId,
+
+                  amount:
+                    data.amount,
+
+                  transactionReference:
+                    data.transactionReference.trim(),
+
+                  /*
+                   * Financial dates are
+                   * calendar dates.
+                   *
+                   * Example:
+                   * "2026-09-12"
+                   *
+                   * Never convert this
+                   * to new Date(...).
+                   *
+                   * Never send:
+                   * "2026-09-12T00:00:00.000Z"
+                   */
+
+                  transactionDate,
+
+                  source:
+                    data.source,
+
+                  ...(data.rawMessage !==
+                  undefined
+                    ? {
+                        rawMessage:
+                          data.rawMessage,
+                      }
+                    : {}),
+                }),
+              },
+            );
+
+          const result =
+            await response.json();
+
+          if (
+            !response.ok ||
+            !result.success
+          ) {
+            throw new Error(
+              result.error ||
+                result.message ||
+                "Failed to record loan repayment.",
+            );
+          }
+
+          setRepaymentOpen(false);
+          setRepaymentLoan(null);
+
+          await loadLoans(true);
+        } catch (error) {
+          console.error(
+            "Failed to record loan repayment:",
+            error,
+          );
+
+          throw error;
+        } finally {
+          setRepaymentLoading(
+            false,
+          );
+        }
+      },
+      [
+        repaymentLoan,
+        loadLoans,
+      ],
+    );
 
   /* =======================================================
      STATISTICS
@@ -694,32 +774,39 @@ export default function LoansPage() {
     let completedLoans = 0;
 
     for (const loan of loans) {
-      totalPrincipal += Number.isFinite(
-        loan.principal,
-      )
-        ? loan.principal
-        : 0;
+      totalPrincipal +=
+        Number.isFinite(
+          loan.principal,
+        )
+          ? loan.principal
+          : 0;
 
-      totalPaid += Number.isFinite(
-        loan.amountPaid,
-      )
-        ? loan.amountPaid
-        : 0;
+      totalPaid +=
+        Number.isFinite(
+          loan.amountPaid,
+        )
+          ? loan.amountPaid
+          : 0;
 
-      totalOutstanding += Number.isFinite(
-        loan.outstandingBalance,
-      )
-        ? Math.max(
-            0,
-            loan.outstandingBalance,
-          )
-        : 0;
+      totalOutstanding +=
+        Number.isFinite(
+          loan.outstandingBalance,
+        )
+          ? Math.max(
+              0,
+              loan.outstandingBalance,
+            )
+          : 0;
 
-      totalFines += Number.isFinite(
-        loan.totalFines,
-      )
-        ? Math.max(0, loan.totalFines)
-        : 0;
+      totalFines +=
+        Number.isFinite(
+          loan.totalFines,
+        )
+          ? Math.max(
+              0,
+              loan.totalFines,
+            )
+          : 0;
 
       switch (loan.status) {
         case "active":
@@ -740,13 +827,21 @@ export default function LoansPage() {
     }
 
     return {
-      totalLoans: loans.length,
+      totalLoans:
+        loans.length,
+
       activeLoans,
+
       pendingLoans,
+
       completedLoans,
+
       totalPrincipal,
+
       totalPaid,
+
       totalOutstanding,
+
       totalFines,
     };
   }, [loans]);
@@ -816,9 +911,12 @@ export default function LoansPage() {
 
                 <button
                   type="button"
-                  onClick={handleRefresh}
+                  onClick={
+                    handleRefresh
+                  }
                   disabled={
-                    loading || refreshing
+                    loading ||
+                    refreshing
                   }
                   className="
                     flex h-11 w-11 shrink-0
@@ -877,14 +975,18 @@ export default function LoansPage() {
                     strokeWidth={1.8}
                   />
 
-                  <span>Settings</span>
+                  <span>
+                    Settings
+                  </span>
                 </button>
 
                 {/* NEW LOAN */}
 
                 <button
                   type="button"
-                  onClick={handleNewLoan}
+                  onClick={
+                    handleNewLoan
+                  }
                   className="
                     flex h-11 min-w-0 flex-1
                     items-center justify-center gap-2
@@ -905,7 +1007,9 @@ export default function LoansPage() {
                     strokeWidth={2}
                   />
 
-                  <span>New Loan</span>
+                  <span>
+                    New Loan
+                  </span>
                 </button>
               </div>
             </div>
@@ -1004,13 +1108,17 @@ export default function LoansPage() {
               <section className="mt-7">
                 <LoanSearch
                   value={loanFilters}
-                  onChange={setLoanFilters}
+                  onChange={
+                    setLoanFilters
+                  }
                   onReset={() =>
                     setLoanFilters(
                       DEFAULT_LOAN_FILTERS,
                     )
                   }
-                  loanTypes={loanTypes}
+                  loanTypes={
+                    loanTypes
+                  }
                 />
               </section>
 
@@ -1019,10 +1127,14 @@ export default function LoansPage() {
               ================================================= */}
 
               <section className="mt-5">
-                {filteredLoans.length === 0 ? (
-                  loans.length === 0 ? (
+                {filteredLoans.length ===
+                0 ? (
+                  loans.length ===
+                  0 ? (
                     <EmptyLoans
-                      onCreate={handleNewLoan}
+                      onCreate={
+                        handleNewLoan
+                      }
                     />
                   ) : (
                     <NoMatchingLoans
@@ -1045,11 +1157,26 @@ export default function LoansPage() {
                         {/* HEADER */}
 
                         <div className="grid grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_120px] gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3 text-[9px] font-semibold uppercase tracking-[0.14em] text-black">
-                          <span>Loan</span>
-                          <span>Member</span>
-                          <span>Principal</span>
-                          <span>Balance</span>
-                          <span>Status</span>
+                          <span>
+                            Loan
+                          </span>
+
+                          <span>
+                            Member
+                          </span>
+
+                          <span>
+                            Principal
+                          </span>
+
+                          <span>
+                            Balance
+                          </span>
+
+                          <span>
+                            Status
+                          </span>
+
                           <span className="text-right">
                             Actions
                           </span>
@@ -1060,10 +1187,16 @@ export default function LoansPage() {
                         <div className="h-[200px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-300 hover:scrollbar-thumb-slate-400">
                           <div className="divide-y divide-slate-200">
                             {filteredLoans.map(
-                              (loan) => (
+                              (
+                                loan,
+                              ) => (
                                 <LoanRow
-                                  key={loan.id}
-                                  loan={loan}
+                                  key={
+                                    loan.id
+                                  }
+                                  loan={
+                                    loan
+                                  }
                                   onEdit={
                                     handleEditLoan
                                   }
@@ -1084,78 +1217,89 @@ export default function LoansPage() {
                     {/* =================================================
                         MOBILE
                     ================================================= */}
-<div className="lg:hidden">
-  <div className="relative -mx-4 overflow-hidden sm:-mx-6">
-    <div
-      className="
-        flex
-        w-full
-        snap-x
-        snap-mandatory
-        gap-0
-        overflow-x-auto
-        overflow-y-auto
-        overscroll-x-contain
-        overscroll-y-contain
-        scroll-smooth
-        scrollbar-none
-        touch-pan-x
-        touch-pan-y
-        max-h-[calc(100vh-140px)]
-      "
-      style={{
-        WebkitOverflowScrolling: "touch",
-      }}
-    >
-      {filteredLoans.map(
-        (loan) => (
-          <div
-            key={loan.id}
-            className="
-              w-full
-              min-w-full
-              shrink-0
-              snap-center
-              px-4
-              sm:px-6
-            "
-          >
-            <LoanCard
-              loan={loan}
-              onEdit={() =>
-                handleEditLoan(
-                  loan,
-                )
-              }
-              onView={() =>
-                handleViewLoanHistory(
-                  loan,
-                )
-              }
-              onRepay={() =>
-                handleOpenRepayment(
-                  loan,
-                )
-              }
-              onDelete={() =>
-                handleDeleteLoan(
-                  loan.id,
-                )
-              }
-            />
-          </div>
-        ),
-      )}
-    </div>
-  </div>
-</div>
 
-                      {/* MOBILE CAROUSEL INDICATOR */}
+                    <div className="lg:hidden">
+                      <div className="relative -mx-4 overflow-hidden sm:-mx-6">
+                        <div
+                          className="
+                            flex
+                            w-full
+                            snap-x
+                            snap-mandatory
+                            gap-0
+                            overflow-x-auto
+                            scroll-smooth
+                            scrollbar-none
+                            overscroll-x-contain
+                          "
+                          style={{
+                            WebkitOverflowScrolling:
+                              "touch",
+                          }}
+                        >
+                          {filteredLoans.map(
+                            (
+                              loan,
+                            ) => (
+                              <div
+                                key={
+                                  loan.id
+                                }
+                                className="
+                                  w-full
+                                  min-w-full
+                                  shrink-0
+                                  snap-center
+                                  px-4
+                                  sm:px-6
+                                  max-h-[calc(100dvh-140px)]
+                                  overflow-y-auto
+                                  overscroll-y-contain
+                                  scrollbar-none
+                                "
+                              >
+                                <LoanCard
+                                  loan={
+                                    loan
+                                  }
+                                  onEdit={() =>
+                                    handleEditLoan(
+                                      loan,
+                                    )
+                                  }
+                                  onView={() =>
+                                    handleViewLoanHistory(
+                                      loan,
+                                    )
+                                  }
+                                  onRepay={() =>
+                                    handleOpenRepayment(
+                                      loan,
+                                    )
+                                  }
+                                  onDelete={() =>
+                                    handleDeleteLoan(
+                                      loan.id,
+                                    )
+                                  }
+                                />
+                              </div>
+                            ),
+                          )}
+                        </div>
+                      </div>
 
-                      {filteredLoans.length > 1 && (
+                      {/* =================================================
+                          MOBILE CAROUSEL INDICATOR
+                      ================================================= */}
+
+                      {filteredLoans.length >
+                        1 && (
                         <div className="mt-4 flex items-center justify-between px-1">
                           <p className="text-[9px] tracking-wide text-black/50">
-                            {filteredLoans.length}{" "}
+                            {
+                              filteredLoans.length
+                            }{" "}
                             loans
                           </p>
 
@@ -1166,7 +1310,9 @@ export default function LoansPage() {
 
                             <ArrowUpRight
                               size={11}
-                              strokeWidth={1.5}
+                              strokeWidth={
+                                1.5
+                              }
                               className="rotate-45 text-black/50"
                             />
                           </div>
@@ -1181,7 +1327,8 @@ export default function LoansPage() {
                   FOOTER
               ================================================= */}
 
-              {loans.length > 0 && (
+              {loans.length >
+                0 && (
                 <div className="mt-5 flex flex-col gap-2 px-1 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-[10px] text-black/50">
                     Showing{" "}
@@ -1197,8 +1344,8 @@ export default function LoansPage() {
 
                   <p className="text-[10px] text-black/50">
                     Financial records remain
-                    authoritative in the domain
-                    services.
+                    authoritative in the
+                    domain services.
                   </p>
                 </div>
               )}
@@ -1218,7 +1365,9 @@ export default function LoansPage() {
           setLoanFormOpen(false);
           setEditingLoan(null);
         }}
-        onSuccess={handleLoanFormSuccess}
+        onSuccess={
+          handleLoanFormSuccess
+        }
       />
 
       {/* =====================================================
@@ -1227,7 +1376,9 @@ export default function LoansPage() {
 
       <LoanSettingsForm
         open={settingsOpen}
-        onClose={handleCloseSettings}
+        onClose={
+          handleCloseSettings
+        }
       />
 
       {/* =====================================================
@@ -1237,9 +1388,15 @@ export default function LoansPage() {
       <LoanRepaymentModal
         loan={repaymentLoan}
         open={repaymentOpen}
-        onClose={handleCloseRepayment}
-        onSubmit={handleRepaymentSubmit}
-        loading={repaymentLoading}
+        onClose={
+          handleCloseRepayment
+        }
+        onSubmit={
+          handleRepaymentSubmit
+        }
+        loading={
+          repaymentLoading
+        }
       />
 
       {/* =====================================================
@@ -1248,8 +1405,12 @@ export default function LoansPage() {
 
       <LoanTransactionModal
         loan={selectedLoan}
-        open={transactionHistoryOpen}
-        onClose={handleCloseLoanHistory}
+        open={
+          transactionHistoryOpen
+        }
+        onClose={
+          handleCloseLoanHistory
+        }
         onLoanUpdated={() => {
           void loadLoans(true);
         }}
@@ -1262,7 +1423,9 @@ export default function LoansPage() {
    REPAYMENT HELPER
 ========================================================= */
 
-function isRepayable(loan: Loan): boolean {
+function isRepayable(
+  loan: Loan,
+): boolean {
   return (
     loan.status === "active" &&
     Number.isFinite(
@@ -1296,9 +1459,10 @@ function EmptyLoans({
         </h2>
 
         <p className="mt-2 text-xs leading-6 text-black/60">
-          Create the first loan to start
-          tracking lending, repayments and
-          outstanding balances.
+          Create the first loan to
+          start tracking lending,
+          repayments and outstanding
+          balances.
         </p>
 
         <button
@@ -1346,7 +1510,8 @@ function NoMatchingLoans({
         </p>
 
         <p className="mt-1 text-xs leading-5 text-black/60">
-          Try changing your search or filters.
+          Try changing your search
+          or filters.
         </p>
 
         <button
@@ -1387,8 +1552,12 @@ function LoanRow({
   onRepay: (loan: Loan) => void;
   onView: (loan: Loan) => void;
 }) {
-  function formatMoney(value: number): string {
-    if (!Number.isFinite(value)) {
+  function formatMoney(
+    value: number,
+  ): string {
+    if (
+      !Number.isFinite(value)
+    ) {
       return "KES 0.00";
     }
 
@@ -1422,7 +1591,8 @@ function LoanRow({
     }
   }
 
-  const canRepay = isRepayable(loan);
+  const canRepay =
+    isRepayable(loan);
 
   return (
     <div className="grid grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.7fr_120px] items-center gap-4 bg-white px-4 py-3.5 transition hover:bg-slate-50">
@@ -1431,11 +1601,14 @@ function LoanRow({
 
       <div className="min-w-0">
         <p className="truncate text-xs font-semibold text-black">
-          {loan.loanNumber || "—"}
+          {loan.loanNumber ||
+            "—"}
         </p>
 
         <p className="mt-1 truncate text-[10px] text-black/55">
-          {loan.type || "loan"} loan
+          {loan.type ||
+            "loan"}{" "}
+          loan
         </p>
       </div>
 
@@ -1448,14 +1621,17 @@ function LoanRow({
         </p>
 
         <p className="mt-1 truncate text-[10px] text-black/55">
-          {loan.memberNumber || "—"}
+          {loan.memberNumber ||
+            "—"}
         </p>
       </div>
 
       {/* PRINCIPAL */}
 
       <p className="truncate text-xs font-medium text-black">
-        {formatMoney(loan.principal)}
+        {formatMoney(
+          loan.principal,
+        )}
       </p>
 
       {/* BALANCE */}
@@ -1484,7 +1660,9 @@ function LoanRow({
 
         <button
           type="button"
-          onClick={() => onView(loan)}
+          onClick={() =>
+            onView(loan)
+          }
           className="
             flex h-8 w-8 shrink-0
             items-center justify-center
@@ -1508,11 +1686,15 @@ function LoanRow({
 
         {/* EDIT */}
 
-        {loan.status !== "completed" &&
-        loan.status !== "cancelled" ? (
+        {loan.status !==
+          "completed" &&
+        loan.status !==
+          "cancelled" ? (
           <button
             type="button"
-            onClick={() => onEdit(loan)}
+            onClick={() =>
+              onEdit(loan)
+            }
             className="
               flex h-8 w-8 shrink-0
               items-center justify-center
@@ -1540,7 +1722,9 @@ function LoanRow({
         {canRepay ? (
           <button
             type="button"
-            onClick={() => onRepay(loan)}
+            onClick={() =>
+              onRepay(loan)
+            }
             className="
               inline-flex h-8
               items-center justify-center gap-1.5
@@ -1581,7 +1765,9 @@ function LoansLoading() {
   return (
     <div className="w-full min-w-0 animate-pulse space-y-6">
       <section className="grid w-full grid-cols-2 gap-3 lg:grid-cols-4">
-        {Array.from({ length: 8 }).map(
+        {Array.from({
+          length: 8,
+        }).map(
           (_, index) => (
             <div
               key={index}
@@ -1605,4 +1791,4 @@ function LoansLoading() {
       </section>
     </div>
   );
-}
+      }
