@@ -1,8 +1,19 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
+
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import type { Loan } from "@/lib/loans/types";
+
 import LoanCard from "@/components/loans/LoanCard";
 
 interface LoanListProps {
@@ -127,7 +138,9 @@ function EmptyLoans() {
           dark:text-sky-400
         "
       >
-        <span className="text-lg font-bold">0</span>
+        <span className="text-lg font-bold">
+          0
+        </span>
       </div>
 
       <h3 className="mt-4 text-sm font-semibold text-foreground">
@@ -153,7 +166,176 @@ export default function LoanList({
   onEdit,
   onRepay,
   onDelete,
-}: LoanListProps){
+}: LoanListProps) {
+  const carouselRef =
+    useRef<HTMLDivElement | null>(null);
+
+  const [activeIndex, setActiveIndex] =
+    useState(0);
+
+  /* =======================================================
+     RESET ACTIVE INDEX
+  ======================================================= */
+
+  useEffect(() => {
+    if (loans.length === 0) {
+      setActiveIndex(0);
+      return;
+    }
+
+    setActiveIndex((current) =>
+      Math.min(
+        current,
+        loans.length - 1,
+      ),
+    );
+  }, [loans.length]);
+
+  /* =======================================================
+     DETECT ACTIVE CARD DURING SWIPE
+  ======================================================= */
+
+  useEffect(() => {
+    const carousel =
+      carouselRef.current;
+
+    if (!carousel || loans.length <= 1) {
+      return;
+    }
+
+    const handleScroll = () => {
+      const width =
+        carousel.clientWidth;
+
+      if (width <= 0) {
+        return;
+      }
+
+      /*
+       * Every card is min-w-full, so each
+       * card occupies the full carousel width.
+       */
+      const nextIndex =
+        Math.round(
+          carousel.scrollLeft / width,
+        );
+
+      setActiveIndex(
+        Math.max(
+          0,
+          Math.min(
+            nextIndex,
+            loans.length - 1,
+          ),
+        ),
+      );
+    };
+
+    carousel.addEventListener(
+      "scroll",
+      handleScroll,
+      {
+        passive: true,
+      },
+    );
+
+    handleScroll();
+
+    return () => {
+      carousel.removeEventListener(
+        "scroll",
+        handleScroll,
+      );
+    };
+  }, [loans.length]);
+
+  /* =======================================================
+     SCROLL TO LOAN
+  ======================================================= */
+
+  const scrollToLoan =
+    useCallback(
+      (index: number) => {
+        const carousel =
+          carouselRef.current;
+
+        if (!carousel) {
+          return;
+        }
+
+        const nextIndex =
+          Math.max(
+            0,
+            Math.min(
+              index,
+              loans.length - 1,
+            ),
+          );
+
+        const width =
+          carousel.clientWidth;
+
+        if (width <= 0) {
+          return;
+        }
+
+        carousel.scrollTo({
+          left:
+            nextIndex * width,
+          behavior: "smooth",
+        });
+
+        setActiveIndex(
+          nextIndex,
+        );
+      },
+      [loans.length],
+    );
+
+  /* =======================================================
+     PREVIOUS
+  ======================================================= */
+
+  const handlePrevious =
+    useCallback(() => {
+      if (activeIndex <= 0) {
+        return;
+      }
+
+      scrollToLoan(
+        activeIndex - 1,
+      );
+    }, [
+      activeIndex,
+      scrollToLoan,
+    ]);
+
+  /* =======================================================
+     NEXT
+  ======================================================= */
+
+  const handleNext =
+    useCallback(() => {
+      if (
+        activeIndex >=
+        loans.length - 1
+      ) {
+        return;
+      }
+
+      scrollToLoan(
+        activeIndex + 1,
+      );
+    }, [
+      activeIndex,
+      loans.length,
+      scrollToLoan,
+    ]);
+
+  /* =======================================================
+     LOADING STATE
+  ======================================================= */
+
   if (loading) {
     return (
       <div className="w-full lg:hidden">
@@ -164,46 +346,13 @@ export default function LoanList({
             snap-x
             snap-mandatory
             overflow-x-auto
-            overscroll-x-contain
+            overscroll-x-auto
             scrollbar-none
+            [touch-action:pan-x_pan-y]
+            [-webkit-overflow-scrolling:touch]
           "
         >
-          <div className="w-full min-w-full shrink-0 snap-center px-4 sm:px-6">
-            <LoanLoadingCard />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (loans.length === 0) {
-    return (
-      <div className="w-full px-4 sm:px-6 lg:hidden">
-        <EmptyLoans />
-      </div>
-    );
-  }
-
-  return (
-    <div className="w-full lg:hidden">
-      {/* =====================================================
-          MOBILE CAROUSEL
-      ====================================================== */}
-
-      <div
-        className="
-          flex
-          w-full
-          snap-x
-          snap-mandatory
-          overflow-x-auto
-          overscroll-x-contain
-          scrollbar-none
-        "
-      >
-        {loans.map((loan) => (
           <div
-            key={loan.id}
             className="
               w-full
               min-w-full
@@ -213,34 +362,110 @@ export default function LoanList({
               sm:px-6
             "
           >
-           <LoanCard
-              loan={loan}
-              onView={() => {
-                onView?.(loan);
-              }}
-              onEdit={() => {
-                onEdit?.(loan);
-              }}
-              onRepay={() => {
-                onRepay?.(loan);
-              }}
-              onDelete={() => {
-                onDelete?.(loan);
-              }}
-            />
+            <LoanLoadingCard />
           </div>
-        ))}
+        </div>
+      </div>
+    );
+  }
+
+  /* =======================================================
+     EMPTY STATE
+  ======================================================= */
+
+  if (loans.length === 0) {
+    return (
+      <div className="w-full px-4 sm:px-6 lg:hidden">
+        <EmptyLoans />
+      </div>
+    );
+  }
+
+  /* =======================================================
+     LOAN LIST
+  ======================================================= */
+
+  return (
+    <div className="w-full lg:hidden">
+      {/* =====================================================
+          MOBILE CAROUSEL
+      ====================================================== */}
+
+      <div
+        ref={carouselRef}
+        className="
+          flex
+          w-full
+          snap-x
+          snap-mandatory
+          overflow-x-auto
+          overscroll-x-auto
+          scrollbar-none
+          [touch-action:pan-x_pan-y]
+          [-webkit-overflow-scrolling:touch]
+        "
+      >
+        {loans.map(
+          (loan) => (
+            <div
+              key={loan.id}
+              className="
+                w-full
+                min-w-full
+                shrink-0
+                snap-center
+                px-4
+                sm:px-6
+              "
+            >
+              <LoanCard
+                loan={loan}
+                onView={() => {
+                  onView?.(
+                    loan,
+                  );
+                }}
+                onEdit={() => {
+                  onEdit?.(
+                    loan,
+                  );
+                }}
+                onRepay={() => {
+                  onRepay?.(
+                    loan,
+                  );
+                }}
+                onDelete={() => {
+                  onDelete?.(
+                    loan,
+                  );
+                }}
+              />
+            </div>
+          ),
+        )}
       </div>
 
       {/* =====================================================
-          MOBILE NAVIGATION HINT
+          MOBILE NAVIGATION
       ====================================================== */}
 
       {loans.length > 1 && (
         <div className="mt-3 flex items-center justify-center gap-3">
+          {/* PREVIOUS */}
+
           <button
             type="button"
             aria-label="Previous loan"
+            aria-disabled={
+              activeIndex === 0
+            }
+            disabled={
+              activeIndex === 0
+            }
+            onClick={
+              handlePrevious
+            }
             className="
               flex
               h-8
@@ -252,33 +477,99 @@ export default function LoanList({
               border-border
               bg-background
               text-muted-foreground
+              transition
+              hover:bg-muted
+              disabled:cursor-not-allowed
+              disabled:opacity-35
               dark:border-white/10
             "
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
 
-          <div className="flex items-center gap-1">
-            {loans.slice(0, 5).map((loan, index) => (
-              <span
-                key={loan.id}
-                className={`
-                  h-1.5
-                  rounded-full
-                  transition-all
-                  ${
-                    index === 0
-                      ? "w-5 bg-sky-500"
-                      : "w-1.5 bg-muted"
-                  }
-                `}
-              />
-            ))}
+          {/* INDICATORS */}
+
+          <div
+            className="flex items-center gap-1"
+            aria-label={`Loan ${activeIndex + 1} of ${loans.length}`}
+          >
+            {loans
+              .slice(
+                0,
+                5,
+              )
+              .map(
+                (
+                  loan,
+                  index,
+                ) => {
+                  /*
+                   * When there are more than five loans,
+                   * keep the indicator compact while still
+                   * showing the currently selected card
+                   * when possible.
+                   */
+                  const visibleIndex =
+                    Math.min(
+                      activeIndex,
+                      4,
+                    );
+
+                  return (
+                    <button
+                      key={
+                        loan.id
+                      }
+                      type="button"
+                      aria-label={`Go to loan ${index + 1}`}
+                      aria-current={
+                        index ===
+                        activeIndex
+                          ? "true"
+                          : undefined
+                      }
+                      onClick={() =>
+                        scrollToLoan(
+                          index,
+                        )
+                      }
+                      className="flex h-3 items-center justify-center"
+                    >
+                      <span
+                        className={`
+                          block
+                          rounded-full
+                          transition-all
+                          ${
+                            index ===
+                            visibleIndex
+                              ? "h-1.5 w-5 bg-sky-500"
+                              : "h-1.5 w-1.5 bg-muted"
+                          }
+                        `}
+                      />
+                    </button>
+                  );
+                },
+              )}
           </div>
+
+          {/* NEXT */}
 
           <button
             type="button"
             aria-label="Next loan"
+            aria-disabled={
+              activeIndex ===
+              loans.length - 1
+            }
+            disabled={
+              activeIndex ===
+              loans.length - 1
+            }
+            onClick={
+              handleNext
+            }
             className="
               flex
               h-8
@@ -290,6 +581,10 @@ export default function LoanList({
               border-border
               bg-background
               text-muted-foreground
+              transition
+              hover:bg-muted
+              disabled:cursor-not-allowed
+              disabled:opacity-35
               dark:border-white/10
             "
           >
@@ -299,20 +594,31 @@ export default function LoanList({
       )}
 
       {/* =====================================================
-          ACCESSIBILITY / DESKTOP FALLBACK NOTE
+          ACCESSIBILITY / DESKTOP FALLBACK
       ====================================================== */}
 
       {onSelectLoan && (
         <div className="sr-only">
-          {loans.map((loan) => (
-            <button
-              key={`select-${loan.id}`}
-              type="button"
-              onClick={() => onSelectLoan(loan)}
-            >
-              Select {loan.loanNumber}
-            </button>
-          ))}
+          {loans.map(
+            (
+              loan,
+            ) => (
+              <button
+                key={`select-${loan.id}`}
+                type="button"
+                onClick={() =>
+                  onSelectLoan(
+                    loan,
+                  )
+                }
+              >
+                Select{" "}
+                {
+                  loan.loanNumber
+                }
+              </button>
+            ),
+          )}
         </div>
       )}
     </div>

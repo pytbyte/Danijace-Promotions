@@ -280,6 +280,254 @@ export interface LoanSettings {
    LOAN
 ========================================================= */
 
+
+/* =========================================================
+   WEEKLY REPAYMENT BREAKDOWN
+========================================================= */
+
+/**
+ * Status of an individual repayment cycle.
+ *
+ * paid:
+ *   The installment has been fully covered.
+ *
+ * partial:
+ *   The installment is not fully covered and some
+ *   payment has already been allocated to it.
+ *
+ * current:
+ *   This is the currently open repayment cycle.
+ *
+ * unpaid:
+ *   The cycle is complete but no payment has been
+ *   allocated toward it.
+ */
+export type WeeklyRepaymentPeriodStatus =
+  | "paid"
+  | "partial"
+  | "current"
+  | "unpaid";
+
+/**
+ * Response-only representation of one repayment cycle.
+ *
+ * This is NOT stored in MongoDB.
+ */
+export interface WeeklyRepaymentBreakdownPeriod {
+  periodNumber: number;
+
+  periodStart: CalendarDate;
+
+  periodEnd: CalendarDate;
+
+  /**
+   * Contractual installment for this period.
+   */
+  installment: number;
+
+  /**
+   * Amount of repayments allocated to this period.
+   */
+  allocated: number;
+
+  /**
+   * Amount still outstanding for this period.
+   */
+  balance: number;
+
+  status: WeeklyRepaymentPeriodStatus;
+}
+
+/**
+ * Response-only representation of how an individual
+ * repayment was allocated.
+ *
+ * A single payment can produce multiple allocation
+ * records when it covers more than one installment.
+ *
+ * Example:
+ *
+ * Payment = 5,000
+ *
+ * Period 1 needs = 2,000
+ * Period 2 needs = 2,000
+ * Period 3 needs = 1,000
+ *
+ * The backend can therefore return three allocation
+ * records for the same payment.
+ */
+export interface WeeklyRepaymentAllocation {
+  /**
+   * Globally deterministic allocation order within
+   * the returned calculation.
+   */
+  allocationNumber: number;
+
+  /**
+   * Identifies the original payment.
+   *
+   * This is response-only ordering information.
+   */
+  paymentSequence: number;
+
+  /**
+   * Calendar date on which the payment occurred.
+   */
+  paymentDate: CalendarDate;
+
+  /**
+   * Original amount of the payment.
+   */
+  paymentAmount: number;
+
+  /**
+   * Repayment cycle receiving this allocation.
+   */
+  periodNumber: number;
+
+  periodStart: CalendarDate;
+
+  periodEnd: CalendarDate;
+
+  /**
+   * Amount of this payment applied to this period.
+   */
+  amountApplied: number;
+
+  /**
+   * Period balance immediately before this allocation.
+   */
+  beforeRemaining: number;
+
+  /**
+   * Period balance immediately after this allocation.
+   */
+  afterRemaining: number;
+
+  /**
+   * Portion of the original payment still available
+   * after this allocation.
+   *
+   * If greater than zero, the payment may continue
+   * into the next unpaid installment.
+   */
+  remainingPayment: number;
+
+  /**
+   * True when this allocation completely cleared
+   * the current installment and some portion of the
+   * payment continued toward the next installment.
+   */
+  carriedForward: boolean;
+}
+
+/**
+ * Response-only record describing payment credit
+ * that remained after all displayed repayment cycles
+ * were fully covered.
+ *
+ * This credit does NOT reduce the displayed weekly
+ * repayment balance.
+ */
+export interface WeeklyRepaymentSurplus {
+  paymentSequence: number;
+
+  paymentDate: CalendarDate;
+
+  paymentAmount: number;
+
+  /**
+   * Amount of the payment that was not required by
+   * any installment represented in the calculation.
+   */
+  unusedCredit: number;
+}
+
+/**
+ * Complete response-only weekly repayment calculation.
+ *
+ * This is deliberately not persisted in MongoDB.
+ *
+ * The backend calculates it from:
+ *
+ * - loan
+ * - assessments
+ * - repayments
+ *
+ * The frontend should display this object directly
+ * rather than reconstructing repayment allocation logic.
+ */
+export interface WeeklyRepaymentBreakdown {
+  /**
+   * Contractual installment amount for the loan.
+   */
+  installmentAmount: number;
+
+  /**
+   * Number of calendar days in one repayment cycle.
+   */
+  cycleDays: number;
+
+  /**
+   * Number of the latest fully completed cycle.
+   *
+   * 0 means no repayment cycle has completed yet.
+   */
+  latestCompletedPeriod: number;
+
+  /**
+   * Currently open repayment cycle.
+   */
+  currentPeriodNumber: number;
+
+  /**
+   * Total outstanding balance from completed
+   * repayment cycles.
+   *
+   * Fines are excluded.
+   */
+  completedBalance: number;
+
+  /**
+   * Outstanding balance in the current repayment cycle.
+   *
+   * Fines are excluded.
+   */
+  currentBalance: number;
+
+  /**
+   * completedBalance + currentBalance.
+   *
+   * This is the value displayed as the weekly
+   * repayment balance.
+   */
+  totalBalance: number;
+
+  /**
+   * Repayment cycles represented by this calculation.
+   *
+   * Ordered oldest → newest.
+   */
+  periods: WeeklyRepaymentBreakdownPeriod[];
+
+  /**
+   * Detailed oldest-outstanding-first payment
+   * allocation records.
+   */
+  allocations: WeeklyRepaymentAllocation[];
+
+  /**
+   * Payments containing credit that was not required
+   * by the displayed repayment cycles.
+   */
+  surpluses: WeeklyRepaymentSurplus[];
+}
+
+
+/* =========================================================
+   LOAN
+========================================================= */
+
 export interface Loan {
   id: string;
 
@@ -342,6 +590,42 @@ export interface Loan {
    * member's weekly installment.
    */
   installmentAmount: number;
+
+  /**
+   * Current amount the member needs to pay toward the
+   * weekly/current repayment obligation.
+   *
+   * This includes:
+   *
+   * - unpaid balances carried from completed cycles
+   * - the current cycle's contractual installment
+   * - less payments allocated to those cycles
+   *
+   * This is a response/calculation field.
+   *
+   * It is NOT stored in MongoDB.
+   */
+  weeklyRepaymentBalance?: number;
+
+  /**
+   * Complete response-only explanation of the
+   * weekly repayment balance.
+   *
+   * This is calculated by the loan service from the
+   * loan's assessments and repayments.
+   *
+   * It is NOT stored in MongoDB.
+   *
+   * The frontend should use this object to display:
+   *
+   * - completed installment balances
+   * - current installment balance
+   * - repayment periods
+   * - payment allocations
+   * - carried-forward payments
+   * - unused/future credit
+   */
+  weeklyRepaymentBreakdown?: WeeklyRepaymentBreakdown;
 
   /**
    * Calendar date on which the loan was disbursed.
@@ -456,6 +740,8 @@ export interface Loan {
    */
   updatedAt: Date;
 }
+
+
 
 /* =========================================================
    CREATE LOAN

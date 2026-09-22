@@ -1,3 +1,4 @@
+
 import {
   queueSms,
 } from "@/lib/sms/outbox/service";
@@ -7,61 +8,33 @@ import {
 } from "@/lib/sms/types";
 
 /* =========================================================
-   CONSTANTS
+   PRIORITIES
 ========================================================= */
 
 const IMMEDIATE_PRIORITY = 10;
-
 const REMINDER_PRIORITY = 50;
 
 /* =========================================================
    HELPERS
 ========================================================= */
 
-function requireValue(
+function required(
   value: string | undefined,
   field: string,
 ): string {
-  const normalized =
-    value?.trim();
+  const result = value?.trim();
 
-  if (!normalized) {
-    throw new Error(
-      `${field} is required.`,
-    );
+  if (!result) {
+    throw new Error(`${field} is required.`);
   }
 
-  return normalized;
+  return result;
 }
 
-function formatAmount(
-  amount: number,
-): string {
-  if (
-    !Number.isFinite(amount) ||
-    amount < 0
-  ) {
-    throw new Error(
-      "SMS amount must be a valid non-negative number.",
-    );
-  }
-
-  return amount.toLocaleString(
-    "en-KE",
-    {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    },
-  );
-}
-
-function requirePositiveAmount(
+function positiveAmount(
   amount: number,
 ): number {
-  if (
-    !Number.isFinite(amount) ||
-    amount <= 0
-  ) {
+  if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error(
       "SMS amount must be greater than zero.",
     );
@@ -70,20 +43,34 @@ function requirePositiveAmount(
   return amount;
 }
 
+function formatAmount(
+  amount: number,
+): string {
+  positiveAmount(amount);
+
+  return amount.toLocaleString("en-KE", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
+
+function positiveInteger(
+  value: number,
+  field: string,
+): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      `${field} must be a positive integer.`,
+    );
+  }
+
+  return value;
+}
+
 /* =========================================================
    SAVINGS DEPOSIT
 ========================================================= */
 
-/**
- * Queues a savings deposit receipt.
- *
- * The notification intentionally does not include the
- * member's savings balance.
- *
- * Idempotency:
- *
- * savings_deposit:<transactionId>
- */
 export async function queueSavingsDepositSms(
   data: {
     transactionId: string;
@@ -93,51 +80,39 @@ export async function queueSavingsDepositSms(
     amount: number;
   },
 ): Promise<string> {
-  const transactionId =
-    requireValue(
-      data.transactionId,
-      "transactionId",
-    );
+  const transactionId = required(
+    data.transactionId,
+    "transactionId",
+  );
 
-  const memberId =
-    requireValue(
-      data.memberId,
-      "memberId",
-    );
+  const memberId = required(
+    data.memberId,
+    "memberId",
+  );
 
-  const recipient =
-    requireValue(
-      data.recipient,
-      "recipient",
-    );
+  const recipient = required(
+    data.recipient,
+    "recipient",
+  );
 
-  const memberName =
-    requireValue(
-      data.memberName,
-      "memberName",
-    );
+  const memberName = required(
+    data.memberName,
+    "memberName",
+  );
 
-  const amount =
-    requirePositiveAmount(
-      data.amount,
-    );
+  const amount = positiveAmount(
+    data.amount,
+  );
 
   const message =
-    `GEO-SHUA: Hi ${memberName}, we have received your savings deposit of KES ${formatAmount(amount)}. Thank you.`;
+    `Hi ${memberName}, savings deposit of KES ${formatAmount(amount)} received. Thank you.\nXAUUSD`;
 
   return queueSms({
-    type:
-      SMS_TYPES.SAVINGS_DEPOSIT,
-
+    type: SMS_TYPES.SAVINGS_DEPOSIT,
     memberId,
-
     recipient,
-
     message,
-
-    priority:
-      IMMEDIATE_PRIORITY,
-
+    priority: IMMEDIATE_PRIORITY,
     idempotencyKey:
       `savings_deposit:${transactionId}`,
   });
@@ -147,13 +122,6 @@ export async function queueSavingsDepositSms(
    LOAN PAYMENT RECEIVED
 ========================================================= */
 
-/**
- * Queues a loan repayment receipt.
- *
- * Idempotency:
- *
- * loan_payment_received:<repaymentId>
- */
 export async function queueLoanPaymentReceivedSms(
   data: {
     repaymentId: string;
@@ -165,68 +133,66 @@ export async function queueLoanPaymentReceivedSms(
     remainingBalance?: number;
   },
 ): Promise<string> {
-  const repaymentId =
-    requireValue(
-      data.repaymentId,
-      "repaymentId",
-    );
+  const repaymentId = required(
+    data.repaymentId,
+    "repaymentId",
+  );
 
-  const loanId =
-    requireValue(
-      data.loanId,
-      "loanId",
-    );
+  const loanId = required(
+    data.loanId,
+    "loanId",
+  );
 
-  const memberId =
-    requireValue(
-      data.memberId,
-      "memberId",
-    );
+  const memberId = required(
+    data.memberId,
+    "memberId",
+  );
 
-  const recipient =
-    requireValue(
-      data.recipient,
-      "recipient",
-    );
+  const recipient = required(
+    data.recipient,
+    "recipient",
+  );
 
-  const memberName =
-    requireValue(
-      data.memberName,
-      "memberName",
-    );
+  const memberName = required(
+    data.memberName,
+    "memberName",
+  );
 
-  const amount =
-    requirePositiveAmount(
-      data.amount,
-    );
+  const amount = positiveAmount(
+    data.amount,
+  );
 
-  const remainingBalance =
-    data.remainingBalance !== undefined
-      ? formatAmount(
-          data.remainingBalance,
-        )
-      : undefined;
+  let message =
+    `Hi ${memberName}, loan payment KES ${formatAmount(amount)} received.\n GEOSHUA`;
 
-  const message =
-    remainingBalance !== undefined
-      ? `GEO-SHUA: Hi ${memberName}, your loan repayment of KES ${formatAmount(amount)} has been received. Remaining loan balance: KES ${remainingBalance}.`
-      : `GEO-SHUA: Hi ${memberName}, your loan repayment of KES ${formatAmount(amount)} has been received. Thank you.`;
+  if (
+    data.remainingBalance !==
+    undefined
+  ) {
+    if (
+      !Number.isFinite(
+        data.remainingBalance,
+      ) ||
+      data.remainingBalance < 0
+    ) {
+      throw new Error(
+        "remainingBalance must be a valid non-negative number.",
+      );
+    }
+
+    message +=
+      ` Balance KES ${formatAmount(data.remainingBalance)}.`;
+  } else {
+    message += " Thank you.";
+  }
 
   return queueSms({
-    type:
-      SMS_TYPES.LOAN_PAYMENT_RECEIVED,
-
+    type: SMS_TYPES.LOAN_PAYMENT_RECEIVED,
     memberId,
-
     loanId,
-
     recipient,
-
     message,
-
-    priority:
-      IMMEDIATE_PRIORITY,
-
+    priority: IMMEDIATE_PRIORITY,
     idempotencyKey:
       `loan_payment_received:${repaymentId}`,
   });
@@ -236,13 +202,6 @@ export async function queueLoanPaymentReceivedSms(
    LOAN DISBURSEMENT
 ========================================================= */
 
-/**
- * Queues the loan disbursement notification.
- *
- * Idempotency:
- *
- * loan_disbursement:<loanId>
- */
 export async function queueLoanDisbursementSms(
   data: {
     loanId: string;
@@ -251,94 +210,147 @@ export async function queueLoanDisbursementSms(
     memberName: string;
     amount: number;
     installmentAmount?: number;
+    repaymentWeeks?: number;
+    repaymentDay?: string;
     firstDueDate?: string;
+    finalDueDate?: string;
+    paybill?: string;
+    accountNumber?: string;
+    fineRate?: number;
   },
 ): Promise<string> {
-  const loanId =
-    requireValue(
-      data.loanId,
-      "loanId",
-    );
+  const loanId = required(
+    data.loanId,
+    "loanId",
+  );
 
-  const memberId =
-    requireValue(
-      data.memberId,
-      "memberId",
-    );
+  const memberId = required(
+    data.memberId,
+    "memberId",
+  );
 
-  const recipient =
-    requireValue(
-      data.recipient,
-      "recipient",
-    );
+  const recipient = required(
+    data.recipient,
+    "recipient",
+  );
 
-  const memberName =
-    requireValue(
-      data.memberName,
-      "memberName",
-    );
+  const memberName = required(
+    data.memberName,
+    "memberName",
+  );
 
-  const amount =
-    requirePositiveAmount(
-      data.amount,
-    );
+  const amount = positiveAmount(
+    data.amount,
+  );
 
   const installmentAmount =
-    data.installmentAmount !== undefined
-      ? requirePositiveAmount(
+    data.installmentAmount !==
+    undefined
+      ? positiveAmount(
           data.installmentAmount,
         )
       : undefined;
 
-  const firstDueDate =
-    data.firstDueDate
-      ? requireValue(
-          data.firstDueDate,
-          "firstDueDate",
+  const repaymentWeeks =
+    data.repaymentWeeks !==
+    undefined
+      ? positiveInteger(
+          data.repaymentWeeks,
+          "repaymentWeeks",
         )
       : undefined;
 
-  const details: string[] = [];
+  const repaymentDay =
+    data.repaymentDay?.trim() ||
+    "Friday";
 
-  details.push(
-    `KES ${formatAmount(amount)} has been approved and disbursed to your GEO-SHUA loan.`,
-  );
+  const firstDueDate =
+    data.firstDueDate?.trim();
+
+  const finalDueDate =
+    data.finalDueDate?.trim();
+
+  const paybill =
+    data.paybill?.trim();
+
+  const accountNumber =
+    data.accountNumber?.trim();
+
+  if (
+    data.fineRate !==
+    undefined &&
+    (!Number.isFinite(data.fineRate) ||
+      data.fineRate < 0)
+  ) {
+    throw new Error(
+      "fineRate must be a valid non-negative number.",
+    );
+  }
+
+  const parts: string[] = [
+    `GEO-SHUA: Dear ${memberName},`,
+    `loan KES ${formatAmount(amount)} disbursed.`,
+  ];
 
   if (
     installmentAmount !==
     undefined
   ) {
-    details.push(
-      `Your weekly installment is KES ${formatAmount(installmentAmount)}.`,
+    if (
+      repaymentWeeks !==
+      undefined
+    ) {
+      parts.push(
+        `Pay KES ${formatAmount(installmentAmount)} every week.`,
+      );
+    } else {
+      parts.push(
+        `Pay KES ${formatAmount(installmentAmount)} every week.`,
+      );
+    }
+  }
+
+  if (paybill && accountNumber) {
+    parts.push(
+      `Paybill ${paybill}, Acc ${accountNumber}.`,
+    );
+  } else if (paybill) {
+    parts.push(
+      `Paybill ${paybill}.`,
     );
   }
 
   if (firstDueDate) {
-    details.push(
-      `Your first due date is ${firstDueDate}.`,
+    parts.push(
+      `Start ${firstDueDate}.`,
     );
   }
 
-  const message =
-    `GEO-SHUA: Hi ${memberName}, ` +
-    details.join(" ") +
-    ` Thank you.`;
+  if (finalDueDate) {
+    parts.push(
+      `End ${finalDueDate}.`,
+    );
+  }
+
+  if (
+    data.fineRate !==
+      undefined &&
+    data.fineRate > 0
+  ) {
+    parts.push(
+      `Fine ${data.fineRate}% on unpaid amounts.`,
+    );
+  }
+
+  const message = parts.join(" ");
 
   return queueSms({
-    type:
-      SMS_TYPES.LOAN_DISBURSEMENT,
-
+    type: SMS_TYPES.LOAN_DISBURSEMENT,
     memberId,
-
     loanId,
-
     recipient,
-
     message,
-
-    priority:
-      IMMEDIATE_PRIORITY,
-
+    priority: IMMEDIATE_PRIORITY,
     idempotencyKey:
       `loan_disbursement:${loanId}`,
   });
@@ -348,16 +360,6 @@ export async function queueLoanDisbursementSms(
    LOAN PAYMENT REMINDER
 ========================================================= */
 
-/**
- * Queues a reminder for an upcoming loan installment.
- *
- * The reminder is normally scheduled one calendar day before
- * the installment due date.
- *
- * Idempotency:
- *
- * loan_payment_reminder:<loanId>:<periodNumber>
- */
 export async function queueLoanPaymentReminderSms(
   data: {
     loanId: string;
@@ -370,86 +372,60 @@ export async function queueLoanPaymentReminderSms(
     scheduledFor?: string;
   },
 ): Promise<string> {
-  const loanId =
-    requireValue(
-      data.loanId,
-      "loanId",
-    );
+  const loanId = required(
+    data.loanId,
+    "loanId",
+  );
 
-  const memberId =
-    requireValue(
-      data.memberId,
-      "memberId",
-    );
+  const memberId = required(
+    data.memberId,
+    "memberId",
+  );
 
-  const recipient =
-    requireValue(
-      data.recipient,
-      "recipient",
-    );
+  const recipient = required(
+    data.recipient,
+    "recipient",
+  );
 
-  const memberName =
-    requireValue(
-      data.memberName,
-      "memberName",
-    );
+  const memberName = required(
+    data.memberName,
+    "memberName",
+  );
 
-  if (
-    !Number.isInteger(
+  const periodNumber =
+    positiveInteger(
       data.periodNumber,
-    ) ||
-    data.periodNumber <= 0
-  ) {
-    throw new Error(
-      "periodNumber must be a positive integer.",
+      "periodNumber",
     );
-  }
 
   const installmentAmount =
-    requirePositiveAmount(
+    positiveAmount(
       data.installmentAmount,
     );
 
-  const dueDate =
-    requireValue(
-      data.dueDate,
-      "dueDate",
-    );
+  const dueDate = required(
+    data.dueDate,
+    "dueDate",
+  );
 
   const scheduledFor =
-    data.scheduledFor
-      ? requireValue(
-          data.scheduledFor,
-          "scheduledFor",
-        )
-      : undefined;
+    data.scheduledFor?.trim();
 
   const message =
-    `GEO-SHUA: Hi ${memberName}, this is a reminder that your loan installment of KES ${formatAmount(installmentAmount)} is due on ${dueDate}. Please make your payment on time. Thank you.`;
+    `Hi ${memberName}, KES ${formatAmount(installmentAmount)} loan payment is due ${dueDate}. Please pay on time.\n GEO-SHUA`;
 
   return queueSms({
-    type:
-      SMS_TYPES.LOAN_PAYMENT_REMINDER,
-
+    type: SMS_TYPES.LOAN_PAYMENT_REMINDER,
     memberId,
-
     loanId,
-
     recipient,
-
     message,
-
-    priority:
-      REMINDER_PRIORITY,
-
+    priority: REMINDER_PRIORITY,
     ...(scheduledFor
-      ? {
-          scheduledFor,
-        }
+      ? { scheduledFor }
       : {}),
-
     idempotencyKey:
-      `loan_payment_reminder:${loanId}:${data.periodNumber}`,
+      `loan_payment_reminder:${loanId}:${periodNumber}`,
   });
 }
 
@@ -457,13 +433,6 @@ export async function queueLoanPaymentReminderSms(
    LOAN CLEARED
 ========================================================= */
 
-/**
- * Queues the final loan-clearance notification.
- *
- * Idempotency:
- *
- * loan_cleared:<loanId>
- */
 export async function queueLoanClearedSms(
   data: {
     loanId: string;
@@ -472,50 +441,37 @@ export async function queueLoanClearedSms(
     memberName: string;
   },
 ): Promise<string> {
-  const loanId =
-    requireValue(
-      data.loanId,
-      "loanId",
-    );
+  const loanId = required(
+    data.loanId,
+    "loanId",
+  );
 
-  const memberId =
-    requireValue(
-      data.memberId,
-      "memberId",
-    );
+  const memberId = required(
+    data.memberId,
+    "memberId",
+  );
 
-  const recipient =
-    requireValue(
-      data.recipient,
-      "recipient",
-    );
+  const recipient = required(
+    data.recipient,
+    "recipient",
+  );
 
-  const memberName =
-    requireValue(
-      data.memberName,
-      "memberName",
-    );
+  const memberName = required(
+    data.memberName,
+    "memberName",
+  );
 
   const message =
-    `GEO-SHUA: Hi ${memberName}, your loan has been fully cleared. Thank you for completing your repayment with GEO-SHUA.`;
+    `Hi ${memberName}, your loan is fully cleared. Thank you.\nGEO-SHUA: `;
 
   return queueSms({
-    type:
-      SMS_TYPES.LOAN_CLEARED,
-
+    type: SMS_TYPES.LOAN_CLEARED,
     memberId,
-
     loanId,
-
     recipient,
-
     message,
-
-    priority:
-      IMMEDIATE_PRIORITY,
-
+    priority: IMMEDIATE_PRIORITY,
     idempotencyKey:
       `loan_cleared:${loanId}`,
   });
 }
-

@@ -67,6 +67,7 @@ import {
 import {
   queueLoanClearedSms,
   queueLoanPaymentReceivedSms,
+  queueLoanPaymentReminderSms,
 } from "@/lib/sms/outbox/notifications";
 
 import type {
@@ -95,6 +96,8 @@ import {
   validateLoanSettings,
   validateCreateLoanWaiver,
 } from "./validation";
+
+
 
 /* =========================================================
    DATABASE
@@ -258,6 +261,14 @@ export type PaginatedLoans = {
   totalPages: number;
 };
 
+export type LoanPaymentReminderPeriod = {
+  periodNumber: number;
+  periodStart: CalendarDate;
+  periodEnd: CalendarDate;
+  installment: number;
+  balance: number;
+};
+
 export type LoanSummary = {
   totalLoans: number;
   activeLoans: number;
@@ -276,13 +287,22 @@ export type LoanSummary = {
 /* =========================================================
    COLLECTIONS
 ========================================================= */
-
 type LoanCollections = {
-  client: Awaited<
-    typeof clientPromise
-  >;
+  client: Awaited<typeof clientPromise>;
   db: Db;
+
   loans: Collection<LoanDocument>;
+
+  members: Collection<{
+    _id: ObjectId;
+    firstName?: string;
+    middleName?: string;
+    lastName?: string;
+    phone?: string;
+    membershipNumber?: string;
+    status?: string;
+  }>;
+
   settings: Collection<LoanSettingsDocument>;
   repayments: Collection<LoanRepaymentDocument>;
   fines: Collection<LoanFineDocument>;
@@ -306,6 +326,19 @@ async function getCollections(): Promise<LoanCollections> {
     loans:
       db.collection<LoanDocument>(
         LOANS_COLLECTION,
+      ),
+
+    members:
+      db.collection<{
+        _id: ObjectId;
+        firstName?: string;
+        middleName?: string;
+        lastName?: string;
+        phone?: string;
+        membershipNumber?: string;
+        status?: string;
+      }>(
+        MEMBERS_COLLECTION,
       ),
 
     settings:
@@ -3239,34 +3272,1385 @@ export async function createLoan(
   }
 }
 
+
+/* =========================================================
+   LOAN CALENDAR DATE NORMALIZATION
+========================================================= */
+
+/**
+ * Normalizes financial dates coming from MongoDB.
+ *
+ * Canonical application format:
+ *
+ *   YYYY-MM-DD
+ *
+ * This also accepts legacy MongoDB Date values and ISO
+ * datetime strings so older records do not break balance
+ * calculations.
+ */
+function normalizeLoanCalendarDate(
+  value: unknown,
+  fieldName: string,
+  loanNumber?: string,
+): CalendarDate {
+  /* =======================================================
+     ALREADY A CALENDAR DATE
+  ======================================================= */
+
+  if (
+    typeof value === "string"
+  ) {
+    const trimmed =
+      value.trim();
+
+    /*
+     * Exact canonical format.
+     */
+    if (
+      /^\d{4}-\d{2}-\d{2}$/.test(
+        trimmed,
+      )
+    ) {
+      assertCalendarDate(
+        trimmed as CalendarDate,
+        fieldName,
+      );
+
+      return trimmed as CalendarDate;
+    }
+
+    /*
+     * Legacy ISO string such as:
+     *
+     *   2026-09-21T00:00:00.000Z
+     */
+    const isoMatch =
+      trimmed.match(
+        /^(\d{4}-\d{2}-\d{2})/,
+      );
+
+    if (isoMatch) {
+      const calendarDate =
+        isoMatch[1] as CalendarDate;
+
+      assertCalendarDate(
+        calendarDate,
+        fieldName,
+      );
+
+      return calendarDate;
+    }
+  }
+
+  /* =======================================================
+     LEGACY JAVASCRIPT DATE
+  ======================================================= */
+
+  if (
+    (value as unknown) instanceof
+    Date
+  ) {
+    const date =
+      value as Date;
+
+    if (
+      Number.isNaN(
+        date.getTime(),
+      )
+    ) {
+      throw new Error(
+        `Invalid ${fieldName}.`,
+      );
+    }
+
+    return dateToKenyanCalendarDate(
+      date,
+    );
+  }
+
+  /* =======================================================
+     INVALID VALUE
+  ======================================================= */
+
+  console.error(
+    "[LOAN DATE] INVALID CALENDAR DATE",
+    {
+      fieldName,
+      loanNumber,
+      value,
+      valueType:
+        typeof value,
+    },
+  );
+
+  throw new Error(
+    `Invalid ${fieldName}. Expected YYYY-MM-DD.`,
+  );
+}
+
+
+/* =========================================================
+   ASSESSMENT PERIOD HELPERS
+========================================================= */
+
+type AssessmentPeriod = {
+  periodNumber: number;
+  periodStart: CalendarDate;
+  periodEnd: CalendarDate;
+};
+
+
+/**
+ * Builds one repayment assessment period.
+ *
+ * Example:
+ *
+ * disbursement = 2026-09-14
+ * cycle        = 7 days
+ *
+ * Period 1:
+ *
+ *   2026-09-14 -> 2026-09-21
+ *
+ * Period 2:
+ *
+ *   2026-09-21 -> 2026-09-28
+ */
+function getAssessmentPeriod(
+  loan: LoanDocument,
+  periodNumber: number,
+): AssessmentPeriod {
+  if (
+    !Number.isInteger(
+      periodNumber,
+    ) ||
+    periodNumber <= 0
+  ) {
+    throw new Error(
+      "Assessment period must be a positive whole number.",
+    );
+  }
+
+  const cycleDays =
+    normalizeCycleDays(
+      loan.repaymentCycleDays,
+    );
+
+  const disbursementDate =
+    normalizeLoanCalendarDate(
+      loan.disbursementDate,
+      "loan.disbursementDate",
+      loan.loanNumber,
+    );
+
+  const periodStart =
+    addCalendarDays(
+      disbursementDate,
+      (
+        periodNumber - 1
+      ) * cycleDays,
+    );
+
+  const periodEnd =
+    addCalendarDays(
+      periodStart,
+      cycleDays,
+    );
+
+  return {
+    periodNumber,
+    periodStart,
+    periodEnd,
+  };
+}
+
+
+
+/**
+ * Returns the number of fully completed repayment cycles.
+ */
+function getLatestDueAssessmentPeriod(
+  loan: LoanDocument,
+  asOfDate: Date,
+): number {
+  const cycleDays =
+    normalizeCycleDays(
+      loan.repaymentCycleDays,
+    );
+
+  const disbursementDate =
+    normalizeLoanCalendarDate(
+      loan.disbursementDate,
+      "loan.disbursementDate",
+      loan.loanNumber,
+    );
+
+  const asOfCalendarDate =
+    dateToKenyanCalendarDate(
+      asOfDate,
+    );
+
+  /*
+   * Calculate elapsed calendar days as:
+   *
+   *   asOfDate - disbursementDate
+   *
+   * Example:
+   *
+   *   disbursement = 2026-09-09
+   *   asOf         = 2026-09-16
+   *   elapsed      = 7 days
+   *
+   * Therefore period 1 is completed.
+   */
+  const elapsedDays =
+    differenceInCalendarDays(
+      asOfCalendarDate,
+      disbursementDate,
+    );
+
+  if (
+    elapsedDays < cycleDays
+  ) {
+    return 0;
+  }
+
+  return Math.floor(
+    elapsedDays /
+      cycleDays,
+  );
+}
+
+
+/* =========================================================
+   WEEKLY REPAYMENT BREAKDOWN TYPES
+========================================================= */
+
+type WeeklyRepaymentBreakdownPeriod = {
+  periodNumber: number;
+
+  periodStart: CalendarDate;
+
+  periodEnd: CalendarDate;
+
+  installment: number;
+
+  allocated: number;
+
+  balance: number;
+
+  status:
+    | "paid"
+    | "partial"
+    | "current"
+    | "unpaid";
+};
+
+type WeeklyRepaymentAllocation = {
+  /*
+   * Stable response-only ordering.
+   */
+  allocationNumber: number;
+
+  /*
+   * Identifies the original payment within this
+   * calculation.
+   */
+  paymentSequence: number;
+
+  paymentDate: CalendarDate;
+
+  paymentAmount: number;
+
+  periodNumber: number;
+
+  periodStart: CalendarDate;
+
+  periodEnd: CalendarDate;
+
+  amountApplied: number;
+
+  beforeRemaining: number;
+
+  afterRemaining: number;
+
+  /*
+   * Amount from the same payment still available
+   * after this allocation.
+   */
+  remainingPayment: number;
+
+  /*
+   * True when this allocation completely cleared
+   * an installment and some money continued into
+   * the next installment.
+   */
+  carriedForward: boolean;
+};
+
+type WeeklyRepaymentSurplus = {
+  paymentSequence: number;
+
+  paymentDate: CalendarDate;
+
+  paymentAmount: number;
+
+  unusedCredit: number;
+};
+
+type WeeklyRepaymentBreakdown = {
+  installmentAmount: number;
+
+  cycleDays: number;
+
+  latestCompletedPeriod: number;
+
+  currentPeriodNumber: number;
+
+  completedBalance: number;
+
+  currentBalance: number;
+
+  totalBalance: number;
+
+  periods: WeeklyRepaymentBreakdownPeriod[];
+
+  allocations: WeeklyRepaymentAllocation[];
+
+  surpluses: WeeklyRepaymentSurplus[];
+};
+
+
+/* =========================================================
+   WEEKLY REPAYMENT BALANCE CALCULATION
+========================================================= */
+
+/**
+ * Calculates the weekly repayment balance using
+ * chronological oldest-outstanding-first allocation.
+ *
+ * Rules:
+ *
+ * 1. Every repayment cycle has an installment amount.
+ * 2. All valid repayments are sorted chronologically.
+ * 3. Every payment is applied to the oldest unpaid
+ *    installment first.
+ * 4. If a payment clears an installment, any surplus
+ *    immediately carries into the next installment.
+ * 5. A payment can therefore clear multiple installments.
+ * 6. A cycle can never have a negative balance.
+ * 7. Previous unpaid installments remain outstanding.
+ * 8. The current installment is included.
+ * 9. Fines are completely excluded.
+ * 10. Credit remaining after the current installment
+ *     is future credit and does not reduce the displayed
+ *     weekly balance.
+ *
+ * The returned breakdown is response-only and is not
+ * persisted to MongoDB.
+ */
+function calculateWeeklyRepaymentBalance(
+  loan: LoanDocument,
+  assessments: Array<{
+    periodNumber: number;
+    periodStart: CalendarDate;
+    periodEnd: CalendarDate;
+    expectedInstallment?: unknown;
+    installmentShortfall?: unknown;
+  }>,
+  repayments: Array<{
+    amount: unknown;
+    transactionDate: unknown;
+  }>,
+  asOfDate: Date,
+): {
+  completedInstallmentBalance: number;
+
+  currentInstallmentBalance: number;
+
+  weeklyRepaymentBalance: number;
+
+  currentPeriodNumber: number;
+
+  weeklyRepaymentBreakdown:
+    WeeklyRepaymentBreakdown;
+
+  loanPaymentReminder:
+    LoanPaymentReminderPeriod | null;
+} {
+  /* =========================================================
+     DATES
+  ========================================================= */
+
+  const disbursementDate =
+    normalizeLoanCalendarDate(
+      loan.disbursementDate,
+      "loan.disbursementDate",
+      loan.loanNumber,
+    );
+
+  const today =
+    dateToKenyanCalendarDate(
+      asOfDate,
+    );
+
+  /* =========================================================
+     INSTALLMENT
+  ========================================================= */
+
+  const installmentAmount =
+    money(
+      Math.max(
+        0,
+        Number(
+          loan.installmentAmount ??
+            0,
+        ),
+      ),
+    );
+
+  const cycleDaysRaw =
+    Number(
+      loan.repaymentCycleDays ??
+        7,
+    );
+
+  const cycleDays =
+    Number.isInteger(
+      cycleDaysRaw,
+    ) &&
+    cycleDaysRaw > 0
+      ? cycleDaysRaw
+      : 7;
+
+  /* =========================================================
+     CURRENT PERIOD
+  ========================================================= */
+
+  const latestCompletedPeriod =
+    getLatestDueAssessmentPeriod(
+      loan,
+      asOfDate,
+    );
+
+  const currentPeriodNumber =
+    latestCompletedPeriod +
+    1;
+
+  /* =========================================================
+     EMPTY BREAKDOWN
+  ========================================================= */
+
+  const createEmptyBreakdown =
+    (): WeeklyRepaymentBreakdown => ({
+      installmentAmount,
+
+      cycleDays,
+
+      latestCompletedPeriod,
+
+      currentPeriodNumber,
+
+      completedBalance: 0,
+
+      currentBalance: 0,
+
+      totalBalance: 0,
+
+      periods: [],
+
+      allocations: [],
+
+      surpluses: [],
+    });
+
+  /* =========================================================
+     INVALID INSTALLMENT
+  ========================================================= */
+
+  if (
+    installmentAmount <= 0
+  ) {
+    return {
+      completedInstallmentBalance: 0,
+
+      currentInstallmentBalance: 0,
+
+      weeklyRepaymentBalance: 0,
+
+      currentPeriodNumber,
+
+      weeklyRepaymentBreakdown:
+        createEmptyBreakdown(),
+
+      loanPaymentReminder:
+        null,
+    };
+  }
+
+  /* =========================================================
+     NORMALIZE REPAYMENTS
+  ========================================================= */
+
+  type NormalizedRepayment = {
+    paymentSequence: number;
+
+    amount: number;
+
+    transactionDate: CalendarDate;
+  };
+
+  const repaymentRecords =
+    repayments
+      .map(
+        (
+          repayment,
+          index,
+        ): NormalizedRepayment | null => {
+          const transactionDate =
+            normalizeLoanCalendarDate(
+              repayment.transactionDate,
+              "repayment.transactionDate",
+              loan.loanNumber,
+            );
+
+          const amount =
+            Number(
+              repayment.amount ??
+                0,
+            );
+
+          if (
+            !Number.isFinite(
+              amount,
+            ) ||
+            amount <= 0
+          ) {
+            return null;
+          }
+
+          if (
+            transactionDate <
+              disbursementDate ||
+            transactionDate >
+              today
+          ) {
+            return null;
+          }
+
+          return {
+            paymentSequence:
+              index + 1,
+
+            amount:
+              money(
+                amount,
+              ),
+
+            transactionDate,
+          };
+        },
+      )
+      .filter(
+        (
+          repayment,
+        ): repayment is NormalizedRepayment =>
+          repayment !== null,
+      )
+      .sort(
+        (
+          a,
+          b,
+        ) => {
+          const dateComparison =
+            a.transactionDate.localeCompare(
+              b.transactionDate,
+            );
+
+          if (
+            dateComparison !== 0
+          ) {
+            return dateComparison;
+          }
+
+          return (
+            a.paymentSequence -
+            b.paymentSequence
+          );
+        },
+      );
+
+  /* =========================================================
+     BUILD INSTALLMENT PERIODS
+  ========================================================= */
+
+  type InstallmentPeriod = {
+    periodNumber: number;
+
+    periodStart: CalendarDate;
+
+    periodEnd: CalendarDate;
+
+    periodInstallment: number;
+
+    remainingBalance: number;
+
+    amountPaidToPeriod: number;
+  };
+
+  const periods: InstallmentPeriod[] =
+    [];
+
+  for (
+    let periodNumber = 1;
+    periodNumber <=
+      currentPeriodNumber;
+    periodNumber++
+  ) {
+    const period =
+      getAssessmentPeriod(
+        loan,
+        periodNumber,
+      );
+
+    const assessment =
+      assessments.find(
+        (
+          item,
+        ) =>
+          item.periodNumber ===
+          periodNumber,
+      );
+
+    /*
+     * Completed periods use their assessed installment
+     * when available.
+     *
+     * The current period uses the loan's current
+     * installment amount.
+     */
+    const periodInstallment =
+      periodNumber <=
+      latestCompletedPeriod
+        ? money(
+            Math.max(
+              0,
+              Number(
+                assessment?.expectedInstallment ??
+                  installmentAmount,
+              ),
+            ),
+          )
+        : installmentAmount;
+
+    if (
+      periodInstallment <= 0
+    ) {
+      continue;
+    }
+
+    periods.push({
+      periodNumber,
+
+      periodStart:
+        period.periodStart,
+
+      periodEnd:
+        period.periodEnd,
+
+      periodInstallment,
+
+      remainingBalance:
+        periodInstallment,
+
+      amountPaidToPeriod: 0,
+    });
+  }
+
+  /* =========================================================
+     PAYMENT ALLOCATIONS
+  ========================================================= */
+
+  const allocations:
+    WeeklyRepaymentAllocation[] =
+    [];
+
+  /* =========================================================
+     FUTURE CREDIT
+  ========================================================= */
+
+  const surpluses:
+    WeeklyRepaymentSurplus[] =
+    [];
+
+  /* =========================================================
+     ALLOCATE PAYMENTS
+  ========================================================= */
+
+  let periodIndex = 0;
+
+  let allocationNumber = 0;
+
+  for (
+    const repayment of
+      repaymentRecords
+  ) {
+    let remainingPayment =
+      money(
+        repayment.amount,
+      );
+
+    if (
+      remainingPayment <= 0
+    ) {
+      continue;
+    }
+
+    console.log(
+      "[WEEKLY BALANCE][PAYMENT START]",
+      {
+        loanNumber:
+          loan.loanNumber,
+
+        paymentSequence:
+          repayment.paymentSequence,
+
+        paymentDate:
+          repayment.transactionDate,
+
+        paymentAmount:
+          repayment.amount,
+      },
+    );
+
+    while (
+      remainingPayment > 0 &&
+      periodIndex <
+        periods.length
+    ) {
+      const period =
+        periods[periodIndex];
+
+      /*
+       * Defensive protection.
+       */
+      if (
+        period.remainingBalance <=
+        0
+      ) {
+        periodIndex++;
+        continue;
+      }
+
+      const beforeRemaining =
+        money(
+          period.remainingBalance,
+        );
+
+      const amountApplied =
+        money(
+          Math.min(
+            remainingPayment,
+            beforeRemaining,
+          ),
+        );
+
+      if (
+        amountApplied <= 0
+      ) {
+        break;
+      }
+
+      period.remainingBalance =
+        money(
+          Math.max(
+            0,
+            beforeRemaining -
+              amountApplied,
+          ),
+        );
+
+      period.amountPaidToPeriod =
+        money(
+          period.amountPaidToPeriod +
+            amountApplied,
+        );
+
+      remainingPayment =
+        money(
+          Math.max(
+            0,
+            remainingPayment -
+              amountApplied,
+          ),
+        );
+
+      allocationNumber++;
+
+      allocations.push({
+        allocationNumber,
+
+        paymentSequence:
+          repayment.paymentSequence,
+
+        paymentDate:
+          repayment.transactionDate,
+
+        paymentAmount:
+          money(
+            repayment.amount,
+          ),
+
+        periodNumber:
+          period.periodNumber,
+
+        periodStart:
+          period.periodStart,
+
+        periodEnd:
+          period.periodEnd,
+
+        amountApplied,
+
+        beforeRemaining,
+
+        afterRemaining:
+          period.remainingBalance,
+
+        remainingPayment,
+
+        carriedForward:
+          period.remainingBalance <=
+            0 &&
+          remainingPayment > 0,
+      });
+
+      console.log(
+        "[WEEKLY BALANCE][ALLOCATE PAYMENT]",
+        {
+          loanNumber:
+            loan.loanNumber,
+
+          paymentSequence:
+            repayment.paymentSequence,
+
+          paymentDate:
+            repayment.transactionDate,
+
+          paymentAmount:
+            repayment.amount,
+
+          periodNumber:
+            period.periodNumber,
+
+          periodStart:
+            period.periodStart,
+
+          periodEnd:
+            period.periodEnd,
+
+          beforeRemaining,
+
+          amountApplied,
+
+          afterRemaining:
+            period.remainingBalance,
+
+          remainingPayment,
+        },
+      );
+
+      /*
+       * Move immediately to the next installment when
+       * this one is completely paid.
+       */
+      if (
+        period.remainingBalance <=
+        0
+      ) {
+        periodIndex++;
+      }
+    }
+
+    /* =====================================================
+       FUTURE CREDIT
+    ===================================================== */
+
+    if (
+      remainingPayment > 0
+    ) {
+      const unusedCredit =
+        money(
+          remainingPayment,
+        );
+
+      surpluses.push({
+        paymentSequence:
+          repayment.paymentSequence,
+
+        paymentDate:
+          repayment.transactionDate,
+
+        paymentAmount:
+          money(
+            repayment.amount,
+          ),
+
+        unusedCredit,
+      });
+
+      console.log(
+        "[WEEKLY BALANCE][PAYMENT SURPLUS]",
+        {
+          loanNumber:
+            loan.loanNumber,
+
+          paymentSequence:
+            repayment.paymentSequence,
+
+          paymentDate:
+            repayment.transactionDate,
+
+          paymentAmount:
+            repayment.amount,
+
+          unusedCredit,
+        },
+      );
+    }
+  }
+
+  /* =========================================================
+     CALCULATE FINAL BALANCES
+  ========================================================= */
+
+  let completedInstallmentBalance =
+    0;
+
+  let currentInstallmentBalance =
+    0;
+
+  for (
+    const period of periods
+  ) {
+    const remainingBalance =
+      money(
+        Math.max(
+          0,
+          period.remainingBalance,
+        ),
+      );
+
+    if (
+      period.periodNumber <=
+      latestCompletedPeriod
+    ) {
+      completedInstallmentBalance =
+        money(
+          completedInstallmentBalance +
+            remainingBalance,
+        );
+    } else if (
+      period.periodNumber ===
+      currentPeriodNumber
+    ) {
+      currentInstallmentBalance =
+        remainingBalance;
+    }
+
+    console.log(
+      "[WEEKLY BALANCE][PERIOD FINAL]",
+      {
+        loanNumber:
+          loan.loanNumber,
+
+        periodNumber:
+          period.periodNumber,
+
+        periodStart:
+          period.periodStart,
+
+        periodEnd:
+          period.periodEnd,
+
+        periodInstallment:
+          period.periodInstallment,
+
+        amountPaidToPeriod:
+          period.amountPaidToPeriod,
+
+        remainingBalance,
+
+        completed:
+          period.periodNumber <=
+          latestCompletedPeriod,
+      },
+    );
+  }
+
+  /* =========================================================
+     NORMALIZE FINAL VALUES
+  ========================================================= */
+
+  completedInstallmentBalance =
+    money(
+      Math.max(
+        0,
+        completedInstallmentBalance,
+      ),
+    );
+
+  currentInstallmentBalance =
+    money(
+      Math.max(
+        0,
+        currentInstallmentBalance,
+      ),
+    );
+
+  const weeklyRepaymentBalance =
+    money(
+      Math.max(
+        0,
+        completedInstallmentBalance +
+          currentInstallmentBalance,
+      ),
+    );
+
+  /* =========================================================
+     BUILD FRONTEND PERIOD BREAKDOWN
+  ========================================================= */
+
+  const breakdownPeriods =
+    periods
+      .map(
+        (
+          period,
+        ): WeeklyRepaymentBreakdownPeriod => {
+          const balance =
+            money(
+              Math.max(
+                0,
+                period.remainingBalance,
+              ),
+            );
+
+          const allocated =
+            money(
+              Math.max(
+                0,
+                period.amountPaidToPeriod,
+              ),
+            );
+
+          let status:
+            | "paid"
+            | "partial"
+            | "current"
+            | "unpaid";
+
+          if (
+            balance <= 0
+          ) {
+            status = "paid";
+          } else if (
+            period.periodNumber ===
+            currentPeriodNumber
+          ) {
+            status = "current";
+          } else if (
+            allocated > 0
+          ) {
+            status = "partial";
+          } else {
+            status = "unpaid";
+          }
+
+          return {
+            periodNumber:
+              period.periodNumber,
+
+            periodStart:
+              period.periodStart,
+
+            periodEnd:
+              period.periodEnd,
+
+            installment:
+              money(
+                period.periodInstallment,
+              ),
+
+            allocated,
+
+            balance,
+
+            status,
+          };
+        },
+      )
+      .sort(
+        (
+          a,
+          b,
+        ) =>
+          a.periodNumber -
+          b.periodNumber,
+      );
+
+  /* =========================================================
+     SORT ALLOCATIONS
+  ========================================================= */
+
+  allocations.sort(
+    (
+      a,
+      b,
+    ) => {
+      const dateComparison =
+        a.paymentDate.localeCompare(
+          b.paymentDate,
+        );
+
+      if (
+        dateComparison !== 0
+      ) {
+        return dateComparison;
+      }
+
+      if (
+        a.paymentSequence !==
+        b.paymentSequence
+      ) {
+        return (
+          a.paymentSequence -
+          b.paymentSequence
+        );
+      }
+
+      return (
+        a.allocationNumber -
+        b.allocationNumber
+      );
+    },
+  );
+
+  /* =========================================================
+     SORT SURPLUSES
+  ========================================================= */
+
+  surpluses.sort(
+    (
+      a,
+      b,
+    ) => {
+      const dateComparison =
+        a.paymentDate.localeCompare(
+          b.paymentDate,
+        );
+
+      if (
+        dateComparison !== 0
+      ) {
+        return dateComparison;
+      }
+
+      return (
+        a.paymentSequence -
+        b.paymentSequence
+      );
+    },
+  );
+
+  /* =========================================================
+     STRUCTURED FRONTEND BREAKDOWN
+  ========================================================= */
+
+  const weeklyRepaymentBreakdown:
+    WeeklyRepaymentBreakdown = {
+    installmentAmount,
+
+    cycleDays,
+
+    latestCompletedPeriod,
+
+    currentPeriodNumber,
+
+    completedBalance:
+      completedInstallmentBalance,
+
+    currentBalance:
+      currentInstallmentBalance,
+
+    totalBalance:
+      weeklyRepaymentBalance,
+
+    periods:
+      breakdownPeriods,
+
+    allocations,
+
+    surpluses,
+  };
+
+  /* =========================================================
+     FINAL LOG
+  ========================================================= */
+
+  console.log(
+    "[WEEKLY BALANCE] FINAL",
+    {
+      loanNumber:
+        loan.loanNumber,
+
+      disbursementDate,
+
+      today,
+
+      latestCompletedPeriod,
+
+      currentPeriodNumber,
+
+      installmentAmount,
+
+      cycleDays,
+
+      repaymentCount:
+        repaymentRecords.length,
+
+      completedInstallmentBalance,
+
+      currentInstallmentBalance,
+
+      weeklyRepaymentBalance,
+
+      periodCount:
+        breakdownPeriods.length,
+
+      allocationCount:
+        allocations.length,
+
+      surplusCount:
+        surpluses.length,
+    },
+  );
+
+  /* =========================================================
+     LOAN PAYMENT REMINDER
+  ========================================================= */
+
+  const loanPaymentReminder =
+    getLoanPaymentReminderPeriod(
+      {
+        currentPeriodNumber,
+
+        weeklyRepaymentBreakdown,
+      },
+      today,
+    );
+
+  /* =========================================================
+     RETURN
+  ========================================================= */
+
+  return {
+    completedInstallmentBalance,
+
+    currentInstallmentBalance,
+
+    weeklyRepaymentBalance,
+
+    currentPeriodNumber,
+
+    weeklyRepaymentBreakdown,
+
+    loanPaymentReminder,
+  };
+}
+
+
+function getLoanPaymentReminderPeriod(
+  calculation: {
+    currentPeriodNumber: number;
+
+    weeklyRepaymentBreakdown:
+      WeeklyRepaymentBreakdown;
+  },
+  today: CalendarDate,
+): LoanPaymentReminderPeriod | null {
+  const currentPeriod =
+    calculation.weeklyRepaymentBreakdown.periods.find(
+      (period) =>
+        period.periodNumber ===
+        calculation.currentPeriodNumber,
+    );
+
+  if (!currentPeriod) {
+    return null;
+  }
+
+  /*
+   * The installment is already fully paid.
+   * No reminder is required.
+   */
+  if (
+    currentPeriod.balance <= 0
+  ) {
+    return null;
+  }
+
+  /*
+   * Reminder is sent exactly one calendar
+   * day before the installment period ends.
+   */
+  const reminderDate =
+    addCalendarDays(
+      currentPeriod.periodEnd,
+      -1,
+    );
+
+  if (
+    today !== reminderDate
+  ) {
+    return null;
+  }
+
+  return {
+    periodNumber:
+      currentPeriod.periodNumber,
+
+    periodStart:
+      currentPeriod.periodStart,
+
+    periodEnd:
+      currentPeriod.periodEnd,
+
+    installment:
+      currentPeriod.installment,
+
+    balance:
+      currentPeriod.balance,
+  };
+}
+
 /* =========================================================
    COMPLETED INSTALLMENT BALANCE
 ========================================================= */
 
 /**
- * Returns the total unpaid installment balance across all
- * completed repayment cycles for a loan.
+ * Returns the numeric weekly installment balance.
  *
- * Source of truth:
- *
- *   loanAssessments.installmentShortfall
- *
- * This function does NOT:
- *
- * - calculate the current/open cycle
- * - calculate fines
- * - include fines
- * - recalculate repayment periods
- * - modify the loan
- *
- * It is therefore safe for read operations.
+ * This remains the scalar API for callers that only need
+ * the number.
  */
 export async function getCompletedInstallmentBalance(
   loanId: string,
 ): Promise<number> {
   if (
     typeof loanId !== "string" ||
-    !ObjectId.isValid(loanId)
+    !ObjectId.isValid(
+      loanId,
+    )
   ) {
     throw new Error(
       "Invalid loan ID.",
@@ -3276,7 +4660,8 @@ export async function getCompletedInstallmentBalance(
   const {
     loans,
     assessments,
-    repayments: repaymentCollection,
+    repayments:
+      repaymentCollection,
   } =
     await getCollections();
 
@@ -3285,9 +4670,6 @@ export async function getCompletedInstallmentBalance(
       loanId,
     );
 
-  /*
-   * Confirm that the loan exists.
-   */
   const loan =
     await loans.findOne({
       _id:
@@ -3300,11 +4682,23 @@ export async function getCompletedInstallmentBalance(
     );
   }
 
-  /*
-   * Every assessment represents one completed
-   * repayment cycle.
-   */
-  const completedAssessments =
+  const disbursementDate =
+    normalizeLoanCalendarDate(
+      loan.disbursementDate,
+      "loan.disbursementDate",
+      loan.loanNumber,
+    );
+
+  const today =
+    dateToKenyanCalendarDate(
+      new Date(),
+    );
+
+  /* =========================================================
+     ASSESSMENTS
+  ========================================================= */
+
+  const assessmentDocuments =
     await assessments
       .find({
         loanId:
@@ -3314,181 +4708,683 @@ export async function getCompletedInstallmentBalance(
         periodNumber: number;
         periodStart: CalendarDate;
         periodEnd: CalendarDate;
-        expectedInstallment: number;
+        expectedInstallment: unknown;
+        installmentShortfall: unknown;
       }>({
         periodNumber: 1,
         periodStart: 1,
         periodEnd: 1,
         expectedInstallment: 1,
+        installmentShortfall: 1,
       })
       .sort({
         periodNumber: 1,
       })
       .toArray();
 
-  if (
-    completedAssessments.length === 0
-  ) {
-    return 0;
-  }
+  /* =========================================================
+     REPAYMENTS
+  ========================================================= */
 
-  /*
-   * Find the complete CalendarDate range covered
-   * by the completed assessments.
-   *
-   * YYYY-MM-DD strings sort chronologically,
-   * so no JavaScript Date conversion is required.
-   */
-  const periodStart =
-    completedAssessments.reduce(
-      (
-        earliest: CalendarDate,
-        assessment,
-      ) =>
-        assessment.periodStart <
-        earliest
-          ? assessment.periodStart
-          : earliest,
-      completedAssessments[0]
-        .periodStart,
-    );
-
-  const periodEnd =
-    completedAssessments.reduce(
-      (
-        latest: CalendarDate,
-        assessment,
-      ) =>
-        assessment.periodEnd >
-        latest
-          ? assessment.periodEnd
-          : latest,
-      completedAssessments[0]
-        .periodEnd,
-    );
-
-  /*
-   * Fetch repayments that fall inside the overall
-   * completed-assessment date range.
-   *
-   * The result is an ARRAY. The collection itself
-   * remains named repaymentCollection.
-   */
-  const repaymentRecords =
+  const repaymentDocuments =
     await repaymentCollection
       .find({
         loanId:
           objectId,
-
-        transactionDate: {
-          $gte:
-            periodStart,
-          $lte:
-            periodEnd,
-        },
       })
       .project<{
-        amount: number;
-        transactionDate: CalendarDate;
+        amount: unknown;
+        transactionDate: unknown;
       }>({
         amount: 1,
         transactionDate: 1,
       })
       .toArray();
 
-  /*
-   * Calculate the unpaid portion of every completed
-   * repayment cycle independently.
-   */
-  let completedBalance = 0;
+  const repaymentDocumentsForCalculation =
+    repaymentDocuments
+      .map(
+        (
+          repayment,
+        ) => {
+          const transactionDate =
+            normalizeLoanCalendarDate(
+              repayment.transactionDate,
+              "repayment.transactionDate",
+              loan.loanNumber,
+            );
 
-  for (
-    const assessment of completedAssessments
-  ) {
-    const expectedInstallment =
-      Math.max(
-        0,
-        Number(
-          assessment.expectedInstallment ??
-            0,
-        ),
+          const amount =
+            Number(
+              repayment.amount ??
+                0,
+            );
+
+          return {
+            amount,
+
+            transactionDate,
+          };
+        },
+      )
+      .filter(
+        (
+          repayment,
+        ) =>
+          Number.isFinite(
+            repayment.amount,
+          ) &&
+          repayment.amount > 0 &&
+          repayment.transactionDate >=
+            disbursementDate &&
+          repayment.transactionDate <=
+            today,
+      )
+      .sort(
+        (
+          a,
+          b,
+        ) =>
+          a.transactionDate.localeCompare(
+            b.transactionDate,
+          ),
       );
 
-    if (
-      expectedInstallment <= 0
-    ) {
-      continue;
-    }
+  /* =========================================================
+     CALCULATE
+  ========================================================= */
 
-    /*
-     * Allocate repayments to this specific
-     * assessment period.
-     */
-    let paymentsDuringPeriod = 0;
+  const result =
+    calculateWeeklyRepaymentBalance(
+      loan,
+      assessmentDocuments,
+      repaymentDocumentsForCalculation,
+      new Date(),
+    );
 
-    for (
-      const repayment of repaymentRecords
-    ) {
-      const transactionDate =
-        repayment.transactionDate;
-
-      if (
-        typeof transactionDate !==
-        "string"
-      ) {
-        continue;
-      }
-
-      if (
-        transactionDate <
-          assessment.periodStart ||
-        transactionDate >
-          assessment.periodEnd
-      ) {
-        continue;
-      }
-
-      const amount =
-        Number(
-          repayment.amount ??
-            0,
-        );
-
-      if (
-        !Number.isFinite(
-          amount,
-        ) ||
-        amount <= 0
-      ) {
-        continue;
-      }
-
-      paymentsDuringPeriod +=
-        amount;
-    }
-
-    /*
-     * A payment can never make an installment
-     * balance negative.
-     */
-    const remainingInstallment =
-      Math.max(
-        0,
-        expectedInstallment -
-          paymentsDuringPeriod,
-      );
-
-    completedBalance +=
-      remainingInstallment;
-  }
-
-  return money(
-    completedBalance,
-  );
+  return result.weeklyRepaymentBalance;
 }
 
+
 /* =========================================================
-   GET LOAN
+   LIST LOANS
+========================================================= */
+
+
+/* =========================================================
+   LIST LOANS
+========================================================= */
+
+export async function getLoans(
+  options: LoanListOptions = {},
+): Promise<PaginatedLoans> {
+  const {
+    loans,
+    members,
+    assessments,
+    repayments: repaymentCollection,
+  } = await getCollections();
+
+  /* =========================================================
+     PAGINATION
+  ========================================================= */
+
+  const requestedPage = Number(options.page);
+
+  const page =
+    Number.isFinite(requestedPage) &&
+    requestedPage >= 1
+      ? Math.floor(requestedPage)
+      : 1;
+
+  const requestedLimit = Number(options.limit);
+
+  const limit =
+    Number.isFinite(requestedLimit) &&
+    requestedLimit >= 1
+      ? Math.min(100, Math.floor(requestedLimit))
+      : 25;
+
+  /* =========================================================
+     FILTER
+  ========================================================= */
+
+  const filter: Record<string, unknown> = {};
+
+  if (options.status) {
+    filter.status = options.status;
+  }
+
+  if (options.type) {
+    filter.type = options.type;
+  }
+
+  if (options.repaymentStatus) {
+    filter.repaymentStatus = options.repaymentStatus;
+  }
+
+  if (options.memberId) {
+    if (!ObjectId.isValid(options.memberId)) {
+      return {
+        loans: [],
+        total: 0,
+        page: 1,
+        limit,
+        totalPages: 0,
+      };
+    }
+
+    filter.memberId = createObjectId(options.memberId);
+  }
+
+  /* =========================================================
+     DATE FILTERS
+  ========================================================= */
+
+  if (options.repaymentDate) {
+    assertCalendarDate(
+      options.repaymentDate,
+      "repayment date",
+    );
+
+    filter.repaymentDate = options.repaymentDate;
+  }
+
+  if (options.endDate) {
+    assertCalendarDate(
+      options.endDate,
+      "loan end date",
+    );
+
+    filter.endDate = options.endDate;
+  }
+
+  /* =========================================================
+     SEARCH
+  ========================================================= */
+
+  const search =
+    typeof options.search === "string"
+      ? options.search.trim()
+      : "";
+
+  if (search) {
+    const regex = new RegExp(
+      escapeRegex(search),
+      "i",
+    );
+
+    filter.$or = [
+      {
+        loanNumber: regex,
+      },
+      {
+        memberNumber: regex,
+      },
+      {
+        memberName: regex,
+      },
+      {
+        "guarantor.name": regex,
+      },
+      {
+        "guarantor.phone": regex,
+      },
+    ];
+  }
+
+  /* =========================================================
+     COUNT
+  ========================================================= */
+
+  const total = await loans.countDocuments(filter);
+
+  const totalPages =
+    total === 0
+      ? 0
+      : Math.ceil(total / limit);
+
+  const safePage =
+    totalPages > 0
+      ? Math.min(page, totalPages)
+      : 1;
+
+  /* =========================================================
+     LOAD LOANS
+  ========================================================= */
+
+  const documents = await loans
+    .find(filter)
+    .sort({
+      createdAt: -1,
+      _id: -1,
+    })
+    .skip((safePage - 1) * limit)
+    .limit(limit)
+    .toArray();
+
+  if (documents.length === 0) {
+    return {
+      loans: [],
+      total,
+      page: safePage,
+      limit,
+      totalPages,
+    };
+  }
+
+  /* =========================================================
+     LOAN IDS
+  ========================================================= */
+
+  const loanIds = documents
+    .map((document) => document._id)
+    .filter(
+      (id): id is ObjectId =>
+        id instanceof ObjectId,
+    );
+
+  /* =========================================================
+     MEMBER IDS
+     
+     The loan stores memberId.
+     The member document stores:
+     
+       _id
+       membershipNumber
+       phone
+     
+     We use memberId to resolve the correct member.
+  ========================================================= */
+
+  const memberIds = documents
+    .map((document) => document.memberId)
+    .filter(
+      (id): id is ObjectId =>
+        id instanceof ObjectId,
+    );
+
+  /* =========================================================
+     LOAD MEMBERS
+
+     Only load members belonging to the loans on this page.
+     Phone number comes from the members collection.
+  ========================================================= */
+
+  const memberDocuments =
+    memberIds.length > 0
+      ? await members
+          .find({
+            _id: {
+              $in: memberIds,
+            },
+          })
+          .project<{
+            _id: ObjectId;
+            membershipNumber?: string;
+            firstName?: string;
+            middleName?: string;
+            lastName?: string;
+            phone?: string;
+          }>({
+            _id: 1,
+            membershipNumber: 1,
+            firstName: 1,
+            middleName: 1,
+            lastName: 1,
+            phone: 1,
+          })
+          .toArray()
+      : [];
+
+  /* =========================================================
+     GROUP MEMBERS
+  ========================================================= */
+
+  const membersById = new Map<
+    string,
+    (typeof memberDocuments)[number]
+  >();
+
+  for (const member of memberDocuments) {
+    membersById.set(
+      member._id.toString(),
+      member,
+    );
+  }
+
+  /* =========================================================
+     LOAD ASSESSMENTS
+  ========================================================= */
+
+  const assessmentDocuments =
+    loanIds.length > 0
+      ? await assessments
+          .find({
+            loanId: {
+              $in: loanIds,
+            },
+          })
+          .project<{
+            loanId: ObjectId;
+            periodNumber: number;
+            periodStart: CalendarDate;
+            periodEnd: CalendarDate;
+            expectedInstallment: unknown;
+            installmentShortfall: unknown;
+          }>({
+            loanId: 1,
+            periodNumber: 1,
+            periodStart: 1,
+            periodEnd: 1,
+            expectedInstallment: 1,
+            installmentShortfall: 1,
+          })
+          .sort({
+            periodNumber: 1,
+          })
+          .toArray()
+      : [];
+
+  /* =========================================================
+     GROUP ASSESSMENTS
+  ========================================================= */
+
+  const assessmentsByLoanId = new Map<
+    string,
+    typeof assessmentDocuments
+  >();
+
+  for (const assessment of assessmentDocuments) {
+    const key = assessment.loanId.toString();
+
+    const existing =
+      assessmentsByLoanId.get(key);
+
+    if (existing) {
+      existing.push(assessment);
+    } else {
+      assessmentsByLoanId.set(
+        key,
+        [assessment],
+      );
+    }
+  }
+
+  /* =========================================================
+     LOAD REPAYMENTS
+  ========================================================= */
+
+  const repaymentDocuments =
+    loanIds.length > 0
+      ? await repaymentCollection
+          .find({
+            loanId: {
+              $in: loanIds,
+            },
+          })
+          .project<{
+            loanId: ObjectId;
+            amount: unknown;
+            transactionDate: unknown;
+          }>({
+            loanId: 1,
+            amount: 1,
+            transactionDate: 1,
+          })
+          .toArray()
+      : [];
+
+  /* =========================================================
+     GROUP REPAYMENTS
+  ========================================================= */
+
+  const repaymentsByLoanId = new Map<
+    string,
+    typeof repaymentDocuments
+  >();
+
+  for (const repayment of repaymentDocuments) {
+    const key = repayment.loanId.toString();
+
+    const existing =
+      repaymentsByLoanId.get(key);
+
+    if (existing) {
+      existing.push(repayment);
+    } else {
+      repaymentsByLoanId.set(
+        key,
+        [repayment],
+      );
+    }
+  }
+
+  /* =========================================================
+     HYDRATE LOANS
+  ========================================================= */
+
+  const hydratedLoans =
+    await Promise.all(
+      documents.map(async (document) => {
+        const loan = toLoan(document);
+
+        const loanId =
+          document._id.toString();
+
+        const loanAssessments =
+          assessmentsByLoanId.get(
+            loanId,
+          ) ?? [];
+
+        const loanRepayments =
+          repaymentsByLoanId.get(
+            loanId,
+          ) ?? [];
+
+        const result =
+          calculateWeeklyRepaymentBalance(
+            document,
+            loanAssessments,
+            loanRepayments,
+            new Date(),
+          );
+
+        /* =================================================
+           RESOLVE MEMBER
+           
+           Loan:
+             memberId
+             memberNumber
+           
+           Member:
+             _id
+             membershipNumber
+             phone
+           
+           We use memberId because it is the
+           direct database relationship.
+        ================================================= */
+
+        const member =
+          membersById.get(
+            document.memberId.toString(),
+          );
+
+        /* =================================================
+           LOAN PAYMENT REMINDER SMS
+        ================================================= */
+
+        if (
+          result.loanPaymentReminder
+        ) {
+          const recipient =
+            typeof member?.phone ===
+            "string"
+              ? member.phone.trim()
+              : "";
+
+          if (recipient) {
+            try {
+              await queueLoanPaymentReminderSms(
+                {
+                  loanId: loan.id,
+
+                  memberId:
+                    loan.memberId,
+
+                  recipient,
+
+                  memberName:
+                    loan.memberName,
+
+                  periodNumber:
+                    result
+                      .loanPaymentReminder
+                      .periodNumber,
+
+                  installmentAmount:
+                    result
+                      .loanPaymentReminder
+                      .installment,
+
+                  dueDate:
+                    result
+                      .loanPaymentReminder
+                      .periodEnd,
+                },
+              );
+            } catch (error) {
+              /*
+               * SMS failure must NEVER affect
+               * loan retrieval or financial data.
+               */
+              console.error(
+                "Failed to queue loan payment reminder SMS.",
+                {
+                  loanId: loan.id,
+
+                  loanNumber:
+                    loan.loanNumber,
+
+                  memberId:
+                    loan.memberId,
+
+                  memberNumber:
+                    loan.memberNumber,
+
+                  memberName:
+                    loan.memberName,
+
+                  recipient,
+
+                  periodNumber:
+                    result
+                      .loanPaymentReminder
+                      .periodNumber,
+
+                  error,
+                },
+              );
+            }
+          } else {
+            console.warn(
+              "Loan payment reminder SMS skipped: member has no phone number.",
+              {
+                loanId: loan.id,
+
+                loanNumber:
+                  loan.loanNumber,
+
+                memberId:
+                  loan.memberId,
+
+                memberNumber:
+                  loan.memberNumber,
+
+                memberName:
+                  loan.memberName,
+              },
+            );
+          }
+        }
+
+        /* =================================================
+           RESPONSE-ONLY FINANCIAL VALUES
+           
+           Nothing here is persisted to MongoDB.
+        ================================================= */
+
+        loan.completedInstallmentBalance =
+          result.completedInstallmentBalance;
+
+        loan.weeklyRepaymentBalance =
+          result.weeklyRepaymentBalance;
+
+        loan.weeklyRepaymentBreakdown =
+          result.weeklyRepaymentBreakdown;
+
+        console.log(
+          "[LOANS LIST][WEEKLY BALANCE]",
+          {
+            loanNumber:
+              document.loanNumber,
+
+            memberNumber:
+              document.memberNumber,
+
+            completedBalance:
+              result.completedInstallmentBalance,
+
+            currentBalance:
+              result.currentInstallmentBalance,
+
+            totalBalance:
+              result.weeklyRepaymentBalance,
+
+            currentPeriod:
+              result.currentPeriodNumber,
+
+            periodCount:
+              result
+                .weeklyRepaymentBreakdown
+                .periods
+                .length,
+
+            allocationCount:
+              result
+                .weeklyRepaymentBreakdown
+                .allocations
+                .length,
+
+            surplusCount:
+              result
+                .weeklyRepaymentBreakdown
+                .surpluses
+                .length,
+          },
+        );
+
+        return loan;
+      }),
+    );
+
+  /* =========================================================
+     RESPONSE
+  ========================================================= */
+
+  return {
+    loans: hydratedLoans,
+    total,
+    page: safePage,
+    limit,
+    totalPages,
+  };
+}
+
+
+/* =========================================================
+   GET LOAN BY ID
 ========================================================= */
 
 export async function getLoanById(
@@ -3496,35 +5392,119 @@ export async function getLoanById(
 ): Promise<Loan | null> {
   if (
     typeof id !== "string" ||
-    !ObjectId.isValid(id)
+    !ObjectId.isValid(
+      id,
+    )
   ) {
     return null;
   }
 
-  const { loans } =
+  const {
+    loans,
+    assessments,
+    repayments:
+      repaymentCollection,
+  } =
     await getCollections();
+
+  const objectId =
+    createObjectId(
+      id,
+    );
 
   const loan =
     await loans.findOne({
       _id:
-        createObjectId(id),
+        objectId,
     });
 
   if (!loan) {
     return null;
   }
 
-  const completedInstallmentBalance =
-    await getCompletedInstallmentBalance(
-      id,
+  /* =========================================================
+     ASSESSMENTS
+  ========================================================= */
+
+  const assessmentDocuments =
+    await assessments
+      .find({
+        loanId:
+          objectId,
+      })
+      .project<{
+        periodNumber: number;
+        periodStart: CalendarDate;
+        periodEnd: CalendarDate;
+        expectedInstallment: unknown;
+        installmentShortfall: unknown;
+      }>({
+        periodNumber: 1,
+        periodStart: 1,
+        periodEnd: 1,
+        expectedInstallment: 1,
+        installmentShortfall: 1,
+      })
+      .sort({
+        periodNumber: 1,
+      })
+      .toArray();
+
+  /* =========================================================
+     REPAYMENTS
+  ========================================================= */
+
+  const repaymentDocuments =
+    await repaymentCollection
+      .find({
+        loanId:
+          objectId,
+      })
+      .project<{
+        amount: unknown;
+        transactionDate: unknown;
+      }>({
+        amount: 1,
+        transactionDate: 1,
+      })
+      .toArray();
+
+  /* =========================================================
+     CALCULATE
+  ========================================================= */
+
+  const result =
+    calculateWeeklyRepaymentBalance(
+      loan,
+      assessmentDocuments,
+      repaymentDocuments,
+      new Date(),
     );
 
-  return {
-    ...toLoan(loan),
+  /* =========================================================
+     RESPONSE
+  ========================================================= */
 
-    completedInstallmentBalance,
+  return {
+    ...toLoan(
+      loan,
+    ),
+
+    completedInstallmentBalance:
+      result.completedInstallmentBalance,
+
+    weeklyRepaymentBalance:
+      result.weeklyRepaymentBalance,
+
+    weeklyRepaymentBreakdown:
+      result.weeklyRepaymentBreakdown,
   };
 }
+
+
+/* =========================================================
+   GET LOAN BY NUMBER
+========================================================= */
 
 export async function getLoanByNumber(
   loanNumber: string,
@@ -3539,7 +5519,12 @@ export async function getLoanByNumber(
     return null;
   }
 
-  const { loans } =
+  const {
+    loans,
+    assessments,
+    repayments:
+      repaymentCollection,
+  } =
     await getCollections();
 
   const loan =
@@ -3552,17 +5537,90 @@ export async function getLoanByNumber(
     return null;
   }
 
-  const completedInstallmentBalance =
-    await getCompletedInstallmentBalance(
-      loan._id.toString(),
+  const objectId =
+    loan._id;
+
+  /* =========================================================
+     ASSESSMENTS
+  ========================================================= */
+
+  const assessmentDocuments =
+    await assessments
+      .find({
+        loanId:
+          objectId,
+      })
+      .project<{
+        periodNumber: number;
+        periodStart: CalendarDate;
+        periodEnd: CalendarDate;
+        expectedInstallment: unknown;
+        installmentShortfall: unknown;
+      }>({
+        periodNumber: 1,
+        periodStart: 1,
+        periodEnd: 1,
+        expectedInstallment: 1,
+        installmentShortfall: 1,
+      })
+      .sort({
+        periodNumber: 1,
+      })
+      .toArray();
+
+  /* =========================================================
+     REPAYMENTS
+  ========================================================= */
+
+  const repaymentDocuments =
+    await repaymentCollection
+      .find({
+        loanId:
+          objectId,
+      })
+      .project<{
+        amount: unknown;
+        transactionDate: unknown;
+      }>({
+        amount: 1,
+        transactionDate: 1,
+      })
+      .toArray();
+
+  /* =========================================================
+     CALCULATE
+  ========================================================= */
+
+  const result =
+    calculateWeeklyRepaymentBalance(
+      loan,
+      assessmentDocuments,
+      repaymentDocuments,
+      new Date(),
     );
 
-  return {
-    ...toLoan(loan),
+  /* =========================================================
+     RESPONSE
+  ========================================================= */
 
-    completedInstallmentBalance,
+  return {
+    ...toLoan(
+      loan,
+    ),
+
+    completedInstallmentBalance:
+      result.completedInstallmentBalance,
+
+    weeklyRepaymentBalance:
+      result.weeklyRepaymentBalance,
+
+    weeklyRepaymentBreakdown:
+      result.weeklyRepaymentBreakdown,
   };
 }
+
+
+
 
 /* =========================================================
    UPDATE LOAN
@@ -4298,444 +6356,12 @@ export async function accrueAllLoanFines(): Promise<number> {
   return created;
 }
 
-/* =========================================================
-   LIST LOANS
-========================================================= */
 
-/**
- * Lists loans and attaches the total unpaid balance from
- * completed repayment cycles.
- *
- * completedInstallmentBalance is calculated from the
- * loanAssessments collection in one batch query for the
- * current page.
- *
- * No current/open repayment cycle is calculated here.
- */
-export async function getLoans(
-  options: LoanListOptions = {},
-): Promise<PaginatedLoans> {
-  const {
-    loans,
-    assessments,
-  } =
-    await getCollections();
-
-  const requestedPage =
-    Number(
-      options.page,
-    );
-
-  const page =
-    Number.isFinite(
-      requestedPage,
-    ) &&
-    requestedPage >= 1
-      ? Math.floor(
-          requestedPage,
-        )
-      : 1;
-
-  const requestedLimit =
-    Number(
-      options.limit,
-    );
-
-  const limit =
-    Number.isFinite(
-      requestedLimit,
-    ) &&
-    requestedLimit >= 1
-      ? Math.min(
-          100,
-          Math.floor(
-            requestedLimit,
-          ),
-        )
-      : 25;
-
-  const filter:
-    Record<
-      string,
-      unknown
-    > = {};
-
-  if (options.status) {
-    filter.status =
-      options.status;
-  }
-
-  if (options.type) {
-    filter.type =
-      options.type;
-  }
-
-  if (
-    options.repaymentStatus
-  ) {
-    filter.repaymentStatus =
-      options.repaymentStatus;
-  }
-
-  if (options.memberId) {
-    if (
-      !ObjectId.isValid(
-        options.memberId,
-      )
-    ) {
-      return {
-        loans: [],
-
-        total: 0,
-
-        page: 1,
-
-        limit,
-
-        totalPages: 0,
-      };
-    }
-
-    filter.memberId =
-      createObjectId(
-        options.memberId,
-      );
-  }
-
-  /*
-   * Financial dates are canonical CalendarDate strings.
-   */
-  if (
-    options.repaymentDate
-  ) {
-    assertCalendarDate(
-      options.repaymentDate,
-      "repayment date",
-    );
-
-    filter.repaymentDate =
-      options.repaymentDate;
-  }
-
-  if (
-    options.endDate
-  ) {
-    assertCalendarDate(
-      options.endDate,
-      "loan end date",
-    );
-
-    filter.endDate =
-      options.endDate;
-  }
-
-  const search =
-    typeof options.search ===
-      "string"
-      ? options.search.trim()
-      : "";
-
-  if (search) {
-    const regex =
-      new RegExp(
-        escapeRegex(
-          search,
-        ),
-        "i",
-      );
-
-    filter.$or = [
-      {
-        loanNumber:
-          regex,
-      },
-
-      {
-        memberNumber:
-          regex,
-      },
-
-      {
-        memberName:
-          regex,
-      },
-
-      {
-        "guarantor.name":
-          regex,
-      },
-
-      {
-        "guarantor.phone":
-          regex,
-      },
-    ];
-  }
-
-  const total =
-    await loans.countDocuments(
-      filter,
-    );
-
-  const totalPages =
-    total === 0
-      ? 0
-      : Math.ceil(
-          total / limit,
-        );
-
-  const safePage =
-    totalPages > 0
-      ? Math.min(
-          page,
-          totalPages,
-        )
-      : 1;
-
-  const documents =
-    await loans
-      .find(
-        filter,
-      )
-      .sort({
-        createdAt: -1,
-        _id: -1,
-      })
-      .skip(
-        (
-          safePage - 1
-        ) * limit,
-      )
-      .limit(
-        limit,
-      )
-      .toArray();
-
-  /*
-   * ==========================================================
-   * COMPLETED INSTALLMENT BALANCES
-   * ==========================================================
-   *
-   * This is the important distinction:
-   *
-   * We do NOT calculate the current repayment cycle.
-   *
-   * We do NOT query repayments here.
-   *
-   * We simply total every recorded assessment shortfall for
-   * each loan returned on this page.
-   *
-   * loanAssessments is the authoritative source because
-   * assessLoanPeriod() persists installmentShortfall when a
-   * repayment cycle is completed.
-   */
-
-  const loanIds =
-    documents
-      .map(
-        (
-          document,
-        ) =>
-          document._id,
-      )
-      .filter(
-        (
-          id,
-        ): id is ObjectId =>
-          id instanceof
-          ObjectId,
-      );
-
-  const completedBalanceTotals =
-    loanIds.length > 0
-      ? await assessments
-          .aggregate<{
-            _id: ObjectId;
-            total: number;
-          }>(
-            [
-              {
-                $match: {
-                  loanId: {
-                    $in:
-                      loanIds,
-                  },
-                },
-              },
-
-              {
-                $group: {
-                  _id:
-                    "$loanId",
-
-                  total: {
-                    $sum:
-                      "$installmentShortfall",
-                  },
-                },
-              },
-            ],
-          )
-          .toArray()
-      : [];
-
-  const completedBalanceByLoanId =
-    new Map<
-      string,
-      number
-    >();
-
-  for (
-    const result of
-      completedBalanceTotals
-  ) {
-    completedBalanceByLoanId.set(
-      result._id.toString(),
-
-      money(
-        Number(
-          result.total ??
-            0,
-        ),
-      ),
-    );
-  }
-
-  /*
-   * ==========================================================
-   * HYDRATE RESPONSE
-   * ==========================================================
-   */
-
-  const hydratedLoans =
-    documents.map(
-      (
-        document,
-      ) => {
-        const loan =
-          toLoan(
-            document,
-          );
-
-        /*
-         * Deterministic response-only value.
-         *
-         * This property does not exist in MongoDB.
-         */
-        loan.completedInstallmentBalance =
-          completedBalanceByLoanId.get(
-            document._id.toString(),
-          ) ?? 0;
-
-        return loan;
-      },
-    );
-
-  return {
-    loans:
-      hydratedLoans,
-
-    total,
-
-    page:
-      safePage,
-
-    limit,
-
-    totalPages,
-  };
-}
 
 /* =========================================================
    ASSESSMENT PERIOD
 ========================================================= */
 
-type AssessmentPeriod = {
-  periodNumber: number;
-  periodStart: CalendarDate;
-  periodEnd: CalendarDate;
-};
-
-function getAssessmentPeriod(
-  loan: LoanDocument,
-  periodNumber: number,
-): AssessmentPeriod {
-  if (
-    !Number.isInteger(
-      periodNumber,
-    ) ||
-    periodNumber <= 0
-  ) {
-    throw new Error(
-      "Assessment period must be a positive whole number.",
-    );
-  }
-
-  const cycleDays =
-    normalizeCycleDays(
-      loan.repaymentCycleDays,
-    );
-
-  assertCalendarDate(
-    loan.disbursementDate,
-    "loan disbursement date",
-  );
-
-  const periodStart =
-    addCalendarDays(
-      loan.disbursementDate,
-      (
-        periodNumber - 1
-      ) * cycleDays,
-    );
-
-  const periodEnd =
-    addCalendarDays(
-      periodStart,
-      cycleDays,
-    );
-
-  return {
-    periodNumber,
-
-    periodStart,
-
-    periodEnd,
-  };
-}
-
-function getLatestDueAssessmentPeriod(
-  loan: LoanDocument,
-  asOfDate: Date,
-): number {
-  const cycleDays =
-    normalizeCycleDays(
-      loan.repaymentCycleDays,
-    );
-
-  const asOfCalendarDate =
-    dateToKenyanCalendarDate(
-      asOfDate,
-    );
-
-  const elapsedDays =
-    differenceInCalendarDays(
-      loan.disbursementDate,
-      asOfCalendarDate,
-    );
-
-  if (
-    elapsedDays <
-    cycleDays
-  ) {
-    return 0;
-  }
-
-  return Math.floor(
-    elapsedDays /
-      cycleDays,
-  );
-}
 
 
 async function getPeriodPaymentTotal(
@@ -7093,9 +8719,6 @@ export async function createLoanRepayment(
     await session.endSession();
   }
 }
-/* =========================================================
-   CREATE LOAN WAIVER
-========================================================= */
 
 /* =========================================================
    CREATE LOAN WAIVER
