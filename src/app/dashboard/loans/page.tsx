@@ -1084,68 +1084,71 @@ export default function LoansPage() {
                     {/* =================================================
                         MOBILE
                     ================================================= */}
-
-                    <div className="lg:hidden">
-                      <div className="relative -mx-4 overflow-hidden sm:-mx-6">
-                        <div
-                          className="
-                            flex
-                            w-full
-                            snap-x
-                            snap-mandatory
-                            gap-0
-                            overflow-x-auto
-                            overscroll-x-contain
-                            scroll-smooth
-                            scrollbar-none
-                            touch-pan-x
-                          "
-                          style={{
-                            WebkitOverflowScrolling:
-                              "touch",
-                          }}
-                        >
-                          {filteredLoans.map(
-                            (loan) => (
-                              <div
-                                key={loan.id}
-                                className="
-                                  w-full
-                                  min-w-full
-                                  shrink-0
-                                  snap-center
-                                  px-4
-                                  sm:px-6
-                                "
-                              >
-                                <LoanCard
-                                  loan={loan}
-                                  onEdit={() =>
-                                    handleEditLoan(
-                                      loan,
-                                    )
-                                  }
-                                  onView={() =>
-                                    handleViewLoanHistory(
-                                      loan,
-                                    )
-                                  }
-                                  onRepay={() =>
-                                    handleOpenRepayment(
-                                      loan,
-                                    )
-                                  }
-                                  onDelete={() =>
-                                    handleDeleteLoan(
-                                      loan.id,
-                                    )
-                                  }
-                                />
-                              </div>
-                            ),
-                          )}
-                        </div>
-                      </div>
+<div className="lg:hidden">
+  <div className="relative -mx-4 overflow-hidden sm:-mx-6">
+    <div
+      className="
+        flex
+        w-full
+        snap-x
+        snap-mandatory
+        gap-0
+        overflow-x-auto
+        overflow-y-auto
+        overscroll-x-contain
+        overscroll-y-contain
+        scroll-smooth
+        scrollbar-none
+        touch-pan-x
+        touch-pan-y
+        max-h-[calc(100vh-140px)]
+      "
+      style={{
+        WebkitOverflowScrolling: "touch",
+      }}
+    >
+      {filteredLoans.map(
+        (loan) => (
+          <div
+            key={loan.id}
+            className="
+              w-full
+              min-w-full
+              shrink-0
+              snap-center
+              px-4
+              sm:px-6
+            "
+          >
+            <LoanCard
+              loan={loan}
+              onEdit={() =>
+                handleEditLoan(
+                  loan,
+                )
+              }
+              onView={() =>
+                handleViewLoanHistory(
+                  loan,
+                )
+              }
+              onRepay={() =>
+                handleOpenRepayment(
+                  loan,
+                )
+              }
+              onDelete={() =>
+                handleDeleteLoan(
+                  loan.id,
+                )
+              }
+            />
+          </div>
+        ),
+      )}
+    </div>
+  </div>
+</div>>
 
                       {/* MOBILE CAROUSEL INDICATOR */}
 
