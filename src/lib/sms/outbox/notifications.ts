@@ -105,7 +105,7 @@ export async function queueSavingsDepositSms(
   );
 
   const message =
-    `Hi ${memberName}, savings deposit of KES ${formatAmount(amount)} received. Thank you.\nXAUUSD`;
+    `XAUUSD\n Dear ${memberName}, savings deposit of KES ${formatAmount(amount)} received. Thank you.`;
 
   return queueSms({
     type: SMS_TYPES.SAVINGS_DEPOSIT,
@@ -163,28 +163,7 @@ export async function queueLoanPaymentReceivedSms(
   );
 
   let message =
-    `Hi ${memberName}, loan payment KES ${formatAmount(amount)} received.\n GEOSHUA`;
-
-  if (
-    data.remainingBalance !==
-    undefined
-  ) {
-    if (
-      !Number.isFinite(
-        data.remainingBalance,
-      ) ||
-      data.remainingBalance < 0
-    ) {
-      throw new Error(
-        "remainingBalance must be a valid non-negative number.",
-      );
-    }
-
-    message +=
-      ` Balance KES ${formatAmount(data.remainingBalance)}.`;
-  } else {
-    message += " Thank you.";
-  }
+    `GEOSHUA LTD \n Dear ${memberName}, loan payment of KES ${formatAmount(amount)}has been received.\n Thank you.`;
 
   return queueSms({
     type: SMS_TYPES.LOAN_PAYMENT_RECEIVED,
@@ -243,114 +222,32 @@ export async function queueLoanDisbursementSms(
     data.amount,
   );
 
-  const installmentAmount =
-    data.installmentAmount !==
-    undefined
-      ? positiveAmount(
-          data.installmentAmount,
-        )
-      : undefined;
-
-  const repaymentWeeks =
-    data.repaymentWeeks !==
-    undefined
-      ? positiveInteger(
-          data.repaymentWeeks,
-          "repaymentWeeks",
-        )
-      : undefined;
-
-  const repaymentDay =
-    data.repaymentDay?.trim() ||
-    "Friday";
-
-  const firstDueDate =
-    data.firstDueDate?.trim();
-
-  const finalDueDate =
-    data.finalDueDate?.trim();
-
   const paybill =
-    data.paybill?.trim();
+    data.paybill?.trim() ||
+    "542542";
 
   const accountNumber =
-    data.accountNumber?.trim();
+    data.accountNumber?.trim() ||
+    "082083";
 
-  if (
-    data.fineRate !==
-    undefined &&
-    (!Number.isFinite(data.fineRate) ||
-      data.fineRate < 0)
-  ) {
-    throw new Error(
-      "fineRate must be a valid non-negative number.",
-    );
-  }
-
-  const parts: string[] = [
-    `GEO-SHUA: Dear ${memberName},`,
-    `loan KES ${formatAmount(amount)} disbursed.`,
-  ];
-
-  if (
-    installmentAmount !==
-    undefined
-  ) {
-    if (
-      repaymentWeeks !==
-      undefined
-    ) {
-      parts.push(
-        `Pay KES ${formatAmount(installmentAmount)} every week.`,
-      );
-    } else {
-      parts.push(
-        `Pay KES ${formatAmount(installmentAmount)} every week.`,
-      );
-    }
-  }
-
-  if (paybill && accountNumber) {
-    parts.push(
-      `Paybill ${paybill}, Acc ${accountNumber}.`,
-    );
-  } else if (paybill) {
-    parts.push(
-      `Paybill ${paybill}.`,
-    );
-  }
-
-  if (firstDueDate) {
-    parts.push(
-      `Start ${firstDueDate}.`,
-    );
-  }
-
-  if (finalDueDate) {
-    parts.push(
-      `End ${finalDueDate}.`,
-    );
-  }
-
-  if (
-    data.fineRate !==
-      undefined &&
-    data.fineRate > 0
-  ) {
-    parts.push(
-      `Fine ${data.fineRate}% on unpaid amounts.`,
-    );
-  }
-
-  const message = parts.join(" ");
+  const message = [
+    `GEOSHUA LTD`,
+    `Dear ${memberName}, your loan of Ksh ${formatAmount(amount)} has been approved.`,
+    `Weekly payment through`,
+    `Paybill: ${paybill}`,
+    `Account: ${accountNumber}`,
+    `Thank you.`,
+  ].join("\n");
 
   return queueSms({
-    type: SMS_TYPES.LOAN_DISBURSEMENT,
+    type:
+      SMS_TYPES.LOAN_DISBURSEMENT,
     memberId,
     loanId,
     recipient,
     message,
-    priority: IMMEDIATE_PRIORITY,
+    priority:
+      IMMEDIATE_PRIORITY,
     idempotencyKey:
       `loan_disbursement:${loanId}`,
   });
@@ -412,7 +309,7 @@ export async function queueLoanPaymentReminderSms(
     data.scheduledFor?.trim();
 
   const message =
-    `Hi ${memberName}, KES ${formatAmount(installmentAmount)} loan payment is due ${dueDate}. Please pay on time.\n GEO-SHUA`;
+    `GEOSHUA LTD \n Dear ${memberName} your weekly loan payment is due ${dueDate}. Please pay on time.`;
 
   return queueSms({
     type: SMS_TYPES.LOAN_PAYMENT_REMINDER,
@@ -462,7 +359,7 @@ export async function queueLoanClearedSms(
   );
 
   const message =
-    `Hi ${memberName}, your loan is fully cleared. Thank you.\nGEO-SHUA: `;
+    `GEOSHUA\n Dear ${memberName}, your loan is fully cleared. Thank you.: `;
 
   return queueSms({
     type: SMS_TYPES.LOAN_CLEARED,
