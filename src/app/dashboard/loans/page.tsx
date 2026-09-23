@@ -1214,12 +1214,14 @@ export default function LoansPage() {
                       </div>
                     </div>
 
+                  
+
                     {/* =================================================
                         MOBILE
                     ================================================= */}
 
                     <div className="lg:hidden">
-                      <div className="relative -mx-4 overflow-hidden sm:-mx-6">
+                      <div className="relative -mx-4 sm:-mx-6">
                         <div
                           className="
                             flex
@@ -1228,97 +1230,71 @@ export default function LoansPage() {
                             snap-mandatory
                             gap-0
                             overflow-x-auto
+                            overflow-y-visible
                             scroll-smooth
                             scrollbar-none
                             overscroll-x-contain
                           "
                           style={{
-                            WebkitOverflowScrolling:
-                              "touch",
+                            WebkitOverflowScrolling: "touch",
                           }}
                         >
-                          {filteredLoans.map(
-                            (
-                              loan,
-                            ) => (
-                              <div
-                                key={
-                                  loan.id
+                          {filteredLoans.map((loan) => (
+                            <div
+                              key={loan.id}
+                              className="
+                                w-full
+                                min-w-full
+                                shrink-0
+                                snap-center
+                                px-4
+                                sm:px-6
+                              "
+                            >
+                              <LoanCard
+                                loan={loan}
+                                onEdit={() =>
+                                  handleEditLoan(loan)
                                 }
-                                className="
-                                  w-full
-                                  min-w-full
-                                  shrink-0
-                                  snap-center
-                                  px-4
-                                  sm:px-6
-                                  max-h-[calc(100dvh-140px)]
-                                  overflow-y-auto
-                                  overscroll-y-contain
-                                  scrollbar-none
-                                "
-                              >
-                                <LoanCard
-                                  loan={
-                                    loan
-                                  }
-                                  onEdit={() =>
-                                    handleEditLoan(
-                                      loan,
-                                    )
-                                  }
-                                  onView={() =>
-                                    handleViewLoanHistory(
-                                      loan,
-                                    )
-                                  }
-                                  onRepay={() =>
-                                    handleOpenRepayment(
-                                      loan,
-                                    )
-                                  }
-                                  onDelete={() =>
-                                    handleDeleteLoan(
-                                      loan.id,
-                                    )
-                                  }
-                                />
-                              </div>
-                            ),
-                          )}
+                                onView={() =>
+                                  handleViewLoanHistory(loan)
+                                }
+                                onRepay={() =>
+                                  handleOpenRepayment(loan)
+                                }
+                                onDelete={() =>
+                                  handleDeleteLoan(loan.id)
+                                }
+                              />
+                            </div>
+                          ))}
                         </div>
                       </div>
 
-                      {/* =================================================
-                          MOBILE CAROUSEL INDICATOR
-                      ================================================= */}
+  {/* =================================================
+      MOBILE CAROUSEL INDICATOR
+  ================================================= */}
 
-                      {filteredLoans.length >
-                        1 && (
-                        <div className="mt-4 flex items-center justify-between px-1">
-                          <p className="text-[9px] tracking-wide text-black/50">
-                            {
-                              filteredLoans.length
-                            }{" "}
-                            loans
-                          </p>
+  {filteredLoans.length > 1 && (
+    <div className="mt-4 flex items-center justify-between px-1">
+      <p className="text-[9px] tracking-wide text-black/50">
+        {filteredLoans.length} loans
+      </p>
 
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[9px] text-black/50">
-                              Swipe
-                            </span>
+      <div className="flex items-center gap-1.5">
+        <span className="text-[9px] text-black/50">
+          Swipe
+        </span>
 
-                            <ArrowUpRight
-                              size={11}
-                              strokeWidth={
-                                1.5
-                              }
-                              className="rotate-45 text-black/50"
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
+        <ArrowUpRight
+          size={11}
+          strokeWidth={1.5}
+          className="rotate-45 text-black/50"
+        />
+      </div>
+    </div>
+  )}
+</div>
                   </>
                 )}
               </section>
