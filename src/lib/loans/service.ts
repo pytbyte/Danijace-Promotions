@@ -3671,26 +3671,73 @@ function calculateWeeklyRepaymentBalance(
   weeklyRepaymentBreakdown: WeeklyRepaymentBreakdown;
   loanPaymentReminder: LoanPaymentReminderPeriod | null;
 } {
-  const disbursementDate = normalizeLoanCalendarDate(
-    loan.disbursementDate,
-    "loan.disbursementDate",
-    loan.loanNumber,
-  );
+  /* =========================================================
+     BASIC LOAN SETTINGS
+  ========================================================= */
 
-  const today = dateToKenyanCalendarDate(asOfDate);
+  const disbursementDate =
+    normalizeLoanCalendarDate(
+      loan.disbursementDate,
+      "loan.disbursementDate",
+      loan.loanNumber,
+    );
 
-  const installmentAmount = money(
-    Math.max(0, Number(loan.installmentAmount ?? 0)),
-  );
+  const today =
+    dateToKenyanCalendarDate(
+      asOfDate,
+    );
 
-  const cycleDaysRaw = Number(
-    loan.repaymentCycleDays ?? 7,
-  );
+  const installmentAmount =
+    money(
+      Math.max(
+        0,
+        Number(
+          loan.installmentAmount ?? 0,
+        ),
+      ),
+    );
+
+  const cycleDaysRaw =
+    Number(
+      loan.repaymentCycleDays ?? 7,
+    );
 
   const cycleDays =
-    Number.isInteger(cycleDaysRaw) && cycleDaysRaw > 0
+    Number.isInteger(
+      cycleDaysRaw,
+    ) &&
+    cycleDaysRaw > 0
       ? cycleDaysRaw
       : 7;
+
+  /* =========================================================
+     LOAN OUTSTANDING BALANCE
+
+     This is used only to determine whether the loan itself
+     is finished.
+
+     A weekly installment can be zero only when the loan is
+     actually finished.
+
+     Future credit is handled separately below.
+  ========================================================= */
+
+  const loanOutstandingBalance =
+    money(
+      Math.max(
+        0,
+        Number(
+          loan.outstandingBalance ?? 0,
+        ),
+      ),
+    );
+
+  const loanIsOver =
+    loanOutstandingBalance <= 0;
+
+  /* =========================================================
+     PERIOD NUMBERS
+  ========================================================= */
 
   const latestCompletedPeriod =
     getLatestDueAssessmentPeriod(
@@ -3700,6 +3747,10 @@ function calculateWeeklyRepaymentBalance(
 
   const currentPeriodNumber =
     latestCompletedPeriod + 1;
+
+  /* =========================================================
+     EMPTY BREAKDOWN
+  ========================================================= */
 
   const createEmptyBreakdown =
     (): WeeklyRepaymentBreakdown => ({
@@ -3715,11 +3766,9 @@ function calculateWeeklyRepaymentBalance(
       surpluses: [],
     });
 
-  /*
-   * No valid installment amount means there is nothing
-   * meaningful to calculate.
-   */
-  if (installmentAmount <= 0) {
+  if (
+    installmentAmount <= 0
+  ) {
     return {
       completedInstallmentBalance: 0,
       currentInstallmentBalance: 0,
@@ -3731,18 +3780,16 @@ function calculateWeeklyRepaymentBalance(
     };
   }
 
+  /* =========================================================
+     NORMALIZED REPAYMENTS
+  ========================================================= */
+
   type NormalizedRepayment = {
     paymentSequence: number;
     amount: number;
     transactionDate: CalendarDate;
   };
 
-  /*
-   * Normalize and validate repayments first.
-   *
-   * Financial dates remain CalendarDate strings.
-   * Do not convert them to JavaScript Date objects.
-   */
   const repaymentRecords =
     repayments
       .map(
@@ -3757,31 +3804,34 @@ function calculateWeeklyRepaymentBalance(
               loan.loanNumber,
             );
 
-          const amount = Number(
-            repayment.amount ?? 0,
-          );
+          const amount =
+            Number(
+              repayment.amount ?? 0,
+            );
 
           if (
-            !Number.isFinite(amount) ||
+            !Number.isFinite(
+              amount,
+            ) ||
             amount <= 0
           ) {
             return null;
           }
 
-          /*
-           * Ignore payments outside the loan's
-           * valid calculation window.
-           */
           if (
-            transactionDate < disbursementDate ||
-            transactionDate > today
+            transactionDate <
+              disbursementDate ||
+            transactionDate >
+              today
           ) {
             return null;
           }
 
           return {
-            paymentSequence: index + 1,
-            amount: money(amount),
+            paymentSequence:
+              index + 1,
+            amount:
+              money(amount),
             transactionDate,
           };
         },
@@ -3792,21 +3842,33 @@ function calculateWeeklyRepaymentBalance(
         ): repayment is NormalizedRepayment =>
           repayment !== null,
       )
-      .sort((a, b) => {
-        const dateComparison =
-          a.transactionDate.localeCompare(
-            b.transactionDate,
+      .sort(
+        (
+          a,
+          b,
+        ) => {
+          const dateComparison =
+            a.transactionDate.localeCompare(
+              b.transactionDate,
+            );
+
+          if (
+            dateComparison !==
+            0
+          ) {
+            return dateComparison;
+          }
+
+          return (
+            a.paymentSequence -
+            b.paymentSequence
           );
+        },
+      );
 
-        if (dateComparison !== 0) {
-          return dateComparison;
-        }
-
-        return (
-          a.paymentSequence -
-          b.paymentSequence
-        );
-      });
+  /* =========================================================
+     PERIOD MODEL
+  ========================================================= */
 
   type InstallmentPeriod = {
     periodNumber: number;
@@ -3817,15 +3879,16 @@ function calculateWeeklyRepaymentBalance(
     amountPaidToPeriod: number;
   };
 
-  const periods: InstallmentPeriod[] = [];
+  const periods:
+    InstallmentPeriod[] = [];
 
   /*
-   * Build every completed period plus the current
-   * open period.
+   * Build completed periods plus the current/future period.
    */
   for (
     let periodNumber = 1;
-    periodNumber <= currentPeriodNumber;
+    periodNumber <=
+    currentPeriodNumber;
     periodNumber++
   ) {
     const period =
@@ -3836,18 +3899,13 @@ function calculateWeeklyRepaymentBalance(
 
     const assessment =
       assessments.find(
-        (item) =>
+        (
+          item,
+        ) =>
           item.periodNumber ===
           periodNumber,
       );
 
-    /*
-     * Completed periods use the installment recorded
-     * by their assessment when available.
-     *
-     * The current period uses the loan's current
-     * installment amount.
-     */
     const periodInstallment =
       periodNumber <=
       latestCompletedPeriod
@@ -3862,7 +3920,10 @@ function calculateWeeklyRepaymentBalance(
           )
         : installmentAmount;
 
-    if (periodInstallment <= 0) {
+    if (
+      periodInstallment <=
+      0
+    ) {
       continue;
     }
 
@@ -3879,42 +3940,75 @@ function calculateWeeklyRepaymentBalance(
     });
   }
 
+  /* =========================================================
+     PAYMENT ALLOCATIONS
+  ========================================================= */
+
   const allocations:
-    WeeklyRepaymentAllocation[] = [];
+    WeeklyRepaymentAllocation[] =
+    [];
 
   const surpluses:
-    WeeklyRepaymentSurplus[] = [];
+    WeeklyRepaymentSurplus[] =
+    [];
 
-  let periodIndex = 0;
+  let completedPeriodIndex = 0;
+
   let allocationNumber = 0;
 
   /*
-   * Apply repayments chronologically.
+   * Payments first clear completed repayment periods.
    *
-   * A payment always clears the oldest unpaid
-   * installment first. Any excess becomes surplus.
+   * We deliberately DO NOT allocate the excess directly
+   * into the current period.
+   *
+   * Anything left after completed periods becomes future
+   * credit.
    */
-  for (const repayment of repaymentRecords) {
-    let remainingPayment = money(
-      repayment.amount,
-    );
+  for (
+    const repayment of
+      repaymentRecords
+  ) {
+    let remainingPayment =
+      money(
+        repayment.amount,
+      );
 
-    if (remainingPayment <= 0) {
+    if (
+      remainingPayment <=
+      0
+    ) {
       continue;
     }
 
     while (
       remainingPayment > 0 &&
-      periodIndex < periods.length
+      completedPeriodIndex <
+        periods.length
     ) {
       const period =
-        periods[periodIndex];
+        periods[
+          completedPeriodIndex
+        ];
 
       /*
-       * Skip an already-paid period.
+       * Stop before the current/future period.
        */
-      if (period.remainingBalance <= 0) {
-        periodIndex++;
+      if (
+        period.periodNumber >
+        latestCompletedPeriod
+      ) {
+        break;
+      }
+
+      /*
+       * Skip paid completed periods.
+       */
+      if (
+        period.remainingBalance <=
+        0
+      ) {
+        completedPeriodIndex++;
         continue;
       }
 
@@ -3931,7 +4025,10 @@ function calculateWeeklyRepaymentBalance(
           ),
         );
 
-      if (amountApplied <= 0) {
+      if (
+        amountApplied <=
+        0
+      ) {
         break;
       }
 
@@ -3967,9 +4064,10 @@ function calculateWeeklyRepaymentBalance(
           repayment.paymentSequence,
         paymentDate:
           repayment.transactionDate,
-        paymentAmount: money(
-          repayment.amount,
-        ),
+        paymentAmount:
+          money(
+            repayment.amount,
+          ),
         periodNumber:
           period.periodNumber,
         periodStart:
@@ -3982,77 +4080,69 @@ function calculateWeeklyRepaymentBalance(
           period.remainingBalance,
         remainingPayment,
         carriedForward:
-          period.remainingBalance <= 0 &&
+          period.remainingBalance <=
+            0 &&
           remainingPayment > 0,
       });
 
       if (
-        period.remainingBalance <= 0
+        period.remainingBalance <=
+        0
       ) {
-        periodIndex++;
+        completedPeriodIndex++;
       }
     }
 
     /*
-     * Money remaining after all known installment
-     * periods is genuine excess credit.
+     * Anything remaining after all completed periods is
+     * future credit.
      */
-    if (remainingPayment > 0) {
-      const unusedCredit =
-        money(remainingPayment);
-
+    if (
+      remainingPayment > 0
+    ) {
       surpluses.push({
         paymentSequence:
           repayment.paymentSequence,
         paymentDate:
           repayment.transactionDate,
-        paymentAmount: money(
-          repayment.amount,
-        ),
-        unusedCredit,
+        paymentAmount:
+          money(
+            repayment.amount,
+          ),
+        unusedCredit:
+          money(
+            remainingPayment,
+          ),
       });
     }
   }
 
-  let completedInstallmentBalance = 0;
-  let currentInstallmentBalance = 0;
+  /* =========================================================
+     COMPLETED INSTALLMENT BALANCE
+  ========================================================= */
 
-  /*
-   * Calculate the actual accounting balances.
-   *
-   * IMPORTANT:
-   * currentInstallmentBalance remains the REAL
-   * unpaid amount of the current period.
-   *
-   * We do NOT replace it with the next installment
-   * here because that would corrupt accounting
-   * semantics.
-   */
-  for (const period of periods) {
-    const remainingBalance =
-      money(
-        Math.max(
-          0,
-          period.remainingBalance,
-        ),
-      );
+  let completedInstallmentBalance =
+    0;
 
+  for (
+    const period of
+      periods
+  ) {
     if (
-      period.periodNumber <=
+      period.periodNumber >
       latestCompletedPeriod
     ) {
-      completedInstallmentBalance =
-        money(
-          completedInstallmentBalance +
-            remainingBalance,
-        );
-    } else if (
-      period.periodNumber ===
-      currentPeriodNumber
-    ) {
-      currentInstallmentBalance =
-        remainingBalance;
+      continue;
     }
+
+    completedInstallmentBalance =
+      money(
+        completedInstallmentBalance +
+          Math.max(
+            0,
+            period.remainingBalance,
+          ),
+      );
   }
 
   completedInstallmentBalance =
@@ -4063,6 +4153,165 @@ function calculateWeeklyRepaymentBalance(
       ),
     );
 
+  /* =========================================================
+     TOTAL FUTURE CREDIT
+  ========================================================= */
+
+  const totalFutureCredit =
+    money(
+      Math.max(
+        0,
+        surpluses.reduce(
+          (
+            total,
+            surplus,
+          ) =>
+            money(
+              total +
+                Number(
+                  surplus.unusedCredit ??
+                    0,
+                ),
+            ),
+          0,
+        ),
+      ),
+    );
+
+  /* =========================================================
+     FUTURE INSTALLMENT CREDIT APPLICATION
+  =========================================================
+
+     Future credit is applied sequentially to future
+     installments.
+
+     Example:
+
+       installment = 3500
+       credit     = 1000
+
+       3500 - 1000 = 2500
+
+     Example:
+
+       installment = 3500
+       credit     = 3500
+
+       first installment fully covered
+
+       next installment = 3500
+
+     Example:
+
+       installment = 3500
+       credit     = 5000
+
+       first installment fully covered
+       remaining credit = 1500
+
+       next installment:
+       3500 - 1500 = 2000
+
+     Therefore an outstanding loan NEVER produces a
+     zero weekly balance merely because there is enough
+     future credit to cover one installment.
+  ========================================================= */
+
+  let remainingFutureCredit =
+    totalFutureCredit;
+
+  let futureInstallmentsCovered =
+    0;
+
+  let currentInstallmentBalance =
+    installmentAmount;
+
+  /*
+   * If the loan is already over, there is no future
+   * installment to display.
+   */
+  if (
+    loanIsOver
+  ) {
+    currentInstallmentBalance =
+      0;
+  } else {
+    /*
+     * Determine how many full future installments can be
+     * covered by the available future credit.
+     */
+    while (
+      remainingFutureCredit >=
+        installmentAmount &&
+      installmentAmount > 0
+    ) {
+      remainingFutureCredit =
+        money(
+          Math.max(
+            0,
+            remainingFutureCredit -
+              installmentAmount,
+          ),
+        );
+
+      futureInstallmentsCovered++;
+    }
+
+    /*
+     * The next installment is the first installment that
+     * has not been completely covered.
+     */
+    currentInstallmentBalance =
+      money(
+        Math.max(
+          0,
+          installmentAmount -
+            remainingFutureCredit,
+        ),
+      );
+
+    /*
+     * IMPORTANT:
+     *
+     * If the remaining credit exactly equals the
+     * installment, the loop above consumes it and
+     * currentInstallmentBalance becomes the FULL next
+     * installment amount.
+     *
+     * Therefore an active loan cannot accidentally
+     * display Ksh 0.
+     */
+    if (
+      currentInstallmentBalance <=
+        0
+    ) {
+      currentInstallmentBalance =
+        installmentAmount;
+    }
+  }
+
+  /* =========================================================
+     FINAL ACTIVE-LOAN SAFETY
+  ========================================================= */
+
+  /*
+   * Absolute rule:
+   *
+   * If the loan is not over, the weekly installment
+   * balance must never be zero.
+   *
+   * This protects against future changes elsewhere in
+   * the calculation accidentally producing zero.
+   */
+  if (
+    !loanIsOver &&
+    currentInstallmentBalance <=
+      0
+  ) {
+    currentInstallmentBalance =
+      installmentAmount;
+  }
+
   currentInstallmentBalance =
     money(
       Math.max(
@@ -4071,12 +4320,11 @@ function calculateWeeklyRepaymentBalance(
       ),
     );
 
-  /*
-   * This remains the real weekly amount currently
-   * owed across completed unpaid installments and
-   * the current installment.
-   */
-  const weeklyRepaymentBalance =
+  /* =========================================================
+     WEEKLY REPAYMENT BALANCE
+  ========================================================= */
+
+  let weeklyRepaymentBalance =
     money(
       Math.max(
         0,
@@ -4086,16 +4334,32 @@ function calculateWeeklyRepaymentBalance(
     );
 
   /*
-   * Build the period breakdown from the REAL
-   * calculated balances.
+   * An outstanding loan must never have a zero weekly
+   * balance.
+   *
+   * We only apply this to the actual weekly balance after
+   * all future-credit calculations have been performed.
    */
+  if (
+    !loanIsOver &&
+    weeklyRepaymentBalance <=
+      0
+  ) {
+    weeklyRepaymentBalance =
+      installmentAmount;
+  }
+
+  /* =========================================================
+     BUILD PERIOD BREAKDOWN
+  ========================================================= */
+
   const breakdownPeriods =
     periods
       .map(
         (
           period,
         ): WeeklyRepaymentBreakdownPeriod => {
-          const balance =
+          const actualPeriodBalance =
             money(
               Math.max(
                 0,
@@ -4111,23 +4375,75 @@ function calculateWeeklyRepaymentBalance(
               ),
             );
 
+          let balance =
+            actualPeriodBalance;
+
           let status:
             | "paid"
             | "partial"
             | "current"
             | "unpaid";
 
-          if (balance <= 0) {
-            status = "paid";
-          } else if (
-            period.periodNumber ===
-            currentPeriodNumber
+          /*
+           * Historical/completed periods retain their real
+           * accounting values.
+           */
+          if (
+            period.periodNumber <=
+            latestCompletedPeriod
           ) {
-            status = "current";
-          } else if (allocated > 0) {
+            if (
+              balance <=
+              0
+            ) {
+              status = "paid";
+            } else if (
+              allocated > 0
+            ) {
+              status = "partial";
+            } else {
+              status = "unpaid";
+            }
+
+            return {
+              periodNumber:
+                period.periodNumber,
+              periodStart:
+                period.periodStart,
+              periodEnd:
+                period.periodEnd,
+              installment:
+                money(
+                  period.periodInstallment,
+                ),
+              allocated,
+              balance,
+              status,
+            };
+          }
+
+          /*
+           * Current/future period.
+           *
+           * The displayed balance includes future credit.
+           */
+          balance =
+            currentInstallmentBalance;
+
+          if (
+            balance <=
+            0
+          ) {
+            status =
+              loanIsOver
+                ? "paid"
+                : "current";
+          } else if (
+            allocated > 0
+          ) {
             status = "partial";
           } else {
-            status = "unpaid";
+            status = "current";
           }
 
           return {
@@ -4137,9 +4453,10 @@ function calculateWeeklyRepaymentBalance(
               period.periodStart,
             periodEnd:
               period.periodEnd,
-            installment: money(
-              period.periodInstallment,
-            ),
+            installment:
+              money(
+                period.periodInstallment,
+              ),
             allocated,
             balance,
             status,
@@ -4147,144 +4464,139 @@ function calculateWeeklyRepaymentBalance(
         },
       )
       .sort(
-        (a, b) =>
+        (
+          a,
+          b,
+        ) =>
           a.periodNumber -
           b.periodNumber,
       );
 
-  allocations.sort((a, b) => {
-    const dateComparison =
-      a.paymentDate.localeCompare(
-        b.paymentDate,
+  /* =========================================================
+     SORT ALLOCATIONS
+  ========================================================= */
+
+  allocations.sort(
+    (
+      a,
+      b,
+    ) => {
+      const dateComparison =
+        a.paymentDate.localeCompare(
+          b.paymentDate,
+        );
+
+      if (
+        dateComparison !==
+        0
+      ) {
+        return dateComparison;
+      }
+
+      if (
+        a.paymentSequence !==
+        b.paymentSequence
+      ) {
+        return (
+          a.paymentSequence -
+          b.paymentSequence
+        );
+      }
+
+      return (
+        a.allocationNumber -
+        b.allocationNumber
       );
+    },
+  );
 
-    if (dateComparison !== 0) {
-      return dateComparison;
-    }
+  /* =========================================================
+     SORT SURPLUSES
+  ========================================================= */
 
-    if (
-      a.paymentSequence !==
-      b.paymentSequence
-    ) {
+  surpluses.sort(
+    (
+      a,
+      b,
+    ) => {
+      const dateComparison =
+        a.paymentDate.localeCompare(
+          b.paymentDate,
+        );
+
+      if (
+        dateComparison !==
+        0
+      ) {
+        return dateComparison;
+      }
+
       return (
         a.paymentSequence -
         b.paymentSequence
       );
-    }
+    },
+  );
 
-    return (
-      a.allocationNumber -
-      b.allocationNumber
-    );
-  });
+  /* =========================================================
+     REMINDER BREAKDOWN
+  ========================================================= */
 
-  surpluses.sort((a, b) => {
-    const dateComparison =
-      a.paymentDate.localeCompare(
-        b.paymentDate,
-      );
-
-    if (dateComparison !== 0) {
-      return dateComparison;
-    }
-
-    return (
-      a.paymentSequence -
-      b.paymentSequence
-    );
-  });
-
-  /*
-   * ---------------------------------------------------------
-   * DISPLAY FALLBACK
-   * ---------------------------------------------------------
-   *
-   * If the current installment has already been paid,
-   * but the loan itself still has money outstanding,
-   * expose the next installment amount through the
-   * breakdown's currentBalance.
-   *
-   * This is intentionally ONLY a breakdown/display value.
-   *
-   * We do not modify:
-   *
-   *   - currentInstallmentBalance
-   *   - completedInstallmentBalance
-   *   - weeklyRepaymentBalance
-   *   - period balances
-   *   - period status
-   *
-   * Therefore a paid current period remains "paid".
-   *
-   * `loan.outstandingBalance` is the loan-level balance
-   * and is independent of the weekly installment balance.
-   */
-  const loanOutstandingBalance =
-    money(
-      Math.max(
-        0,
-        Number(
-          loan.outstandingBalance ?? 0,
-        ),
-      ),
-    );
-
-  const breakdownCurrentBalance =
-    currentInstallmentBalance <= 0 &&
-    loanOutstandingBalance > 0
-      ? installmentAmount
-      : currentInstallmentBalance;
-
-  /*
-   * IMPORTANT:
-   *
-   * The reminder must use the REAL current-period
-   * balance, not the display fallback.
-   *
-   * Passing the fallback here could cause a loan whose
-   * current installment is already paid to incorrectly
-   * appear unpaid to the reminder system.
-   */
   const reminderBreakdown:
     WeeklyRepaymentBreakdown = {
     installmentAmount,
     cycleDays,
     latestCompletedPeriod,
     currentPeriodNumber,
+
     completedBalance:
       completedInstallmentBalance,
+
     currentBalance:
       currentInstallmentBalance,
+
     totalBalance:
       weeklyRepaymentBalance,
-    periods: breakdownPeriods,
+
+    periods:
+      breakdownPeriods,
+
     allocations,
+
     surpluses,
   };
 
-  /*
-   * This is the public breakdown returned to the UI.
-   *
-   * Its currentBalance may show the next installment
-   * when the current installment is already paid and
-   * the loan still has an outstanding balance.
-   */
+  /* =========================================================
+     PUBLIC BREAKDOWN
+  ========================================================= */
+
   const weeklyRepaymentBreakdown:
     WeeklyRepaymentBreakdown = {
     installmentAmount,
     cycleDays,
     latestCompletedPeriod,
     currentPeriodNumber,
+
     completedBalance:
       completedInstallmentBalance,
+
     currentBalance:
-      breakdownCurrentBalance,
+      currentInstallmentBalance,
+
     totalBalance:
       weeklyRepaymentBalance,
-    periods: breakdownPeriods,
+
+    periods:
+      breakdownPeriods,
+
     allocations,
+
     surpluses,
   };
+
+  /* =========================================================
+     PAYMENT REMINDER
+  ========================================================= */
 
   const loanPaymentReminder =
     getLoanPaymentReminderPeriod(
@@ -4295,6 +4607,10 @@ function calculateWeeklyRepaymentBalance(
       },
       today,
     );
+
+  /* =========================================================
+     RETURN
+  ========================================================= */
 
   return {
     completedInstallmentBalance,
