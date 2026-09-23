@@ -78,8 +78,9 @@
  *
  * is chronologically correct.
  *
- * System timestamps such as createdAt/updatedAt remain
- * Date/timestamp values and are NOT converted here.
+ * System timestamps such as createdAt/updatedAt/authorizedAt
+ * remain Date/timestamp values and are NOT converted to
+ * financial calendar dates.
  *
  * =========================================================
  *
@@ -95,6 +96,46 @@
  * This allows a payment from the previous calendar day to
  * be processed while still preventing stale SMS messages
  * from entering automatic financial processing.
+ *
+ * =========================================================
+ *
+ * LOAN SMS REPLAY PROTECTION
+ * ---------------------------------------------------------
+ *
+ * There are TWO different date concepts involved in loan
+ * repayment routing.
+ *
+ * Financial date:
+ *
+ *   transactionDate
+ *
+ * Exact SMS event time:
+ *
+ *   smsDate
+ *
+ * The financial date protects the accounting rule:
+ *
+ *   transactionDate >= loan.disbursementDate
+ *
+ * The exact SMS timestamp protects against an OLD SMS
+ * being applied to a NEW loan on the same calendar day.
+ *
+ * Example:
+ *
+ *   07:00 → repayment SMS received
+ *   07:05 → new loan authorized
+ *
+ * Even if both have:
+ *
+ *   2026-09-23
+ *
+ * the 07:00 SMS must NOT be applied to the 07:05 loan.
+ *
+ * Therefore:
+ *
+ *   smsDate >= authorizedAt
+ *
+ * must also be true.
  *
  * =========================================================
  */
@@ -550,20 +591,19 @@ function normalizeFinancialDate(
 ========================================================= */
 
 /**
- * Convert an SMS timestamp into milliseconds.
+ * Convert an SMS/system timestamp into milliseconds.
  *
- * Android normally supplies milliseconds since Unix epoch.
- *
- * The helper also safely accepts:
+ * Supported:
  *
  *   Date
  *   numeric milliseconds
  *   numeric seconds
  *   ISO timestamp strings
+ *   numeric timestamp strings
  *
- * This is intentionally separate from financial-date
- * normalization because the 36-hour window requires the
- * actual SMS instant, not only its YYYY-MM-DD calendar date.
+ * This helper is intentionally separate from financial-date
+ * normalization because SMS replay protection requires the
+ * exact instant rather than only a YYYY-MM-DD date.
  */
 function toSmsTimestamp(
   value: unknown,
@@ -687,11 +727,13 @@ function toSmsTimestamp(
  *   now - 36 hours
  *   through now
  *
- * Future-dated SMS messages are rejected.
+ * Returns the normalized SMS timestamp so the same exact
+ * timestamp can be reused by downstream loan replay
+ * protection.
  */
 function validateSmsWindow(
   smsDate: unknown,
-): void {
+): number {
   const smsTimestamp =
     toSmsTimestamp(
       smsDate,
@@ -719,6 +761,32 @@ function validateSmsWindow(
   ) {
     throw new Error(
       `SMS is outside the automatic ${SMS_LOOKBACK_HOURS}-hour processing window.`,
+    );
+  }
+
+  return smsTimestamp;
+}
+
+/**
+ * Normalize a loan/system timestamp.
+ *
+ * This is deliberately kept separate from
+ * normalizeFinancialDate().
+ *
+ * authorizedAt is an exact system event timestamp and must
+ * remain an instant, not a YYYY-MM-DD financial date.
+ */
+function normalizeSystemTimestamp(
+  value: unknown,
+  fieldName: string,
+): number {
+  try {
+    return toSmsTimestamp(
+      value,
+    );
+  } catch {
+    throw new Error(
+      `${fieldName} is invalid. Expected a valid Date, ISO timestamp, or numeric timestamp.`,
     );
   }
 }
@@ -1125,24 +1193,46 @@ async function resolveSavingsAccount(
 ========================================================= */
 
 /**
- * Resolve exactly one active loan.
+ * Resolve exactly one active loan for the incoming SMS.
  *
- * Loan disbursement dates may be:
+ * There are TWO separate chronological checks.
  *
- *   YYYY-MM-DD
- *   Date
- *   ISO timestamp
- *   numeric timestamp
+ * ---------------------------------------------------------
+ * 1. FINANCIAL CALENDAR CHECK
+ * ---------------------------------------------------------
  *
- * They are normalized before comparison.
+ *   transactionDate >= loan.disbursementDate
  *
- * A payment BEFORE the disbursement date is invalid.
+ * This protects the accounting timeline.
  *
- * A payment ON the disbursement date is allowed.
+ * ---------------------------------------------------------
+ * 2. EXACT EVENT-TIME CHECK
+ * ---------------------------------------------------------
+ *
+ *   smsDate >= loan.authorizedAt
+ *
+ * This protects against an older SMS being applied to a
+ * newly authorized loan on the same calendar day.
+ *
+ * Example:
+ *
+ *   07:00 → old repayment SMS
+ *   07:05 → new loan authorized
+ *
+ * Both may have:
+ *
+ *   2026-09-23
+ *
+ * But:
+ *
+ *   07:00 < 07:05
+ *
+ * Therefore the old SMS is rejected.
  */
 async function resolveLoanForTransaction(
   member: ResolvedMember,
   transactionDate: string,
+  smsTimestamp: number,
 ): Promise<ResolvedLoan> {
   if (
     !isValidCalendarDate(
@@ -1151,6 +1241,16 @@ async function resolveLoanForTransaction(
   ) {
     throw new Error(
       "Bank transaction calendar date is invalid.",
+    );
+  }
+
+  if (
+    !Number.isFinite(
+      smsTimestamp,
+    )
+  ) {
+    throw new Error(
+      "SMS timestamp is invalid.",
     );
   }
 
@@ -1213,6 +1313,10 @@ async function resolveLoanForTransaction(
     );
   }
 
+  /* =======================================================
+     FINANCIAL DATE VALIDATION
+  ======================================================= */
+
   const disbursementDate =
     normalizeFinancialDate(
       loan.disbursementDate,
@@ -1222,7 +1326,7 @@ async function resolveLoanForTransaction(
   /**
    * Same-day repayment is valid.
    *
-   * Only an earlier calendar date is invalid.
+   * Only an earlier financial calendar date is invalid.
    */
   if (
     transactionDate <
@@ -1230,6 +1334,73 @@ async function resolveLoanForTransaction(
   ) {
     throw new Error(
       "SMS_REPAYMENT_BEFORE_DISBURSEMENT",
+    );
+  }
+
+  /* =======================================================
+     EXACT SMS / LOAN TIMESTAMP VALIDATION
+  ======================================================= */
+
+  /**
+   * authorizedAt is the exact system timestamp at which
+   * the current loan was authorized.
+   *
+   * The actual loan document currently contains values such
+   * as:
+   *
+   *   authorizedAt: ISODate(...)
+   *
+   * This must remain an exact timestamp.
+   *
+   * DO NOT convert it to YYYY-MM-DD.
+   */
+  if (
+    loan.authorizedAt ===
+      undefined ||
+    loan.authorizedAt ===
+      null
+  ) {
+    /**
+     * Fail closed.
+     *
+     * Without an exact loan authorization timestamp we
+     * cannot safely determine whether an older SMS belongs
+     * to this newly active loan.
+     */
+    throw new Error(
+      `Active loan "${loan.loanNumber}" has no valid authorization timestamp. Automatic SMS repayment processing is blocked.`,
+    );
+  }
+
+  const authorizedTimestamp =
+    normalizeSystemTimestamp(
+      loan.authorizedAt,
+      `Active loan "${loan.loanNumber}" authorization timestamp`,
+    );
+
+  /**
+   * Critical replay/new-loan protection.
+   *
+   * The SMS must have arrived at or after the loan was
+   * authorized.
+   *
+   * Example:
+   *
+   *   SMS       07:00
+   *   Loan      07:05
+   *
+   * Result:
+   *
+   *   07:00 < 07:05
+   *
+   * Therefore the SMS cannot repay this loan.
+   */
+  if (
+    smsTimestamp <
+    authorizedTimestamp
+  ) {
+    throw new Error(
+      "SMS_REPAYMENT_RECEIVED_BEFORE_LOAN_AUTHORIZATION",
     );
   }
 
@@ -1245,6 +1416,10 @@ async function resolveLoanForTransaction(
  *
  * The external bank reference remains the authoritative
  * transaction identity inside the financial services.
+ *
+ * The SMS identity additionally includes the received
+ * timestamp and bank destination to distinguish separate
+ * inbox messages when necessary.
  */
 function createSmsId(
   transaction: ParsedBankSms,
@@ -1345,6 +1520,7 @@ async function processLoanTransaction(
   classified: ClassifiedBankTransaction,
   member: ResolvedMember,
   transactionDate: string,
+  smsTimestamp: number,
   options: ProcessIncomingTransactionOptions,
 ): Promise<{
   loan: ResolvedLoan;
@@ -1354,6 +1530,7 @@ async function processLoanTransaction(
     await resolveLoanForTransaction(
       member,
       transactionDate,
+      smsTimestamp,
     );
 
   if (
@@ -1469,8 +1646,7 @@ export async function processIncomingTransaction(
     typeof parsedTransaction.destinationAccountNumber !==
       "string" ||
     parsedTransaction.destinationAccountNumber
-      .trim()
-      .length === 0
+      .trim().length === 0
   ) {
     throw new Error(
       "Parsed bank transaction bank destination account number is required.",
@@ -1495,13 +1671,19 @@ export async function processIncomingTransaction(
    *
    * This is intentionally separate from transactionDate.
    *
-   * transactionDate = financial date of the payment.
+   * transactionDate
+   *     = financial date of the payment.
    *
-   * smsDate = timestamp of the SMS received by Android.
+   * smsDate
+   *     = timestamp of the SMS received by Android.
+   *
+   * We retain the normalized timestamp for loan replay
+   * protection later.
    */
-  validateSmsWindow(
-    parsedTransaction.smsDate,
-  );
+  const smsTimestamp =
+    validateSmsWindow(
+      parsedTransaction.smsDate,
+    );
 
   /* =======================================================
      NORMALIZE TRANSACTION DATE
@@ -1602,6 +1784,7 @@ export async function processIncomingTransaction(
         classified,
         member,
         transactionDate,
+        smsTimestamp,
         options,
       );
 
@@ -1668,8 +1851,11 @@ export async function processBankSms(
   /**
    * The raw-SMS compatibility path has no separate
    * Android inbox timestamp, so the parser timestamp is
-   * used. This keeps manually supplied/raw SMS compatible
-   * with the same 36-hour validation contract.
+   * used.
+   *
+   * This keeps manually supplied/raw SMS compatible with
+   * the same 36-hour validation and loan timestamp
+   * protection contract.
    */
   return processIncomingTransaction(
     parsed,
