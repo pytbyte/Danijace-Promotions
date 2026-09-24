@@ -1,10 +1,14 @@
 package com.pytbyte.geoshua;
 
 import android.Manifest;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
 import android.net.Uri;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.core.content.ContextCompat;
@@ -18,45 +22,37 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
+import java.util.HashSet;
+import java.util.Set;
+
 /**
  * =========================================================
  * GEO-SHUA
- * FOREGROUND SMS READER
+ * SMS READER
  * =========================================================
  *
- * Reads SMS messages from the Android inbox within the
- * previous 36 hours.
+ * Responsibilities:
  *
- * This plugin:
+ * 1. Receive SMS continuously through SmsReceiver.
+ * 2. Persist every received SMS locally.
+ * 3. Never depend on the Capacitor WebView being open.
+ * 4. Reconcile against the Android inbox.
+ * 5. Never process SMS older than 36 hours.
+ * 6. Keep locally queued SMS until JavaScript confirms processing.
  *
- * - Reads the Android SMS inbox only.
- * - Requires READ_SMS permission.
- * - Does not listen for incoming SMS broadcasts.
- * - Does not process SMS in the background.
- * - Does not perform financial/business decisions.
- * - Does not submit HTTP requests.
- * - Returns raw SMS data to JavaScript.
+ * Important:
  *
- * Financial processing remains server-side.
+ * The SMS_RECEIVED receiver stores the message immediately.
  *
- * Flow:
+ * It does NOT:
+ * - call the backend
+ * - perform financial processing
+ * - depend on JavaScript
+ * - depend on the WebView
+ * - depend on FCM
  *
- *      GEO-SHUA OPEN
- *           ↓
- *      User starts SMS processing
- *           ↓
- *      readInbox()
- *           ↓
- *      READ_SMS permission
- *           ↓
- *      Android SMS inbox
- *           ↓
- *      LAST 36 HOURS
- *           ↓
- *      JavaScript receives messages
- *           ↓
- *      JavaScript submits messages to
- *      /api/sms/process
+ * This makes SMS capture independent from the rest of the
+ * GEO-SHUA application.
  */
 @CapacitorPlugin(
     name = "SmsReader",
@@ -64,7 +60,8 @@ import com.getcapacitor.annotation.PermissionCallback;
         @Permission(
             alias = "sms",
             strings = {
-                Manifest.permission.READ_SMS
+                Manifest.permission.READ_SMS,
+                Manifest.permission.RECEIVE_SMS
             }
         )
     }
@@ -78,16 +75,37 @@ public class SmsReaderPlugin extends Plugin {
         "content://sms/inbox";
 
     /**
-     * Exactly 36 hours in milliseconds.
+     * Exactly 36 hours.
      *
-     * 36 hours = 1.5 days.
+     * SMS older than this must never be returned for processing.
      */
     private static final long THIRTY_SIX_HOURS_MS =
         36L * 60L * 60L * 1000L;
 
+    private SmsStore smsStore;
 
     /* =========================================================
-       READ INBOX
+       LIFECYCLE
+    ========================================================= */
+
+    @Override
+    public void load() {
+        super.load();
+
+        Context context = getContext();
+
+        if (context != null) {
+            smsStore = new SmsStore(context.getApplicationContext());
+        }
+
+        Log.d(
+            TAG,
+            "SmsReaderPlugin loaded."
+        );
+    }
+
+    /* =========================================================
+       READ SMS
     ========================================================= */
 
     @PluginMethod
@@ -97,18 +115,12 @@ public class SmsReaderPlugin extends Plugin {
 
         Log.d(
             TAG,
-            "========== READ INBOX START =========="
+            "========== READ SMS START =========="
         );
 
-        Context context =
-            getContext();
+        Context context = getContext();
 
         if (context == null) {
-
-            Log.e(
-                TAG,
-                "Android context is unavailable."
-            );
 
             rejectWithDiagnostic(
                 call,
@@ -121,29 +133,11 @@ public class SmsReaderPlugin extends Plugin {
             return;
         }
 
-
-        /* =====================================================
-           READ_SMS PERMISSION
-        ===================================================== */
-
-        boolean readGranted =
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.READ_SMS
-            ) == PackageManager.PERMISSION_GRANTED;
-
-        Log.d(
-            TAG,
-            "READ_SMS granted: "
-                + readGranted
-        );
-
-
-        if (!readGranted) {
+        if (!hasSmsPermissions(context)) {
 
             Log.d(
                 TAG,
-                "READ_SMS permission missing. Requesting..."
+                "SMS permissions missing. Requesting..."
             );
 
             try {
@@ -158,7 +152,7 @@ public class SmsReaderPlugin extends Plugin {
 
                 Log.e(
                     TAG,
-                    "Failed to request READ_SMS permission.",
+                    "Failed to request SMS permissions.",
                     e
                 );
 
@@ -174,15 +168,8 @@ public class SmsReaderPlugin extends Plugin {
             return;
         }
 
-
-        Log.d(
-            TAG,
-            "READ_SMS permission already granted."
-        );
-
         readSms(call);
     }
-
 
     /* =========================================================
        PERMISSION CALLBACK
@@ -198,47 +185,22 @@ public class SmsReaderPlugin extends Plugin {
             "========== SMS PERMISSION CALLBACK =========="
         );
 
-        Context context =
-            getContext();
+        Context context = getContext();
 
         if (context == null) {
-
-            Log.e(
-                TAG,
-                "Android context unavailable after permission request."
-            );
 
             rejectWithDiagnostic(
                 call,
                 "Android context unavailable.",
                 "SMS_CONTEXT_UNAVAILABLE",
                 "permission_callback",
-                "Android context unavailable."
+                "Android context is unavailable."
             );
 
             return;
         }
 
-
-        boolean readGranted =
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.READ_SMS
-            ) == PackageManager.PERMISSION_GRANTED;
-
-        Log.d(
-            TAG,
-            "Callback READ_SMS: "
-                + readGranted
-        );
-
-
-        if (!readGranted) {
-
-            Log.w(
-                TAG,
-                "READ_SMS permission was not granted."
-            );
+        if (!hasSmsPermissions(context)) {
 
             JSObject diagnostic =
                 new JSObject();
@@ -249,17 +211,23 @@ public class SmsReaderPlugin extends Plugin {
             );
 
             diagnostic.put(
-                "permission",
-                "denied"
+                "readSms",
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.READ_SMS
+                ) == PackageManager.PERMISSION_GRANTED
             );
 
             diagnostic.put(
-                "readSms",
-                false
+                "receiveSms",
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.RECEIVE_SMS
+                ) == PackageManager.PERMISSION_GRANTED
             );
 
             call.reject(
-                "Android SMS read permission was not granted.",
+                "Android SMS permissions were not granted.",
                 "SMS_PERMISSION_DENIED",
                 diagnostic
             );
@@ -267,31 +235,18 @@ public class SmsReaderPlugin extends Plugin {
             return;
         }
 
-
-        Log.d(
-            TAG,
-            "READ_SMS permission granted after callback."
-        );
-
         readSms(call);
     }
 
-
     /* =========================================================
-       READ SMS
+       READ / RECONCILE
     ========================================================= */
 
     private void readSms(
         PluginCall call
     ) {
 
-        Log.d(
-            TAG,
-            "========== SMS QUERY START =========="
-        );
-
-        Context context =
-            getContext();
+        Context context = getContext();
 
         if (context == null) {
 
@@ -300,20 +255,16 @@ public class SmsReaderPlugin extends Plugin {
                 "Android context unavailable.",
                 "SMS_CONTEXT_UNAVAILABLE",
                 "query_context",
-                "Android context unavailable."
+                "Android context is unavailable."
             );
 
             return;
         }
 
-
-        Cursor cursor = null;
+        ensureStore();
 
         /*
-         * Capture the scan time once.
-         *
-         * This gives the entire query one consistent
-         * 36-hour reference point.
+         * Capture ONE timestamp for the entire reconciliation.
          */
         final long now =
             System.currentTimeMillis();
@@ -321,13 +272,130 @@ public class SmsReaderPlugin extends Plugin {
         final long cutoff =
             now - THIRTY_SIX_HOURS_MS;
 
+        Log.d(
+            TAG,
+            "SMS reconciliation started."
+        );
 
-        int count = 0;
-        int skippedEmptyBody = 0;
-        int skippedInvalidDate = 0;
-        int skippedFutureDate = 0;
-        int skippedInvalidRow = 0;
+        Log.d(
+            TAG,
+            "Now: " + now
+        );
 
+        Log.d(
+            TAG,
+            "36-hour cutoff: " + cutoff
+        );
+
+        /*
+         * First remove locally queued messages that are now
+         * outside the allowed 36-hour processing window.
+         *
+         * We intentionally do not keep old SMS forever.
+         */
+        smsStore.deleteOlderThan(cutoff);
+
+        /*
+         * Reconcile the Android inbox.
+         *
+         * This catches SMS that may have arrived while:
+         *
+         * - the app was closed
+         * - the WebView was unavailable
+         * - the receiver was temporarily unavailable
+         * - Android delayed delivery
+         */
+        reconcileAndroidInbox(
+            context,
+            cutoff,
+            now
+        );
+
+        /*
+         * Return only pending SMS that are still inside the
+         * 36-hour window.
+         */
+        JSArray messages =
+            smsStore.getPendingMessages(
+                cutoff,
+                now
+            );
+
+        JSObject diagnostic =
+            new JSObject();
+
+        diagnostic.put(
+            "stage",
+            "complete"
+        );
+
+        diagnostic.put(
+            "permission",
+            "granted"
+        );
+
+        diagnostic.put(
+            "windowHours",
+            36
+        );
+
+        diagnostic.put(
+            "fromTimestamp",
+            cutoff
+        );
+
+        diagnostic.put(
+            "toTimestamp",
+            now
+        );
+
+        diagnostic.put(
+            "pendingCount",
+            messages.length()
+        );
+
+        JSObject result =
+            new JSObject();
+
+        result.put(
+            "messages",
+            messages
+        );
+
+        result.put(
+            "diagnostic",
+            diagnostic
+        );
+
+        Log.d(
+            TAG,
+            "Pending SMS returned: "
+                + messages.length()
+        );
+
+        Log.d(
+            TAG,
+            "========== READ SMS END =========="
+        );
+
+        call.resolve(result);
+    }
+
+    /* =========================================================
+       RECONCILE ANDROID INBOX
+    ========================================================= */
+
+    private void reconcileAndroidInbox(
+        Context context,
+        long cutoff,
+        long now
+    ) {
+
+        Cursor cursor = null;
+
+        int scanned = 0;
+        int stored = 0;
+        int skipped = 0;
 
         try {
 
@@ -336,44 +404,13 @@ public class SmsReaderPlugin extends Plugin {
                     SMS_INBOX_URI
                 );
 
-
-            /* =================================================
-               36-HOUR WINDOW
-            ================================================= */
-
-            Log.d(
-                TAG,
-                "Current timestamp: "
-                    + now
-            );
-
-            Log.d(
-                TAG,
-                "36-hour cutoff: "
-                    + cutoff
-            );
-
-
-            /*
-             * Only request SMS whose timestamp is at least
-             * 36 hours old or newer.
-             *
-             * The individual date is also validated below.
-             */
             String selection =
-                "date >= ?";
-
+                "date >= ? AND date <= ?";
 
             String[] selectionArgs = {
-                String.valueOf(
-                    cutoff
-                )
+                String.valueOf(cutoff),
+                String.valueOf(now)
             };
-
-
-            /* =================================================
-               SMS PROJECTION
-            ================================================= */
 
             String[] projection = {
                 "_id",
@@ -382,22 +419,8 @@ public class SmsReaderPlugin extends Plugin {
                 "date"
             };
 
-
-            /*
-             * Newest messages first.
-             *
-             * _id is used as a deterministic tie-breaker when
-             * multiple SMS records have the same timestamp.
-             */
             String sortOrder =
                 "date DESC, _id DESC";
-
-
-            Log.d(
-                TAG,
-                "Querying Android SMS inbox."
-            );
-
 
             cursor =
                 context
@@ -410,327 +433,101 @@ public class SmsReaderPlugin extends Plugin {
                         sortOrder
                     );
 
-
             if (cursor == null) {
 
                 Log.e(
                     TAG,
-                    "ContentResolver returned NULL cursor."
-                );
-
-                JSObject diagnostic =
-                    new JSObject();
-
-                diagnostic.put(
-                    "stage",
-                    "query"
-                );
-
-                diagnostic.put(
-                    "uri",
-                    SMS_INBOX_URI
-                );
-
-                diagnostic.put(
-                    "windowHours",
-                    36
-                );
-
-                diagnostic.put(
-                    "fromTimestamp",
-                    cutoff
-                );
-
-                diagnostic.put(
-                    "toTimestamp",
-                    now
-                );
-
-                diagnostic.put(
-                    "error",
-                    "ContentResolver returned null cursor."
-                );
-
-                call.reject(
-                    "Android could not access the SMS inbox.",
-                    "SMS_QUERY_FAILED",
-                    diagnostic
+                    "SMS inbox returned NULL cursor."
                 );
 
                 return;
             }
 
-
-            Log.d(
-                TAG,
-                "SMS cursor opened successfully."
-            );
-
-
-            /* =================================================
-               COLUMN INDEXES
-            ================================================= */
-
             int idIndex =
-                cursor.getColumnIndex(
-                    "_id"
-                );
+                cursor.getColumnIndex("_id");
 
             int addressIndex =
-                cursor.getColumnIndex(
-                    "address"
-                );
+                cursor.getColumnIndex("address");
 
             int bodyIndex =
-                cursor.getColumnIndex(
-                    "body"
-                );
+                cursor.getColumnIndex("body");
 
             int dateIndex =
-                cursor.getColumnIndex(
-                    "date"
-                );
+                cursor.getColumnIndex("date");
 
-
-            Log.d(
-                TAG,
-                "Column indexes: "
-                    + "_id=" + idIndex
-                    + ", address=" + addressIndex
-                    + ", body=" + bodyIndex
-                    + ", date=" + dateIndex
-            );
-
-
-            /*
-             * Body and date are required because the SMS
-             * cannot be meaningfully processed without them.
-             *
-             * _id and address are optional.
-             */
             if (
+                idIndex < 0 ||
                 bodyIndex < 0 ||
                 dateIndex < 0
             ) {
 
                 Log.e(
                     TAG,
-                    "Required SMS columns are missing."
-                );
-
-                JSObject diagnostic =
-                    new JSObject();
-
-                diagnostic.put(
-                    "stage",
-                    "columns"
-                );
-
-                diagnostic.put(
-                    "idIndex",
-                    idIndex
-                );
-
-                diagnostic.put(
-                    "addressIndex",
-                    addressIndex
-                );
-
-                diagnostic.put(
-                    "bodyIndex",
-                    bodyIndex
-                );
-
-                diagnostic.put(
-                    "dateIndex",
-                    dateIndex
-                );
-
-                diagnostic.put(
-                    "windowHours",
-                    36
-                );
-
-                call.reject(
-                    "Android SMS inbox has an unexpected format.",
-                    "SMS_COLUMNS_INVALID",
-                    diagnostic
+                    "Required SMS columns missing."
                 );
 
                 return;
             }
 
+            while (cursor.moveToNext()) {
 
-            /* =================================================
-               MESSAGE ARRAY
-            ================================================= */
-
-            JSArray messages =
-                new JSArray();
-
-
-            /* =================================================
-               READ CURSOR
-            ================================================= */
-
-            while (
-                cursor.moveToNext()
-            ) {
+                scanned++;
 
                 try {
 
-                    /*
-                     * ID is optional.
-                     */
                     String id =
-                        idIndex >= 0
-                            ? cursor.getString(
-                                idIndex
-                            )
-                            : null;
+                        cursor.getString(
+                            idIndex
+                        );
 
-
-                    /*
-                     * Address is optional.
-                     */
                     String address =
                         addressIndex >= 0
                             ? cursor.getString(
                                 addressIndex
                             )
-                            : null;
+                            : "";
 
-
-                    /*
-                     * Body is required.
-                     */
                     String body =
                         cursor.getString(
                             bodyIndex
                         );
 
-
-                    /*
-                     * Date is required.
-                     */
                     long date =
                         cursor.getLong(
                             dateIndex
                         );
 
-
-                    /* =========================================
-                       VALIDATE BODY
-                    ========================================= */
-
+                    /*
+                     * Absolute 36-hour protection.
+                     */
                     if (
+                        date <= 0L ||
+                        date < cutoff ||
+                        date > now ||
                         body == null ||
                         body.trim().isEmpty()
                     ) {
 
-                        skippedEmptyBody++;
+                        skipped++;
 
                         continue;
                     }
 
+                    boolean inserted =
+                        smsStore.insertIfMissing(
+                            id,
+                            address,
+                            body,
+                            date
+                        );
 
-                    /* =========================================
-                       VALIDATE DATE
-                    ========================================= */
-
-                    if (date <= 0L) {
-
-                        skippedInvalidDate++;
-
-                        continue;
+                    if (inserted) {
+                        stored++;
                     }
-
-
-                    /*
-                     * Protect against a provider/device clock
-                     * returning a timestamp in the future.
-                     *
-                     * Such a message is not considered part of
-                     * this scan's 36-hour window.
-                     */
-                    if (date > now) {
-
-                        skippedFutureDate++;
-
-                        continue;
-                    }
-
-
-                    /*
-                     * The ContentProvider already applied the
-                     * lower 36-hour boundary, but keep this
-                     * defensive check at row level.
-                     */
-                    if (date < cutoff) {
-
-                        skippedInvalidRow++;
-
-                        continue;
-                    }
-
-
-                    /* =========================================
-                       BUILD MESSAGE
-                    ========================================= */
-
-                    JSObject message =
-                        new JSObject();
-
-
-                    message.put(
-                        "id",
-                        id
-                    );
-
-
-                    message.put(
-                        "address",
-                        address == null
-                            ? ""
-                            : address
-                    );
-
-
-                    message.put(
-                        "body",
-                        body
-                    );
-
-
-                    /*
-                     * Keep Android's original epoch timestamp.
-                     *
-                     * Do not convert this to a Java Date.
-                     * The JavaScript/server layer remains
-                     * responsible for application-specific
-                     * date handling.
-                     */
-                    message.put(
-                        "date",
-                        date
-                    );
-
-
-                    messages.put(
-                        message
-                    );
-
-
-                    count++;
-
 
                 } catch (Exception rowException) {
 
-                    /*
-                     * A malformed individual SMS must never
-                     * terminate the entire inbox scan.
-                     */
-                    skippedInvalidRow++;
+                    skipped++;
 
                     Log.w(
                         TAG,
@@ -740,327 +537,201 @@ public class SmsReaderPlugin extends Plugin {
                 }
             }
 
-
-            Log.d(
-                TAG,
-                "SMS messages read from last 36 hours: "
-                    + count
-            );
-
-            Log.d(
-                TAG,
-                "Skipped empty body: "
-                    + skippedEmptyBody
-            );
-
-            Log.d(
-                TAG,
-                "Skipped invalid date: "
-                    + skippedInvalidDate
-            );
-
-            Log.d(
-                TAG,
-                "Skipped future date: "
-                    + skippedFutureDate
-            );
-
-            Log.d(
-                TAG,
-                "Skipped invalid rows: "
-                    + skippedInvalidRow
-            );
-
-
-            /* =================================================
-               DIAGNOSTIC
-            ================================================= */
-
-            JSObject diagnostic =
-                new JSObject();
-
-
-            diagnostic.put(
-                "stage",
-                "complete"
-            );
-
-
-            diagnostic.put(
-                "permission",
-                "granted"
-            );
-
-
-            diagnostic.put(
-                "count",
-                count
-            );
-
-
-            diagnostic.put(
-                "windowHours",
-                36
-            );
-
-
-            diagnostic.put(
-                "fromTimestamp",
-                cutoff
-            );
-
-
-            diagnostic.put(
-                "toTimestamp",
-                now
-            );
-
-
-            diagnostic.put(
-                "skippedEmptyBody",
-                skippedEmptyBody
-            );
-
-
-            diagnostic.put(
-                "skippedInvalidDate",
-                skippedInvalidDate
-            );
-
-
-            diagnostic.put(
-                "skippedFutureDate",
-                skippedFutureDate
-            );
-
-
-            diagnostic.put(
-                "skippedInvalidRow",
-                skippedInvalidRow
-            );
-
-
-            /* =================================================
-               RESULT
-            ================================================= */
-
-            JSObject result =
-                new JSObject();
-
-
-            result.put(
-                "messages",
-                messages
-            );
-
-
-            result.put(
-                "diagnostic",
-                diagnostic
-            );
-
-
-            Log.d(
-                TAG,
-                "========== SMS QUERY SUCCESS =========="
-            );
-
-
-            call.resolve(
-                result
-            );
-
-
         } catch (SecurityException e) {
 
             Log.e(
                 TAG,
-                "SECURITY EXCEPTION reading SMS inbox.",
+                "READ_SMS permission/security error.",
                 e
             );
-
-
-            JSObject diagnostic =
-                new JSObject();
-
-
-            diagnostic.put(
-                "stage",
-                "security"
-            );
-
-
-            diagnostic.put(
-                "permission",
-                "READ_SMS"
-            );
-
-
-            diagnostic.put(
-                "windowHours",
-                36
-            );
-
-
-            diagnostic.put(
-                "fromTimestamp",
-                cutoff
-            );
-
-
-            diagnostic.put(
-                "toTimestamp",
-                now
-            );
-
-
-            diagnostic.put(
-                "exception",
-                e.getClass().getName()
-            );
-
-
-            call.reject(
-                "Android denied access to the SMS inbox.",
-                "SMS_SECURITY_EXCEPTION",
-                diagnostic
-            );
-
-
-        } catch (IllegalArgumentException e) {
-
-            Log.e(
-                TAG,
-                "INVALID ARGUMENT reading SMS inbox.",
-                e
-            );
-
-
-            JSObject diagnostic =
-                new JSObject();
-
-
-            diagnostic.put(
-                "stage",
-                "query"
-            );
-
-
-            diagnostic.put(
-                "windowHours",
-                36
-            );
-
-
-            diagnostic.put(
-                "fromTimestamp",
-                cutoff
-            );
-
-
-            diagnostic.put(
-                "toTimestamp",
-                now
-            );
-
-
-            diagnostic.put(
-                "exception",
-                e.getClass().getName()
-            );
-
-
-            call.reject(
-                "Android could not query the SMS inbox.",
-                "SMS_QUERY_INVALID",
-                diagnostic
-            );
-
 
         } catch (Exception e) {
 
             Log.e(
                 TAG,
-                "GENERAL EXCEPTION reading SMS inbox.",
+                "Failed to reconcile SMS inbox.",
                 e
             );
-
-
-            JSObject diagnostic =
-                new JSObject();
-
-
-            diagnostic.put(
-                "stage",
-                "exception"
-            );
-
-
-            diagnostic.put(
-                "windowHours",
-                36
-            );
-
-
-            diagnostic.put(
-                "fromTimestamp",
-                cutoff
-            );
-
-
-            diagnostic.put(
-                "toTimestamp",
-                now
-            );
-
-
-            diagnostic.put(
-                "exception",
-                e.getClass().getName()
-            );
-
-
-            diagnostic.put(
-                "message",
-                e.getMessage() != null
-                    ? e.getMessage()
-                    : "No exception message"
-            );
-
-
-            call.reject(
-                "Android failed while reading the SMS inbox.",
-                "SMS_READ_FAILED",
-                diagnostic
-            );
-
 
         } finally {
 
             if (cursor != null) {
 
                 try {
-
                     cursor.close();
-
-                } catch (Exception closeException) {
+                } catch (Exception e) {
 
                     Log.w(
                         TAG,
                         "Failed to close SMS cursor.",
-                        closeException
+                        e
                     );
                 }
             }
-
-
-            Log.d(
-                TAG,
-                "========== SMS QUERY END =========="
-            );
         }
+
+        Log.d(
+            TAG,
+            "Inbox reconciliation:"
+                + " scanned=" + scanned
+                + " stored=" + stored
+                + " skipped=" + skipped
+        );
     }
 
+    /* =========================================================
+       ACKNOWLEDGE PROCESSED SMS
+    ========================================================= */
+
+    /**
+     * JavaScript should call this ONLY after the backend has
+     * successfully accepted/processed the SMS.
+     *
+     * Example:
+     *
+     * await SmsReader.markProcessed({
+     *     ids: ["123", "124"]
+     * });
+     *
+     * The SMS is then permanently removed from the local queue.
+     */
+    @PluginMethod
+    public void markProcessed(
+        PluginCall call
+    ) {
+
+        ensureStore();
+
+        JSArray ids =
+            call.getArray("ids");
+
+        if (ids == null || ids.length() == 0) {
+
+            call.resolve();
+
+            return;
+        }
+
+        int acknowledged = 0;
+
+        for (int i = 0; i < ids.length(); i++) {
+
+            try {
+
+                String id =
+                    ids.getString(i);
+
+                if (
+                    id != null &&
+                    !id.trim().isEmpty()
+                ) {
+
+                    if (
+                        smsStore.markProcessed(id)
+                    ) {
+
+                        acknowledged++;
+                    }
+                }
+
+            } catch (Exception e) {
+
+                Log.w(
+                    TAG,
+                    "Failed to acknowledge SMS.",
+                    e
+                );
+            }
+        }
+
+        JSObject result =
+            new JSObject();
+
+        result.put(
+            "acknowledged",
+            acknowledged
+        );
+
+        call.resolve(result);
+    }
+
+    /* =========================================================
+       PENDING COUNT
+    ========================================================= */
+
+    @PluginMethod
+    public void getPendingCount(
+        PluginCall call
+    ) {
+
+        ensureStore();
+
+        long cutoff =
+            System.currentTimeMillis()
+                - THIRTY_SIX_HOURS_MS;
+
+        long now =
+            System.currentTimeMillis();
+
+        smsStore.deleteOlderThan(cutoff);
+
+        JSObject result =
+            new JSObject();
+
+        result.put(
+            "count",
+            smsStore.countPending(
+                cutoff,
+                now
+            )
+        );
+
+        call.resolve(result);
+    }
+
+    /* =========================================================
+       PERMISSIONS
+    ========================================================= */
+
+    private boolean hasSmsPermissions(
+        Context context
+    ) {
+
+        boolean readSms =
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_SMS
+            ) == PackageManager.PERMISSION_GRANTED;
+
+        boolean receiveSms =
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECEIVE_SMS
+            ) == PackageManager.PERMISSION_GRANTED;
+
+        return readSms && receiveSms;
+    }
+
+    /* =========================================================
+       STORE
+    ========================================================= */
+
+    private void ensureStore() {
+
+        if (smsStore == null) {
+
+            Context context =
+                getContext();
+
+            if (context != null) {
+
+                smsStore =
+                    new SmsStore(
+                        context.getApplicationContext()
+                    );
+            }
+        }
+    }
 
     /* =========================================================
        ERROR HELPER
@@ -1077,23 +748,351 @@ public class SmsReaderPlugin extends Plugin {
         JSObject diagnostic =
             new JSObject();
 
-
         diagnostic.put(
             "stage",
             stage
         );
-
 
         diagnostic.put(
             "error",
             error
         );
 
-
         call.reject(
             message,
             code,
             diagnostic
         );
+    }
+
+    /* =========================================================
+       LOCAL SMS STORE
+    ========================================================= */
+
+    /**
+     * Persistent SQLite queue.
+     *
+     * This is deliberately independent from the Capacitor
+     * WebView and JavaScript.
+     */
+    private static final class SmsStore
+        extends SQLiteOpenHelper {
+
+        private static final String DATABASE_NAME =
+            "geoshua_sms.db";
+
+        private static final int DATABASE_VERSION =
+            1;
+
+        private static final String TABLE =
+            "sms_queue";
+
+        SmsStore(
+            Context context
+        ) {
+
+            super(
+                context,
+                DATABASE_NAME,
+                null,
+                DATABASE_VERSION
+            );
+        }
+
+        @Override
+        public void onCreate(
+            SQLiteDatabase db
+        ) {
+
+            db.execSQL(
+                "CREATE TABLE "
+                    + TABLE
+                    + " ("
+                    + "id TEXT PRIMARY KEY,"
+                    + "address TEXT NOT NULL,"
+                    + "body TEXT NOT NULL,"
+                    + "sms_date INTEGER NOT NULL,"
+                    + "received_at INTEGER NOT NULL,"
+                    + "processed INTEGER NOT NULL DEFAULT 0"
+                    + ")"
+            );
+
+            db.execSQL(
+                "CREATE INDEX idx_sms_queue_date "
+                    + "ON "
+                    + TABLE
+                    + "(sms_date)"
+            );
+
+            db.execSQL(
+                "CREATE INDEX idx_sms_queue_pending "
+                    + "ON "
+                    + TABLE
+                    + "(processed, sms_date)"
+            );
+        }
+
+        @Override
+        public void onUpgrade(
+            SQLiteDatabase db,
+            int oldVersion,
+            int newVersion
+        ) {
+
+            /*
+             * Keep existing SMS data during upgrades.
+             *
+             * Future schema changes should use proper migrations.
+             */
+        }
+
+        /**
+         * Inserts an SMS only if it does not already exist.
+         *
+         * Android's SMS _id is used as the primary identifier.
+         */
+        synchronized boolean insertIfMissing(
+            String id,
+            String address,
+            String body,
+            long smsDate
+        ) {
+
+            if (
+                id == null ||
+                id.trim().isEmpty()
+            ) {
+
+                return false;
+            }
+
+            if (
+                body == null ||
+                body.trim().isEmpty()
+            ) {
+
+                return false;
+            }
+
+            SQLiteDatabase db =
+                getWritableDatabase();
+
+            ContentValues values =
+                new ContentValues();
+
+            values.put(
+                "id",
+                id
+            );
+
+            values.put(
+                "address",
+                address == null
+                    ? ""
+                    : address
+            );
+
+            values.put(
+                "body",
+                body
+            );
+
+            values.put(
+                "sms_date",
+                smsDate
+            );
+
+            values.put(
+                "received_at",
+                System.currentTimeMillis()
+            );
+
+            values.put(
+                "processed",
+                0
+            );
+
+            long result =
+                db.insertWithOnConflict(
+                    TABLE,
+                    null,
+                    values,
+                    SQLiteDatabase.CONFLICT_IGNORE
+                );
+
+            return result != -1;
+        }
+
+        /**
+         * Returns only unprocessed SMS within 36 hours.
+         */
+        synchronized JSArray getPendingMessages(
+            long cutoff,
+            long now
+        ) {
+
+            JSArray result =
+                new JSArray();
+
+            SQLiteDatabase db =
+                getReadableDatabase();
+
+            Cursor cursor = null;
+
+            try {
+
+                cursor =
+                    db.query(
+                        TABLE,
+                        new String[] {
+                            "id",
+                            "address",
+                            "body",
+                            "sms_date"
+                        },
+                        "processed = 0"
+                            + " AND sms_date >= ?"
+                            + " AND sms_date <= ?",
+                        new String[] {
+                            String.valueOf(cutoff),
+                            String.valueOf(now)
+                        },
+                        null,
+                        null,
+                        "sms_date DESC, id DESC"
+                    );
+
+                while (
+                    cursor.moveToNext()
+                ) {
+
+                    JSObject message =
+                        new JSObject();
+
+                    message.put(
+                        "id",
+                        cursor.getString(0)
+                    );
+
+                    message.put(
+                        "address",
+                        cursor.getString(1)
+                    );
+
+                    message.put(
+                        "body",
+                        cursor.getString(2)
+                    );
+
+                    message.put(
+                        "date",
+                        cursor.getLong(3)
+                    );
+
+                    result.put(
+                        message
+                    );
+                }
+
+            } finally {
+
+                if (cursor != null) {
+                    cursor.close();
+                }
+            }
+
+            return result;
+        }
+
+        synchronized boolean markProcessed(
+            String id
+        ) {
+
+            SQLiteDatabase db =
+                getWritableDatabase();
+
+            ContentValues values =
+                new ContentValues();
+
+            values.put(
+                "processed",
+                1
+            );
+
+            int rows =
+                db.update(
+                    TABLE,
+                    values,
+                    "id = ?",
+                    new String[] {
+                        id
+                    }
+                );
+
+            return rows > 0;
+        }
+
+        /**
+         * SMS older than 36 hours must never remain in the
+         * processing queue.
+         */
+        synchronized void deleteOlderThan(
+            long cutoff
+        ) {
+
+            SQLiteDatabase db =
+                getWritableDatabase();
+
+            db.delete(
+                TABLE,
+                "sms_date < ?",
+                new String[] {
+                    String.valueOf(cutoff)
+                }
+            );
+        }
+
+        synchronized int countPending(
+            long cutoff,
+            long now
+        ) {
+
+            SQLiteDatabase db =
+                getReadableDatabase();
+
+            Cursor cursor = null;
+
+            try {
+
+                cursor =
+                    db.rawQuery(
+                        "SELECT COUNT(*)"
+                            + " FROM "
+                            + TABLE
+                            + " WHERE processed = 0"
+                            + " AND sms_date >= ?"
+                            + " AND sms_date <= ?",
+                        new String[] {
+                            String.valueOf(cutoff),
+                            String.valueOf(now)
+                        }
+                    );
+
+                if (
+                    cursor.moveToFirst()
+                ) {
+
+                    return cursor.getInt(0);
+                }
+
+            } finally {
+
+                if (cursor != null) {
+                    cursor.close();
+                }
+            }
+
+            return 0;
+        }
     }
 }
