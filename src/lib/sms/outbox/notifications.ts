@@ -163,7 +163,7 @@ export async function queueLoanPaymentReceivedSms(
   );
 
   let message =
-    `GEOSHUA LTD \n Dear ${memberName}, loan payment of KES ${formatAmount(amount)} has been received.\n Thank you.`;
+    `GEOSHUA LTD \nDear ${memberName}, loan payment of KES ${formatAmount(amount)} has been received.\n Thank you.`;
 
   return queueSms({
     type: SMS_TYPES.LOAN_PAYMENT_RECEIVED,
