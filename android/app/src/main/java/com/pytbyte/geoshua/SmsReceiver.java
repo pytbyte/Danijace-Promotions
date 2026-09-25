@@ -3,7 +3,6 @@ package com.pytbyte.geoshua;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Bundle;
 import android.provider.Telephony;
 import android.telephony.SmsMessage;
 import android.util.Log;
@@ -43,36 +42,63 @@ import java.util.Map;
  * - depend on the WebView
  * - depend on JavaScript
  *
- * This is important because the Android application UI may be:
+ * This receiver is specifically designed to work when the
+ * application UI is:
  *
  * - closed
  * - in the background
  * - not currently loaded
  * - on the lock screen
  *
- * The financial processing happens later in the WorkManager worker.
+ * =========================================================
+ * DIAGNOSTICS
+ * =========================================================
+ *
+ * This class deliberately logs every important stage of the
+ * incoming SMS pipeline.
+ *
+ * The purpose is to determine exactly where an SMS stops:
+ *
+ *     Android
+ *       ↓
+ *     SmsReceiver invoked
+ *       ↓
+ *     SMS decoded
+ *       ↓
+ *     SQLite queue
+ *       ↓
+ *     WorkManager
+ *
+ * If there is NO:
+ *
+ *     "RECEIVER INVOKED"
+ *
+ * log at all, the problem is before this class:
+ *
+ *     Android broadcast delivery / permission / device state
+ *
+ * If the receiver is invoked but no SMS is decoded, the
+ * problem is in the broadcast payload.
+ *
+ * If the SMS is decoded but not inserted, the problem is
+ * in validation or SmsQueueStore.
+ *
+ * If it is inserted but processing does not happen, the
+ * problem is downstream in WorkManager/SmsProcessingWorker.
  */
 public class SmsReceiver extends BroadcastReceiver {
 
-    private static final String TAG = "GeoShuaSmsReceiver";
+    private static final String TAG =
+            "GeoShuaSmsReceiver";
 
     /**
      * Only process SMS messages inside this window.
-     *
-     * Older messages are deliberately ignored.
      */
     private static final long THIRTY_SIX_HOURS_MS =
             36L * 60L * 60L * 1000L;
 
     /**
      * Android may provide multiple PDUs for one multipart SMS.
-     *
-     * We group parts using:
-     *
-     *     normalized sender + SMS timestamp
-     *
-     * This matches the way Android normally exposes multipart
-     * SMS messages received in the same message.
      */
     private static final class SmsPart {
 
@@ -92,8 +118,7 @@ public class SmsReceiver extends BroadcastReceiver {
     }
 
     /**
-     * Internal representation of a complete SMS after its
-     * individual parts have been combined.
+     * Complete SMS after multipart parts have been combined.
      */
     private static final class CombinedSms {
 
@@ -119,81 +144,234 @@ public class SmsReceiver extends BroadcastReceiver {
     ) {
 
         /*
-         * Never perform long-running network or financial work
-         * inside BroadcastReceiver.
+         * =====================================================
+         * STAGE 1
+         * =====================================================
          *
-         * We only decode, persist and enqueue WorkManager.
+         * This MUST be the first meaningful log.
+         *
+         * If this message never appears when a bank SMS arrives,
+         * Android did not invoke this receiver.
          */
+        Log.i(
+                TAG,
+                "=================================================="
+        );
 
+        Log.i(
+                TAG,
+                "SMS RECEIVER INVOKED"
+        );
+
+        Log.i(
+                TAG,
+                "context="
+                        + (context == null
+                        ? "NULL"
+                        : context.getClass().getName())
+        );
+
+        Log.i(
+                TAG,
+                "intent="
+                        + (intent == null
+                        ? "NULL"
+                        : "present")
+        );
+
+        /*
+         * =====================================================
+         * STAGE 2
+         * =====================================================
+         *
+         * Validate the incoming broadcast.
+         */
         if (intent == null) {
-            Log.w(TAG, "Received null intent.");
-            return;
-        }
 
-        final String action = intent.getAction();
-
-        if (!Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(action)) {
-            Log.d(
+            Log.e(
                     TAG,
-                    "Ignoring unexpected action: " + action
+                    "STOP: Received null intent."
             );
+
             return;
         }
 
-        final Context appContext =
-                context.getApplicationContext();
+        final String action =
+                intent.getAction();
 
-        final long now = System.currentTimeMillis();
+        Log.i(
+                TAG,
+                "Broadcast action="
+                        + action
+        );
+
+        if (
+                !Telephony.Sms.Intents.SMS_RECEIVED_ACTION
+                        .equals(action)
+        ) {
+
+            Log.w(
+                    TAG,
+                    "STOP: Unexpected broadcast action."
+            );
+
+            return;
+        }
+
+        Log.i(
+                TAG,
+                "STAGE PASSED: SMS_RECEIVED action confirmed."
+        );
+
+        /*
+         * =====================================================
+         * STAGE 3
+         * =====================================================
+         *
+         * Capture timing information.
+         */
+        final long now =
+                System.currentTimeMillis();
 
         final long cutoff =
                 now - THIRTY_SIX_HOURS_MS;
 
+        Log.i(
+                TAG,
+                "Receiver time="
+                        + now
+        );
+
+        Log.i(
+                TAG,
+                "36-hour cutoff="
+                        + cutoff
+        );
+
+        final Context appContext =
+                context.getApplicationContext();
+
         try {
 
             /*
-             * Clean up anything older than the supported
-             * processing window.
+             * =================================================
+             * STAGE 4
+             * =================================================
              *
-             * This also prevents the local queue from growing
-             * indefinitely.
+             * Initialize the shared SQLite queue.
              */
+            Log.i(
+                    TAG,
+                    "Opening SmsQueueStore..."
+            );
+
             SmsQueueStore store =
-                    new SmsQueueStore(appContext);
-
-            store.deleteOlderThan(cutoff);
-
-            /*
-             * Android normally provides the SMS PDUs through
-             * Telephony.Sms.Intents.getMessagesFromIntent().
-             *
-             * Using Android's helper is preferable to manually
-             * reading "pdus" because it handles the SMS format
-             * supplied by the broadcast.
-             */
-            SmsMessage[] messages =
-                    Telephony.Sms.Intents.getMessagesFromIntent(
-                            intent
+                    new SmsQueueStore(
+                            appContext
                     );
 
-            if (messages == null || messages.length == 0) {
+            Log.i(
+                    TAG,
+                    "SmsQueueStore opened successfully."
+            );
 
-                Log.w(
+            /*
+             * Remove old queue entries.
+             */
+            try {
+
+                int deleted =
+                        store.deleteOlderThan(
+                                cutoff
+                        );
+
+                Log.i(
                         TAG,
-                        "SMS_RECEIVED contained no SMS messages."
+                        "Old queue cleanup completed. " +
+                        "deleted=" +
+                        deleted
+                );
+
+            } catch (Exception cleanupException) {
+
+                /*
+                 * Cleanup is not allowed to prevent capture.
+                 */
+                Log.e(
+                        TAG,
+                        "WARNING: Queue cleanup failed. " +
+                        "Continuing with SMS capture.",
+                        cleanupException
+                );
+            }
+
+            /*
+             * =================================================
+             * STAGE 5
+             * =================================================
+             *
+             * Decode SMS broadcast.
+             */
+            Log.i(
+                    TAG,
+                    "Extracting SMS messages from broadcast..."
+            );
+
+            SmsMessage[] messages =
+                    Telephony.Sms.Intents
+                            .getMessagesFromIntent(
+                                    intent
+                            );
+
+            if (
+                    messages == null ||
+                    messages.length == 0
+            ) {
+
+                Log.e(
+                        TAG,
+                        "STOP: SMS_RECEIVED broadcast " +
+                        "contained no decoded SMS messages."
                 );
 
                 return;
             }
 
+            Log.i(
+                    TAG,
+                    "SMS messages decoded from broadcast. " +
+                    "count="
+                            + messages.length
+            );
+
             /*
-             * Convert the Android SMS objects into simple parts.
+             * =================================================
+             * STAGE 6
+             * =================================================
+             *
+             * Convert Android SMS objects into simple parts.
              */
             List<SmsPart> parts =
                     new ArrayList<>();
 
-            for (SmsMessage message : messages) {
+            int messageIndex = 0;
+
+            for (
+                    SmsMessage message :
+                    messages
+            ) {
+
+                messageIndex++;
 
                 if (message == null) {
+
+                    Log.w(
+                            TAG,
+                            "SMS part #"
+                                    + messageIndex
+                                    + " is NULL. Skipping."
+                    );
+
                     continue;
                 }
 
@@ -208,11 +386,32 @@ public class SmsReceiver extends BroadcastReceiver {
                 long timestamp =
                         message.getTimestampMillis();
 
+                Log.i(
+                        TAG,
+                        "Decoded SMS part #"
+                                + messageIndex
+                                + ": "
+                                + "address="
+                                + address
+                                + ", "
+                                + "timestamp="
+                                + timestamp
+                                + ", "
+                                + "bodyLength="
+                                + (body == null
+                                ? 0
+                                : body.length())
+                );
+
                 if (address.isEmpty()) {
+
                     Log.w(
                             TAG,
-                            "Ignoring SMS with empty sender."
+                            "SMS part #"
+                                    + messageIndex
+                                    + " rejected: empty sender."
                     );
+
                     continue;
                 }
 
@@ -223,30 +422,32 @@ public class SmsReceiver extends BroadcastReceiver {
                 body = body.trim();
 
                 if (body.isEmpty()) {
+
                     Log.w(
                             TAG,
-                            "Ignoring SMS with empty body."
+                            "SMS part #"
+                                    + messageIndex
+                                    + " rejected: empty body."
                     );
+
                     continue;
                 }
 
                 /*
-                 * Protect against malformed/future timestamps.
-                 *
-                 * We only accept:
-                 *
-                 *     cutoff <= timestamp <= now
-                 *
-                 * A small future tolerance is intentionally NOT
-                 * added here. Android's SMS timestamp should be
-                 * trustworthy enough for this boundary.
+                 * 36-hour validation.
                  */
                 if (timestamp < cutoff) {
 
-                    Log.d(
+                    Log.w(
                             TAG,
-                            "Ignoring SMS older than 36 hours. " +
-                            "timestamp=" + timestamp
+                            "SMS part #"
+                                    + messageIndex
+                                    + " rejected: "
+                                    + "older than 36 hours. "
+                                    + "timestamp="
+                                    + timestamp
+                                    + ", cutoff="
+                                    + cutoff
                     );
 
                     continue;
@@ -256,9 +457,14 @@ public class SmsReceiver extends BroadcastReceiver {
 
                     Log.w(
                             TAG,
-                            "Ignoring future SMS. " +
-                            "timestamp=" + timestamp +
-                            ", now=" + now
+                            "SMS part #"
+                                    + messageIndex
+                                    + " rejected: "
+                                    + "future timestamp. "
+                                    + "timestamp="
+                                    + timestamp
+                                    + ", now="
+                                    + now
                     );
 
                     continue;
@@ -271,41 +477,128 @@ public class SmsReceiver extends BroadcastReceiver {
                                 body
                         )
                 );
+
+                Log.i(
+                        TAG,
+                        "SMS part #"
+                                + messageIndex
+                                + " accepted."
+                );
             }
 
+            /*
+             * =================================================
+             * STAGE 7
+             * =================================================
+             */
             if (parts.isEmpty()) {
 
-                Log.d(
+                Log.w(
                         TAG,
-                        "No usable SMS parts found."
+                        "STOP: Broadcast was received, but " +
+                        "zero usable SMS parts passed validation."
+                );
+
+                return;
+            }
+
+            Log.i(
+                    TAG,
+                    "Usable SMS parts="
+                            + parts.size()
+            );
+
+            /*
+             * =================================================
+             * STAGE 8
+             * =================================================
+             *
+             * Combine multipart messages.
+             */
+            List<CombinedSms> combinedMessages =
+                    combineParts(
+                            parts
+                    );
+
+            Log.i(
+                    TAG,
+                    "Combined logical SMS messages="
+                            + combinedMessages.size()
+            );
+
+            if (combinedMessages.isEmpty()) {
+
+                Log.w(
+                        TAG,
+                        "STOP: No logical SMS remained after " +
+                        "multipart combination."
                 );
 
                 return;
             }
 
             /*
-             * Combine multipart messages.
+             * =================================================
+             * STAGE 9
+             * =================================================
+             *
+             * Persist each SMS into SQLite.
              */
-            List<CombinedSms> combinedMessages =
-                    combineParts(parts);
-
             int insertedCount = 0;
+            int duplicateCount = 0;
 
-            for (CombinedSms sms : combinedMessages) {
+            for (
+                    CombinedSms sms :
+                    combinedMessages
+            ) {
 
-                /*
-                 * Re-check the 36-hour window after combining.
-                 */
+                Log.i(
+                        TAG,
+                        "Preparing SMS for local queue: "
+                                + "address="
+                                + sms.address
+                                + ", "
+                                + "timestamp="
+                                + sms.timestamp
+                                + ", "
+                                + "bodyLength="
+                                + (sms.body == null
+                                ? 0
+                                : sms.body.length())
+                );
+
                 if (sms.timestamp < cutoff) {
+
+                    Log.w(
+                            TAG,
+                            "Skipping combined SMS: "
+                                    + "older than 36 hours."
+                    );
+
                     continue;
                 }
 
                 if (sms.timestamp > now) {
+
+                    Log.w(
+                            TAG,
+                            "Skipping combined SMS: "
+                                    + "future timestamp."
+                    );
+
                     continue;
                 }
 
-                if (sms.body == null ||
-                        sms.body.trim().isEmpty()) {
+                if (
+                        sms.body == null ||
+                        sms.body.trim().isEmpty()
+                ) {
+
+                    Log.w(
+                            TAG,
+                            "Skipping combined SMS: empty body."
+                    );
+
                     continue;
                 }
 
@@ -315,6 +608,22 @@ public class SmsReceiver extends BroadcastReceiver {
                                 sms.timestamp,
                                 sms.body
                         );
+
+                Log.i(
+                        TAG,
+                        "Generated local SMS ID="
+                                + id
+                );
+
+                /*
+                 * =================================================
+                 * ACTUAL SQLITE INSERT
+                 * =================================================
+                 */
+                Log.i(
+                        TAG,
+                        "Attempting SmsQueueStore.insertIfMissing()..."
+                );
 
                 boolean inserted =
                         store.insertIfMissing(
@@ -331,79 +640,152 @@ public class SmsReceiver extends BroadcastReceiver {
 
                     Log.i(
                             TAG,
-                            "Incoming SMS queued. " +
-                            "id=" + id +
-                            ", address=" + sms.address +
-                            ", timestamp=" + sms.timestamp
+                            "SUCCESS: SMS INSERTED INTO LOCAL QUEUE. "
+                                    + "id="
+                                    + id
                     );
 
                 } else {
 
-                    Log.d(
+                    duplicateCount++;
+
+                    Log.i(
                             TAG,
-                            "SMS already exists in local queue. " +
-                            "id=" + id
+                            "SMS WAS NOT INSERTED BECAUSE IT " +
+                            "ALREADY EXISTS IN LOCAL QUEUE. "
+                                    + "id="
+                                    + id
                     );
                 }
             }
 
+            Log.i(
+                    TAG,
+                    "Queue persistence complete. "
+                            + "inserted="
+                            + insertedCount
+                            + ", duplicates="
+                            + duplicateCount
+            );
+
             /*
-             * Wake the processing worker whenever we received
-             * something that could be processed.
+             * =================================================
+             * STAGE 10
+             * =================================================
              *
-             * WorkManager's ExistingWorkPolicy.KEEP prevents
-             * multiple immediate workers from being created
-             * simultaneously.
+             * Wake the processing worker.
              */
             if (insertedCount > 0) {
 
-                SmsProcessingWorker.enqueueNow(
-                        appContext
-                );
-
-                /*
-                 * Also make sure the periodic recovery worker
-                 * exists.
-                 *
-                 * This is safe to call repeatedly because the
-                 * worker uses ExistingPeriodicWorkPolicy.KEEP.
-                 */
-                SmsProcessingWorker.schedule(
-                        appContext
-                );
-
                 Log.i(
                         TAG,
-                        "Queued " +
-                        insertedCount +
-                        " new SMS message(s). " +
-                        "Processing worker enqueued."
+                        "Attempting to enqueue SmsProcessingWorker..."
                 );
+
+                try {
+
+                    SmsProcessingWorker.enqueueNow(
+                            appContext
+                    );
+
+                    Log.i(
+                            TAG,
+                            "SUCCESS: SmsProcessingWorker.enqueueNow() " +
+                            "completed."
+                    );
+
+                } catch (Exception workerException) {
+
+                    Log.e(
+                            TAG,
+                            "ERROR: SmsProcessingWorker.enqueueNow() " +
+                            "failed.",
+                            workerException
+                    );
+                }
+
+                /*
+                 * Make sure the periodic safety net remains
+                 * scheduled.
+                 */
+                try {
+
+                    Log.i(
+                            TAG,
+                            "Ensuring periodic SMS worker is scheduled..."
+                    );
+
+                    SmsProcessingWorker.schedule(
+                            appContext
+                    );
+
+                    Log.i(
+                            TAG,
+                            "SUCCESS: Periodic SMS worker schedule " +
+                            "completed."
+                    );
+
+                } catch (Exception scheduleException) {
+
+                    Log.e(
+                            TAG,
+                            "ERROR: Failed to schedule periodic " +
+                            "SMS worker.",
+                            scheduleException
+                    );
+                }
 
             } else {
 
-                Log.d(
+                Log.i(
                         TAG,
-                        "No new SMS inserted."
+                        "No newly inserted SMS. Worker was not " +
+                        "explicitly enqueued by this receiver."
                 );
             }
+
+            /*
+             * =================================================
+             * COMPLETE
+             * =================================================
+             */
+            Log.i(
+                    TAG,
+                    "SMS RECEIVER COMPLETE. "
+                            + "inserted="
+                            + insertedCount
+                            + ", duplicates="
+                            + duplicateCount
+            );
 
         } catch (Exception e) {
 
             /*
-             * IMPORTANT:
+             * This catches failures anywhere in the receiver
+             * pipeline.
              *
-             * Never allow a malformed SMS or an unexpected
-             * decoding/storage exception to crash the entire
-             * broadcast receiver.
+             * Most importantly, the initial "SMS RECEIVER
+             * INVOKED" message has already been logged, so we
+             * can distinguish:
              *
-             * The reconciliation path can recover SMS messages
-             * later from Android's inbox.
+             *     receiver never invoked
+             *
+             * from:
+             *
+             *     receiver invoked but failed internally.
              */
             Log.e(
                     TAG,
-                    "Failed to capture incoming SMS.",
+                    "FATAL RECEIVER ERROR: Failed to capture " +
+                    "incoming SMS.",
                     e
+            );
+
+        } finally {
+
+            Log.i(
+                    TAG,
+                    "=================================================="
             );
         }
     }
@@ -411,25 +793,18 @@ public class SmsReceiver extends BroadcastReceiver {
     /**
      * Combines SMS parts that belong to the same logical message.
      *
-     * Android normally delivers multipart SMS parts with the same:
+     * Android normally supplies multipart parts in their
+     * appropriate order.
      *
-     *     sender
-     *     timestamp
-     *
-     * We preserve the incoming order supplied by Android.
-     *
-     * If the same sender/timestamp appears more than once, the
-     * bodies are concatenated.
+     * Since the broadcast does not reliably expose a portable
+     * multipart sequence number through this code path, we retain
+     * Android's supplied order rather than pretending to sort by
+     * information we do not have.
      */
     private static List<CombinedSms> combineParts(
             List<SmsPart> parts
     ) {
 
-        /*
-         * LinkedHashMap would preserve insertion order, but using
-         * a normal HashMap followed by deterministic sorting makes
-         * the final result explicit.
-         */
         Map<String, List<SmsPart>> grouped =
                 new HashMap<>();
 
@@ -459,42 +834,35 @@ public class SmsReceiver extends BroadcastReceiver {
         List<CombinedSms> result =
                 new ArrayList<>();
 
-        for (List<SmsPart> group : grouped.values()) {
+        for (
+                List<SmsPart> group :
+                grouped.values()
+        ) {
 
             if (group.isEmpty()) {
                 continue;
             }
 
             /*
-             * Android generally already supplies parts in order.
+             * Do NOT use a fake comparator returning 0.
              *
-             * This sort is deterministic but does not attempt to
-             * invent a multipart sequence number that may not be
-             * available from the broadcast.
+             * The Android broadcast order is retained.
              */
-            Collections.sort(
-                    group,
-                    new Comparator<SmsPart>() {
-                        @Override
-                        public int compare(
-                                SmsPart first,
-                                SmsPart second
-                        ) {
-                            return 0;
-                        }
-                    }
-            );
-
             StringBuilder body =
                     new StringBuilder();
 
             SmsPart first =
                     group.get(0);
 
-            for (SmsPart part : group) {
+            for (
+                    SmsPart part :
+                    group
+            ) {
 
-                if (part.body == null ||
-                        part.body.isEmpty()) {
+                if (
+                        part.body == null ||
+                        part.body.isEmpty()
+                ) {
                     continue;
                 }
 
@@ -520,16 +888,18 @@ public class SmsReceiver extends BroadcastReceiver {
         }
 
         /*
-         * Oldest first makes processing/recovery deterministic.
+         * Process logical SMS oldest first.
          */
         Collections.sort(
                 result,
                 new Comparator<CombinedSms>() {
+
                     @Override
                     public int compare(
                             CombinedSms first,
                             CombinedSms second
                     ) {
+
                         return Long.compare(
                                 first.timestamp,
                                 second.timestamp
@@ -542,20 +912,9 @@ public class SmsReceiver extends BroadcastReceiver {
     }
 
     /**
-     * Normalize sender addresses without changing their identity.
+     * Preserve the sender exactly as Android reported it.
      *
-     * We deliberately do NOT convert Kenyan numbers here from:
-     *
-     *     07xxxxxxxx
-     *
-     * to:
-     *
-     *     +2547xxxxxxxx
-     *
-     * because the SMS parser/backend already has its own phone
-     * normalization rules.
-     *
-     * The receiver should preserve what Android actually reported.
+     * Phone normalization happens elsewhere.
      */
     private static String normalizeAddress(
             String address
@@ -570,21 +929,6 @@ public class SmsReceiver extends BroadcastReceiver {
 
     /**
      * Generates a deterministic ID for an SMS.
-     *
-     * SHA-256 is used instead of String.hashCode() because
-     * hashCode() is only 32-bit and collisions are possible.
-     *
-     * The ID is stable for the same:
-     *
-     *     sender
-     *     timestamp
-     *     body
-     *
-     * This is useful for:
-     *
-     * - local deduplication
-     * - backend idempotency
-     * - receiver/recovery reconciliation
      */
     private static String createStableSmsId(
             String address,
@@ -634,11 +978,9 @@ public class SmsReceiver extends BroadcastReceiver {
         } catch (Exception e) {
 
             /*
-             * SHA-256 is guaranteed by Android, so reaching here
-             * would be extremely unusual.
+             * SHA-256 should always be available on Android.
              *
-             * Still provide a deterministic fallback rather than
-             * dropping the SMS.
+             * Keep a deterministic fallback anyway.
              */
             return "sms-" +
                     Integer.toHexString(
