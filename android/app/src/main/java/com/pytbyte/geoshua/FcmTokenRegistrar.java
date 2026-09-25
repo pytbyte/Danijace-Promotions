@@ -34,12 +34,44 @@ import java.util.concurrent.TimeUnit;
  * GEO-SHUA FCM TOKEN REGISTRAR
  * =========================================================
  *
- * Registers this Android installation and its Firebase
- * Cloud Messaging token with the GEO-SHUA backend.
+ * Registers this Android installation and its Firebase Cloud
+ * Messaging token with the GEO-SHUA backend.
  *
- * The registered device/token is used by the backend to
- * wake the Android SMS outbox worker when new outgoing SMS
- * messages are queued.
+ * The registered device/token is used by the backend to wake
+ * the Android SMS outbox worker when new outgoing SMS messages
+ * are queued.
+ *
+ * IMPORTANT:
+ *
+ * The backend is the source of truth for device registration.
+ *
+ * This class deliberately does NOT maintain a local
+ * "already registered" device/token flag.
+ *
+ * Why?
+ *
+ * A device may have previously registered successfully and
+ * the corresponding MongoDB document may later be deleted,
+ * disabled, or otherwise removed.
+ *
+ * Local SharedPreferences cannot know that.
+ *
+ * Therefore every registration attempt sends the current
+ * device ID + current FCM token to the backend.
+ *
+ * The backend uses an upsert:
+ *
+ *     { upsert: true }
+ *
+ * so an existing device is updated and a deleted device is
+ * recreated automatically.
+ *
+ * Device identity ALWAYS comes from:
+ *
+ *     SmsOutboxWorker.getDeviceId(context)
+ *
+ * This ensures that FCM registration and SMS outbox processing
+ * use exactly the same stable device identity.
  *
  * This class is independent of:
  *
@@ -47,13 +79,6 @@ import java.util.concurrent.TimeUnit;
  *   - WebView
  *   - Capacitor
  *   - JavaScript
- *
- * Device identity ALWAYS comes from:
- *
- *     SmsOutboxWorker.getDeviceId(context)
- *
- * This ensures that the device ID used for FCM registration
- * is exactly the same device ID used by SmsOutboxWorker.
  *
  * =========================================================
  */
@@ -83,20 +108,25 @@ public final class FcmTokenRegistrar {
             30_000;
 
     /* =====================================================
-       LOCAL STATE
+       LOCAL TOKEN STORAGE
     ===================================================== */
 
+    /**
+     * We only persist the latest Firebase token.
+     *
+     * We intentionally do NOT persist:
+     *
+     *     registered_device_id
+     *     registered_token
+     *
+     * because those values created a local registration cache
+     * that could become inconsistent with MongoDB.
+     */
     private static final String PREFS_NAME =
             "geoshua_fcm_registration";
 
     private static final String TOKEN_KEY =
             "fcm_token";
-
-    private static final String REGISTERED_DEVICE_ID_KEY =
-            "registered_device_id";
-
-    private static final String REGISTERED_TOKEN_KEY =
-            "registered_token";
 
     /* =====================================================
        WORKMANAGER
@@ -112,8 +142,8 @@ public final class FcmTokenRegistrar {
     /**
      * Used for immediate backend registration.
      *
-     * WorkManager handles durable retries when the immediate
-     * request fails.
+     * WorkManager provides durable retry behavior when the
+     * immediate request fails.
      */
     private static final ExecutorService EXECUTOR =
             Executors.newSingleThreadExecutor();
@@ -132,18 +162,17 @@ public final class FcmTokenRegistrar {
     /**
      * Register the current Firebase installation.
      *
-     * This is the method MainActivity calls:
+     * MainActivity can safely call:
      *
      *     FcmTokenRegistrar.register(this);
      *
-     * It is safe to call repeatedly.
+     * repeatedly.
      *
-     * Firebase returns the current token. If that token has
-     * already been registered for this exact device ID,
-     * no unnecessary backend registration is performed.
+     * Every successful Firebase token retrieval results in a
+     * backend registration attempt.
      *
-     * If registration fails, WorkManager is scheduled by
-     * the existing retry mechanism.
+     * There is deliberately NO local "already registered"
+     * check here.
      */
     public static void register(
             @NonNull Context context
@@ -153,7 +182,7 @@ public final class FcmTokenRegistrar {
 
             Log.e(
                     TAG,
-                    "Cannot register FCM device: context is null"
+                    "REGISTER FAILED: context is null"
             );
 
             return;
@@ -162,16 +191,11 @@ public final class FcmTokenRegistrar {
         final Context appContext =
                 context.getApplicationContext();
 
-        /*
-         * Ask Firebase for the current token.
-         *
-         * This also covers:
-         *
-         * - first installation
-         * - token refreshes
-         * - app reinstall
-         * - cases where onNewToken() was not observed
-         */
+        Log.d(
+                TAG,
+                "REGISTER STARTED"
+        );
+
         requestCurrentFirebaseToken(
                 appContext
         );
@@ -188,8 +212,10 @@ public final class FcmTokenRegistrar {
      *
      *     GeoShuaFirebaseMessagingService.onNewToken()
      *
-     * It may also be called internally after Firebase
-     * returns the current token.
+     * and internally after Firebase returns the current
+     * token.
+     *
+     * Every invocation attempts backend registration.
      */
     public static void registerToken(
             Context context,
@@ -200,7 +226,7 @@ public final class FcmTokenRegistrar {
 
             Log.e(
                     TAG,
-                    "Cannot register FCM token: context is null"
+                    "REGISTER TOKEN FAILED: context is null"
             );
 
             return;
@@ -213,7 +239,7 @@ public final class FcmTokenRegistrar {
 
             Log.e(
                     TAG,
-                    "Cannot register FCM token: token is empty"
+                    "REGISTER TOKEN FAILED: token is empty"
             );
 
             return;
@@ -226,36 +252,32 @@ public final class FcmTokenRegistrar {
                 token.trim();
 
         /*
-         * Always persist the latest Firebase token before
-         * attempting network registration.
+         * Persist the latest Firebase token.
          */
         saveToken(
                 appContext,
                 cleanToken
         );
 
-        /*
-         * If this exact device/token pair has already been
-         * successfully registered, there is nothing else
-         * to do.
-         */
-        if (
-                isRegistered(
-                        appContext,
-                        cleanToken
-                )
-        ) {
+        Log.d(
+                TAG,
+                "FCM TOKEN RECEIVED"
+        );
 
-            Log.d(
-                    TAG,
-                    "FCM token is already registered"
-            );
-
-            return;
-        }
+        Log.d(
+                TAG,
+                "FCM token length=" +
+                        cleanToken.length()
+        );
 
         /*
-         * Attempt registration immediately.
+         * Do NOT check whether this token was previously
+         * registered.
+         *
+         * The backend is the source of truth.
+         *
+         * This allows a deleted MongoDB device document to be
+         * recreated automatically.
          */
         EXECUTOR.execute(
                 () -> registerWithBackend(
@@ -274,15 +296,24 @@ public final class FcmTokenRegistrar {
             String token
     ) {
 
+        if (context == null) {
+            return;
+        }
+
         try {
+
+            Log.d(
+                    TAG,
+                    "Preparing backend device registration"
+            );
 
             /*
              * IMPORTANT:
              *
-             * Never generate a second device ID here.
+             * Never generate another device ID here.
              *
-             * FCM registration and SMS outbox must use the
-             * exact same stable device identity.
+             * FCM registration and SMS outbox processing must
+             * use the exact same stable device identity.
              */
             String deviceId =
                     SmsOutboxWorker.getDeviceId(
@@ -296,7 +327,7 @@ public final class FcmTokenRegistrar {
 
                 Log.e(
                         TAG,
-                        "Unable to register FCM token: device ID is empty"
+                        "REGISTRATION FAILED: device ID is empty"
                 );
 
                 scheduleRetry(
@@ -306,19 +337,14 @@ public final class FcmTokenRegistrar {
                 return;
             }
 
-            /*
-             * Another registration may have succeeded while
-             * this request was running.
-             */
-            if (
-                    isRegistered(
-                            context,
-                            token
-                    )
-            ) {
+            deviceId =
+                    deviceId.trim();
 
-                return;
-            }
+            Log.d(
+                    TAG,
+                    "Device ID resolved: " +
+                            deviceId
+            );
 
             JSONObject body =
                     new JSONObject();
@@ -338,6 +364,17 @@ public final class FcmTokenRegistrar {
                     "android"
             );
 
+            Log.d(
+                    TAG,
+                    "Sending device registration request"
+            );
+
+            Log.d(
+                    TAG,
+                    "Registration URL: " +
+                            DEVICE_REGISTRATION_URL
+            );
+
             HttpResponse response =
                     postJson(
                             DEVICE_REGISTRATION_URL,
@@ -353,17 +390,30 @@ public final class FcmTokenRegistrar {
                     response.statusCode < 300
             ) {
 
-                markRegistered(
-                        context,
-                        deviceId,
-                        token
+                Log.d(
+                        TAG,
+                        "REGISTRATION SUCCESS"
                 );
 
                 Log.d(
                         TAG,
-                        "FCM device registration successful"
+                        "HTTP status=" +
+                                response.statusCode
                 );
 
+                Log.d(
+                        TAG,
+                        "Backend response=" +
+                                safeResponse(
+                                        response.body
+                                )
+                );
+
+                /*
+                 * Do NOT store a local "registered" flag.
+                 *
+                 * The backend remains the source of truth.
+                 */
                 return;
             }
 
@@ -373,9 +423,18 @@ public final class FcmTokenRegistrar {
 
             Log.e(
                     TAG,
-                    "FCM device registration failed. HTTP " +
-                            response.statusCode +
-                            " response=" +
+                    "REGISTRATION FAILED"
+            );
+
+            Log.e(
+                    TAG,
+                    "HTTP status=" +
+                            response.statusCode
+            );
+
+            Log.e(
+                    TAG,
+                    "Backend response=" +
                             safeResponse(
                                     response.body
                             )
@@ -388,15 +447,14 @@ public final class FcmTokenRegistrar {
         } catch (Exception exception) {
 
             /*
-             * Network failure, timeout, DNS failure, etc.
+             * Network failure, timeout, DNS failure, malformed
+             * response, etc.
              *
-             * The token remains persisted.
-             *
-             * WorkManager will retry registration.
+             * WorkManager will retry the registration.
              */
             Log.e(
                     TAG,
-                    "FCM device registration error",
+                    "REGISTRATION EXCEPTION",
                     exception
             );
 
@@ -411,15 +469,26 @@ public final class FcmTokenRegistrar {
     ===================================================== */
 
     /**
-     * Register a previously persisted Firebase token.
+     * Register the most recently persisted Firebase token.
      *
-     * Useful during startup and from the background worker.
+     * This method does NOT perform a local registration check.
+     *
+     * If the token exists, it is always sent to the backend.
+     *
+     * If no token exists, Firebase is queried for the current
+     * token.
      */
     public static void registerSavedToken(
             Context context
     ) {
 
         if (context == null) {
+
+            Log.e(
+                    TAG,
+                    "REGISTER SAVED TOKEN FAILED: context is null"
+            );
+
             return;
         }
 
@@ -442,11 +511,11 @@ public final class FcmTokenRegistrar {
                 token.trim().isEmpty()
         ) {
 
-            /*
-             * No token has been persisted yet.
-             *
-             * Ask Firebase for the current token.
-             */
+            Log.d(
+                    TAG,
+                    "No saved FCM token. Requesting current Firebase token."
+            );
+
             requestCurrentFirebaseToken(
                     appContext
             );
@@ -457,16 +526,17 @@ public final class FcmTokenRegistrar {
         String cleanToken =
                 token.trim();
 
-        if (
-                isRegistered(
-                        appContext,
-                        cleanToken
-                )
-        ) {
+        Log.d(
+                TAG,
+                "Saved FCM token found. Registering with backend."
+        );
 
-            return;
-        }
-
+        /*
+         * Do not call isRegistered().
+         *
+         * Always allow the backend to confirm or recreate the
+         * device registration.
+         */
         registerToken(
                 appContext,
                 cleanToken
@@ -496,6 +566,11 @@ public final class FcmTokenRegistrar {
         final Context appContext =
                 context.getApplicationContext();
 
+        Log.d(
+                TAG,
+                "Requesting current FCM token from Firebase"
+        );
+
         FirebaseMessaging
                 .getInstance()
                 .getToken()
@@ -506,14 +581,10 @@ public final class FcmTokenRegistrar {
 
                                 Log.e(
                                         TAG,
-                                        "Unable to obtain current FCM token",
+                                        "FCM TOKEN REQUEST FAILED",
                                         task.getException()
                                 );
 
-                                /*
-                                 * The token may become available
-                                 * later. Keep registration durable.
-                                 */
                                 scheduleRetry(
                                         appContext
                                 );
@@ -531,7 +602,7 @@ public final class FcmTokenRegistrar {
 
                                 Log.e(
                                         TAG,
-                                        "Firebase returned an empty FCM token"
+                                        "FCM TOKEN REQUEST FAILED: Firebase returned empty token"
                                 );
 
                                 scheduleRetry(
@@ -540,6 +611,11 @@ public final class FcmTokenRegistrar {
 
                                 return;
                             }
+
+                            Log.d(
+                                    TAG,
+                                    "FCM TOKEN REQUEST SUCCESS"
+                            );
 
                             registerToken(
                                     appContext,
@@ -592,8 +668,8 @@ public final class FcmTokenRegistrar {
                         .build();
 
         /*
-         * KEEP prevents repeated failures from creating
-         * many simultaneous registration workers.
+         * KEEP prevents multiple simultaneous registration
+         * workers from accumulating.
          */
         WorkManager
                 .getInstance(
@@ -612,65 +688,6 @@ public final class FcmTokenRegistrar {
     }
 
     /* =====================================================
-       CHECK REGISTRATION
-    ===================================================== */
-
-    /**
-     * Returns true only when both:
-     *
-     *   - device ID matches
-     *   - FCM token matches
-     *
-     * the last successfully registered pair.
-     */
-    public static boolean isRegistered(
-            Context context,
-            String token
-    ) {
-
-        if (
-                context == null ||
-                token == null ||
-                token.trim().isEmpty()
-        ) {
-
-            return false;
-        }
-
-        Context appContext =
-                context.getApplicationContext();
-
-        SharedPreferences preferences =
-                getPreferences(
-                        appContext
-                );
-
-        String deviceId =
-                SmsOutboxWorker.getDeviceId(
-                        appContext
-                );
-
-        String registeredDeviceId =
-                preferences.getString(
-                        REGISTERED_DEVICE_ID_KEY,
-                        null
-                );
-
-        String registeredToken =
-                preferences.getString(
-                        REGISTERED_TOKEN_KEY,
-                        null
-                );
-
-        return deviceId.equals(
-                registeredDeviceId
-        ) &&
-                token.trim().equals(
-                        registeredToken
-                );
-    }
-
-    /* =====================================================
        SAVE TOKEN
     ===================================================== */
 
@@ -685,31 +702,6 @@ public final class FcmTokenRegistrar {
                 .edit()
                 .putString(
                         TOKEN_KEY,
-                        token
-                )
-                .apply();
-    }
-
-    /* =====================================================
-       MARK REGISTERED
-    ===================================================== */
-
-    private static void markRegistered(
-            Context context,
-            String deviceId,
-            String token
-    ) {
-
-        getPreferences(
-                context
-        )
-                .edit()
-                .putString(
-                        REGISTERED_DEVICE_ID_KEY,
-                        deviceId
-                )
-                .putString(
-                        REGISTERED_TOKEN_KEY,
                         token
                 )
                 .apply();
@@ -786,7 +778,7 @@ public final class FcmTokenRegistrar {
 
             /*
              * Same worker authentication used by the SMS
-             * outbox system.
+             * outbox backend.
              */
             connection.setRequestProperty(
                     WORKER_TOKEN_HEADER,
@@ -799,6 +791,11 @@ public final class FcmTokenRegistrar {
                                     StandardCharsets.UTF_8
                             );
 
+            Log.d(
+                    TAG,
+                    "Opening registration HTTP connection"
+            );
+
             try (
                     OutputStream output =
                             connection.getOutputStream()
@@ -810,6 +807,11 @@ public final class FcmTokenRegistrar {
 
                 output.flush();
             }
+
+            Log.d(
+                    TAG,
+                    "Registration request sent. Waiting for response."
+            );
 
             int statusCode =
                     connection.getResponseCode();
@@ -893,6 +895,11 @@ public final class FcmTokenRegistrar {
        SAFE RESPONSE
     ===================================================== */
 
+    /**
+     * Prevent enormous server responses from flooding Logcat.
+     *
+     * We deliberately do not log the FCM token itself.
+     */
     private static String safeResponse(
             String response
     ) {
@@ -951,8 +958,14 @@ public final class FcmTokenRegistrar {
      *
      * This worker does NOT send SMS.
      *
-     * It only ensures that the Android installation's
-     * current FCM token is registered with GEO-SHUA.
+     * It only ensures that the Android installation's current
+     * FCM token is registered with GEO-SHUA.
+     *
+     * IMPORTANT:
+     *
+     * There is deliberately NO local isRegistered() check.
+     *
+     * The worker always sends the token to the backend.
      */
     public static class FcmRegistrationWorker
             extends Worker {
@@ -975,6 +988,11 @@ public final class FcmTokenRegistrar {
             Context context =
                     getApplicationContext();
 
+            Log.d(
+                    TAG,
+                    "BACKGROUND REGISTRATION WORKER STARTED"
+            );
+
             try {
 
                 SharedPreferences preferences =
@@ -992,14 +1010,16 @@ public final class FcmTokenRegistrar {
                  * No locally saved token.
                  *
                  * Ask Firebase for the current token.
-                 *
-                 * The Firebase callback will eventually call
-                 * registerToken().
                  */
                 if (
                         token == null ||
                         token.trim().isEmpty()
                 ) {
+
+                    Log.d(
+                            TAG,
+                            "Background registration: no saved token. Requesting Firebase token."
+                    );
 
                     requestCurrentFirebaseToken(
                             context
@@ -1008,28 +1028,14 @@ public final class FcmTokenRegistrar {
                     /*
                      * Firebase token retrieval is asynchronous.
                      *
-                     * Do not retry immediately here because the
-                     * callback itself will schedule another retry
-                     * if Firebase fails.
+                     * The callback will handle registration or
+                     * schedule another retry if Firebase fails.
                      */
                     return Result.success();
                 }
 
                 token =
                         token.trim();
-
-                /*
-                 * Already registered for this exact device/token.
-                 */
-                if (
-                        isRegistered(
-                                context,
-                                token
-                        )
-                ) {
-
-                    return Result.success();
-                }
 
                 /*
                  * Device ID must remain identical to the ID used
@@ -1047,11 +1053,20 @@ public final class FcmTokenRegistrar {
 
                     Log.e(
                             TAG,
-                            "Background registration: device ID is empty"
+                            "BACKGROUND REGISTRATION FAILED: device ID is empty"
                     );
 
                     return Result.retry();
                 }
+
+                deviceId =
+                        deviceId.trim();
+
+                Log.d(
+                        TAG,
+                        "Background registration device ID: " +
+                                deviceId
+                );
 
                 JSONObject body =
                         new JSONObject();
@@ -1071,6 +1086,11 @@ public final class FcmTokenRegistrar {
                         "android"
                 );
 
+                Log.d(
+                        TAG,
+                        "Background registration sending HTTP request"
+                );
+
                 HttpResponse response =
                         postJson(
                                 DEVICE_REGISTRATION_URL,
@@ -1086,15 +1106,23 @@ public final class FcmTokenRegistrar {
                         response.statusCode < 300
                 ) {
 
-                    markRegistered(
-                            context,
-                            deviceId,
-                            token
+                    Log.d(
+                            TAG,
+                            "BACKGROUND REGISTRATION SUCCESS"
                     );
 
                     Log.d(
                             TAG,
-                            "Background FCM registration successful"
+                            "HTTP status=" +
+                                    response.statusCode
+                    );
+
+                    Log.d(
+                            TAG,
+                            "Backend response=" +
+                                    safeResponse(
+                                            response.body
+                                    )
                     );
 
                     return Result.success();
@@ -1102,9 +1130,18 @@ public final class FcmTokenRegistrar {
 
                 Log.e(
                         TAG,
-                        "Background FCM registration failed. HTTP " +
-                                response.statusCode +
-                                " response=" +
+                        "BACKGROUND REGISTRATION FAILED"
+                );
+
+                Log.e(
+                        TAG,
+                        "HTTP status=" +
+                                response.statusCode
+                );
+
+                Log.e(
+                        TAG,
+                        "Backend response=" +
                                 safeResponse(
                                         response.body
                                 )
@@ -1116,7 +1153,7 @@ public final class FcmTokenRegistrar {
 
                 Log.e(
                         TAG,
-                        "Background FCM registration error",
+                        "BACKGROUND REGISTRATION EXCEPTION",
                         exception
                 );
 
@@ -1125,3 +1162,4 @@ public final class FcmTokenRegistrar {
         }
     }
 }
+
