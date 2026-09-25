@@ -1,14 +1,10 @@
 package com.pytbyte.geoshua;
 
 import android.Manifest;
-import android.content.ContentValues;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
 import android.net.Uri;
-import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.core.content.ContextCompat;
@@ -22,8 +18,9 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 
 /**
  * =========================================================
@@ -31,28 +28,100 @@ import java.util.Set;
  * SMS READER
  * =========================================================
  *
- * Responsibilities:
+ * RECOVERY / RECONCILIATION PATH
  *
- * 1. Receive SMS continuously through SmsReceiver.
- * 2. Persist every received SMS locally.
- * 3. Never depend on the Capacitor WebView being open.
- * 4. Reconcile against the Android inbox.
- * 5. Never process SMS older than 36 hours.
- * 6. Keep locally queued SMS until JavaScript confirms processing.
+ * This plugin reads the Android SMS inbox as a recovery
+ * mechanism for SMS that may not have been captured by the
+ * primary SmsReceiver.
  *
- * Important:
+ * PRIMARY PATH
  *
- * The SMS_RECEIVED receiver stores the message immediately.
+ *     SMS arrives
+ *          |
+ *          v
+ *     SmsReceiver
+ *          |
+ *          v
+ *     SmsQueueStore
+ *          |
+ *          v
+ *     SmsProcessingWorker
  *
- * It does NOT:
+ *
+ * RECOVERY PATH
+ *
+ *     readInbox()
+ *          |
+ *          v
+ *     Android SMS inbox
+ *          |
+ *          v
+ *     last 36 hours only
+ *          |
+ *          v
+ *     SmsQueueStore
+ *
+ *
+ * =========================================================
+ * SHARED STORAGE
+ * =========================================================
+ *
+ * This class deliberately does NOT contain its own SQLite
+ * implementation.
+ *
+ * All SMS paths use:
+ *
+ *     SmsQueueStore
+ *
+ * which owns:
+ *
+ *     geoshua_sms.db
+ *     sms_queue
+ *
+ * This prevents the receiver, worker and reconciliation
+ * plugin from accidentally using different databases or
+ * schemas.
+ *
+ *
+ * =========================================================
+ * IMPORTANT
+ * =========================================================
+ *
+ * This class does NOT:
+ *
+ * - receive SMS broadcasts
  * - call the backend
+ * - parse bank SMS
  * - perform financial processing
- * - depend on JavaScript
- * - depend on the WebView
- * - depend on FCM
  *
- * This makes SMS capture independent from the rest of the
- * GEO-SHUA application.
+ * Those responsibilities belong to:
+ *
+ *     SmsReceiver
+ *     SmsProcessingWorker
+ *     backend /api/sms/process
+ *
+ *
+ * The plugin only:
+ *
+ * - reconciles the Android inbox
+ * - exposes pending queue entries to JavaScript
+ * - acknowledges processed queue entries
+ * - reports pending count
+ *
+ *
+ * =========================================================
+ * 36-HOUR RULE
+ * =========================================================
+ *
+ * Only SMS satisfying:
+ *
+ *     now - 36 hours <= smsDate <= now
+ *
+ * are eligible.
+ *
+ * Older local queue entries are removed.
+ *
+ * Older Android inbox messages are never queried.
  */
 @CapacitorPlugin(
     name = "SmsReader",
@@ -71,18 +140,29 @@ public class SmsReaderPlugin extends Plugin {
     private static final String TAG =
         "GeoShuaSmsReader";
 
+    /*
+     * Android inbox provider.
+     */
     private static final String SMS_INBOX_URI =
         "content://sms/inbox";
 
-    /**
+    /*
      * Exactly 36 hours.
-     *
-     * SMS older than this must never be returned for processing.
      */
     private static final long THIRTY_SIX_HOURS_MS =
         36L * 60L * 60L * 1000L;
 
-    private SmsStore smsStore;
+    /*
+     * Shared local SMS queue.
+     *
+     * IMPORTANT:
+     *
+     * Do not replace this with another SQLiteOpenHelper.
+     *
+     * SmsReceiver and SmsProcessingWorker use the same store.
+     */
+    private SmsQueueStore smsStore;
+
 
     /* =========================================================
        LIFECYCLE
@@ -90,13 +170,10 @@ public class SmsReaderPlugin extends Plugin {
 
     @Override
     public void load() {
+
         super.load();
 
-        Context context = getContext();
-
-        if (context != null) {
-            smsStore = new SmsStore(context.getApplicationContext());
-        }
+        ensureStore();
 
         Log.d(
             TAG,
@@ -104,10 +181,18 @@ public class SmsReaderPlugin extends Plugin {
         );
     }
 
+
     /* =========================================================
-       READ SMS
+       READ / RECONCILE SMS
     ========================================================= */
 
+    /**
+     * Reads the Android SMS inbox as a recovery mechanism.
+     *
+     * Only the previous 36 hours are queried.
+     *
+     * The Android inbox itself is never scanned historically.
+     */
     @PluginMethod
     public void readInbox(
         PluginCall call
@@ -118,7 +203,8 @@ public class SmsReaderPlugin extends Plugin {
             "========== READ SMS START =========="
         );
 
-        Context context = getContext();
+        Context context =
+            getContext();
 
         if (context == null) {
 
@@ -133,6 +219,12 @@ public class SmsReaderPlugin extends Plugin {
             return;
         }
 
+        /*
+         * The reconciliation path requires READ_SMS.
+         *
+         * RECEIVE_SMS is also required because the application
+         * uses the SMS_RECEIVED broadcast through SmsReceiver.
+         */
         if (!hasSmsPermissions(context)) {
 
             Log.d(
@@ -171,6 +263,7 @@ public class SmsReaderPlugin extends Plugin {
         readSms(call);
     }
 
+
     /* =========================================================
        PERMISSION CALLBACK
     ========================================================= */
@@ -185,7 +278,8 @@ public class SmsReaderPlugin extends Plugin {
             "========== SMS PERMISSION CALLBACK =========="
         );
 
-        Context context = getContext();
+        Context context =
+            getContext();
 
         if (context == null) {
 
@@ -238,6 +332,7 @@ public class SmsReaderPlugin extends Plugin {
         readSms(call);
     }
 
+
     /* =========================================================
        READ / RECONCILE
     ========================================================= */
@@ -246,7 +341,8 @@ public class SmsReaderPlugin extends Plugin {
         PluginCall call
     ) {
 
-        Context context = getContext();
+        Context context =
+            getContext();
 
         if (context == null) {
 
@@ -263,8 +359,30 @@ public class SmsReaderPlugin extends Plugin {
 
         ensureStore();
 
+        if (smsStore == null) {
+
+            rejectWithDiagnostic(
+                call,
+                "SMS store unavailable.",
+                "SMS_STORE_UNAVAILABLE",
+                "store",
+                "Unable to initialize shared local SMS database."
+            );
+
+            return;
+        }
+
         /*
-         * Capture ONE timestamp for the entire reconciliation.
+         * Capture one timestamp for the entire reconciliation
+         * operation.
+         *
+         * This guarantees that:
+         *
+         * - cleanup
+         * - Android inbox query
+         * - pending retrieval
+         *
+         * all use the same 36-hour boundary.
          */
         final long now =
             System.currentTimeMillis();
@@ -284,43 +402,118 @@ public class SmsReaderPlugin extends Plugin {
 
         Log.d(
             TAG,
-            "36-hour cutoff: " + cutoff
+            "Cutoff: " + cutoff
         );
 
         /*
-         * First remove locally queued messages that are now
-         * outside the allowed 36-hour processing window.
-         *
-         * We intentionally do not keep old SMS forever.
+         * Remove queue entries that are no longer inside the
+         * 36-hour processing window.
          */
-        smsStore.deleteOlderThan(cutoff);
+        int deleted =
+            smsStore.deleteOlderThan(
+                cutoff
+            );
 
-        /*
-         * Reconcile the Android inbox.
-         *
-         * This catches SMS that may have arrived while:
-         *
-         * - the app was closed
-         * - the WebView was unavailable
-         * - the receiver was temporarily unavailable
-         * - Android delayed delivery
-         */
-        reconcileAndroidInbox(
-            context,
-            cutoff,
-            now
+        Log.d(
+            TAG,
+            "Old local SMS removed: "
+                + deleted
         );
 
         /*
-         * Return only pending SMS that are still inside the
-         * 36-hour window.
+         * Recover SMS that may have been missed by SmsReceiver.
          */
-        JSArray messages =
+        ReconciliationResult reconciliation =
+            reconcileAndroidInbox(
+                context,
+                cutoff,
+                now
+            );
+
+        /*
+         * Retrieve all still-pending entries from the SHARED
+         * queue.
+         *
+         * The shared store controls database ordering.
+         *
+         * The Capacitor API exposes newest SMS first, so sort
+         * the returned list here without changing processing
+         * order inside SmsProcessingWorker.
+         */
+        List<SmsQueueStore.SmsMessage> pendingMessages =
             smsStore.getPendingMessages(
                 cutoff,
                 now
             );
 
+        Collections.sort(
+            pendingMessages,
+            new Comparator<SmsQueueStore.SmsMessage>() {
+
+                @Override
+                public int compare(
+                    SmsQueueStore.SmsMessage first,
+                    SmsQueueStore.SmsMessage second
+                ) {
+
+                    int dateComparison =
+                        Long.compare(
+                            second.getSmsDate(),
+                            first.getSmsDate()
+                        );
+
+                    if (dateComparison != 0) {
+                        return dateComparison;
+                    }
+
+                    return Long.compare(
+                        second.getReceivedAt(),
+                        first.getReceivedAt()
+                    );
+                }
+            }
+        );
+
+        JSArray messages =
+            new JSArray();
+
+        for (
+            SmsQueueStore.SmsMessage sms :
+            pendingMessages
+        ) {
+
+            JSObject message =
+                new JSObject();
+
+            message.put(
+                "id",
+                sms.getId()
+            );
+
+            message.put(
+                "address",
+                sms.getAddress()
+            );
+
+            message.put(
+                "body",
+                sms.getBody()
+            );
+
+            message.put(
+                "date",
+                sms.getSmsDate()
+            );
+
+            messages.put(
+                message
+            );
+        }
+
+        /*
+         * Diagnostic information is useful when testing Android
+         * SMS behaviour.
+         */
         JSObject diagnostic =
             new JSObject();
 
@@ -350,6 +543,31 @@ public class SmsReaderPlugin extends Plugin {
         );
 
         diagnostic.put(
+            "scanned",
+            reconciliation.scanned
+        );
+
+        diagnostic.put(
+            "stored",
+            reconciliation.stored
+        );
+
+        diagnostic.put(
+            "duplicates",
+            reconciliation.duplicates
+        );
+
+        diagnostic.put(
+            "skipped",
+            reconciliation.skipped
+        );
+
+        diagnostic.put(
+            "deletedOld",
+            deleted
+        );
+
+        diagnostic.put(
             "pendingCount",
             messages.length()
         );
@@ -369,6 +587,19 @@ public class SmsReaderPlugin extends Plugin {
 
         Log.d(
             TAG,
+            "Reconciliation complete."
+                + " scanned="
+                + reconciliation.scanned
+                + " stored="
+                + reconciliation.stored
+                + " duplicates="
+                + reconciliation.duplicates
+                + " skipped="
+                + reconciliation.skipped
+        );
+
+        Log.d(
+            TAG,
             "Pending SMS returned: "
                 + messages.length()
         );
@@ -378,24 +609,35 @@ public class SmsReaderPlugin extends Plugin {
             "========== READ SMS END =========="
         );
 
-        call.resolve(result);
+        call.resolve(
+            result
+        );
     }
 
+
     /* =========================================================
-       RECONCILE ANDROID INBOX
+       ANDROID INBOX RECONCILIATION
     ========================================================= */
 
-    private void reconcileAndroidInbox(
+    /**
+     * Reads ONLY Android inbox SMS inside the supplied
+     * 36-hour window.
+     *
+     * It does not scan older SMS.
+     *
+     * It inserts recovered messages into the same shared
+     * SmsQueueStore used by SmsReceiver.
+     */
+    private ReconciliationResult reconcileAndroidInbox(
         Context context,
         long cutoff,
         long now
     ) {
 
-        Cursor cursor = null;
+        ReconciliationResult result =
+            new ReconciliationResult();
 
-        int scanned = 0;
-        int stored = 0;
-        int skipped = 0;
+        Cursor cursor = null;
 
         try {
 
@@ -404,6 +646,10 @@ public class SmsReaderPlugin extends Plugin {
                     SMS_INBOX_URI
                 );
 
+            /*
+             * Android ContentResolver receives only the desired
+             * 36-hour window.
+             */
             String selection =
                 "date >= ? AND date <= ?";
 
@@ -419,6 +665,9 @@ public class SmsReaderPlugin extends Plugin {
                 "date"
             };
 
+            /*
+             * Newest Android inbox SMS first.
+             */
             String sortOrder =
                 "date DESC, _id DESC";
 
@@ -437,24 +686,36 @@ public class SmsReaderPlugin extends Plugin {
 
                 Log.e(
                     TAG,
-                    "SMS inbox returned NULL cursor."
+                    "Android SMS inbox returned null cursor."
                 );
 
-                return;
+                return result;
             }
 
             int idIndex =
-                cursor.getColumnIndex("_id");
+                cursor.getColumnIndex(
+                    "_id"
+                );
 
             int addressIndex =
-                cursor.getColumnIndex("address");
+                cursor.getColumnIndex(
+                    "address"
+                );
 
             int bodyIndex =
-                cursor.getColumnIndex("body");
+                cursor.getColumnIndex(
+                    "body"
+                );
 
             int dateIndex =
-                cursor.getColumnIndex("date");
+                cursor.getColumnIndex(
+                    "date"
+                );
 
+            /*
+             * _id is required for reconciliation because it gives
+             * the Android inbox a stable local identifier.
+             */
             if (
                 idIndex < 0 ||
                 bodyIndex < 0 ||
@@ -463,19 +724,21 @@ public class SmsReaderPlugin extends Plugin {
 
                 Log.e(
                     TAG,
-                    "Required SMS columns missing."
+                    "Required Android SMS columns are missing."
                 );
 
-                return;
+                return result;
             }
 
-            while (cursor.moveToNext()) {
+            while (
+                cursor.moveToNext()
+            ) {
 
-                scanned++;
+                result.scanned++;
 
                 try {
 
-                    String id =
+                    String androidId =
                         cursor.getString(
                             idIndex
                         );
@@ -492,46 +755,132 @@ public class SmsReaderPlugin extends Plugin {
                             bodyIndex
                         );
 
-                    long date =
+                    long smsDate =
                         cursor.getLong(
                             dateIndex
                         );
 
                     /*
-                     * Absolute 36-hour protection.
+                     * Defensive 36-hour validation.
+                     *
+                     * Even though the ContentResolver already
+                     * filtered the query, validate again before
+                     * writing to the queue.
                      */
                     if (
-                        date <= 0L ||
-                        date < cutoff ||
-                        date > now ||
-                        body == null ||
-                        body.trim().isEmpty()
+                        smsDate <= 0L ||
+                        smsDate < cutoff ||
+                        smsDate > now
                     ) {
 
-                        skipped++;
+                        result.skipped++;
 
                         continue;
                     }
 
-                    boolean inserted =
-                        smsStore.insertIfMissing(
-                            id,
+                    if (
+                        address == null ||
+                        address.trim().isEmpty()
+                    ) {
+
+                        result.skipped++;
+
+                        continue;
+                    }
+
+                    if (
+                        body == null ||
+                        body.trim().isEmpty()
+                    ) {
+
+                        result.skipped++;
+
+                        continue;
+                    }
+
+                    /*
+                     * SmsReceiver does not have Android's inbox
+                     * _id, therefore _id cannot be used as the
+                     * cross-path duplicate identity.
+                     *
+                     * SmsQueueStore checks:
+                     *
+                     *     address
+                     *     body
+                     *     smsDate
+                     */
+                    if (
+                        smsStore.exists(
                             address,
                             body,
-                            date
+                            smsDate
+                        )
+                    ) {
+
+                        result.duplicates++;
+
+                        continue;
+                    }
+
+                    /*
+                     * The shared store requires receivedAt.
+                     *
+                     * Use the current reconciliation time rather
+                     * than the SMS timestamp because receivedAt is
+                     * a local queue timestamp, not the financial
+                     * transaction timestamp.
+                     */
+                    boolean inserted =
+                        smsStore.insertIfMissing(
+                            androidId,
+                            address,
+                            body,
+                            smsDate,
+                            System.currentTimeMillis()
                         );
 
                     if (inserted) {
-                        stored++;
+
+                        result.stored++;
+
+                        /*
+                         * A recovered SMS has now entered the same
+                         * queue used by SmsReceiver.
+                         *
+                         * Wake the native worker immediately.
+                         *
+                         * This means reconciliation does not need
+                         * JavaScript to submit the SMS to the
+                         * backend.
+                         */
+                        SmsProcessingWorker.enqueueNow(
+                            context.getApplicationContext()
+                        );
+
+                        /*
+                         * Keep the periodic safety net scheduled.
+                         */
+                        SmsProcessingWorker.schedule(
+                            context.getApplicationContext()
+                        );
+
+                    } else {
+
+                        /*
+                         * Usually means the SMS was inserted by
+                         * another path between the duplicate check
+                         * and insert attempt.
+                         */
+                        result.duplicates++;
                     }
 
                 } catch (Exception rowException) {
 
-                    skipped++;
+                    result.skipped++;
 
                     Log.w(
                         TAG,
-                        "Skipping malformed SMS row.",
+                        "Skipping malformed Android SMS row.",
                         rowException
                     );
                 }
@@ -549,7 +898,7 @@ public class SmsReaderPlugin extends Plugin {
 
             Log.e(
                 TAG,
-                "Failed to reconcile SMS inbox.",
+                "Failed to reconcile Android SMS inbox.",
                 e
             );
 
@@ -558,7 +907,9 @@ public class SmsReaderPlugin extends Plugin {
             if (cursor != null) {
 
                 try {
+
                     cursor.close();
+
                 } catch (Exception e) {
 
                     Log.w(
@@ -570,30 +921,22 @@ public class SmsReaderPlugin extends Plugin {
             }
         }
 
-        Log.d(
-            TAG,
-            "Inbox reconciliation:"
-                + " scanned=" + scanned
-                + " stored=" + stored
-                + " skipped=" + skipped
-        );
+        return result;
     }
+
 
     /* =========================================================
        ACKNOWLEDGE PROCESSED SMS
     ========================================================= */
 
     /**
-     * JavaScript should call this ONLY after the backend has
-     * successfully accepted/processed the SMS.
+     * Acknowledges SMS entries in the shared queue.
      *
-     * Example:
+     * Normally the native SmsProcessingWorker handles
+     * acknowledgement itself.
      *
-     * await SmsReader.markProcessed({
-     *     ids: ["123", "124"]
-     * });
-     *
-     * The SMS is then permanently removed from the local queue.
+     * This method remains for compatibility with the existing
+     * JavaScript/API surface.
      */
     @PluginMethod
     public void markProcessed(
@@ -602,19 +945,51 @@ public class SmsReaderPlugin extends Plugin {
 
         ensureStore();
 
+        if (smsStore == null) {
+
+            rejectWithDiagnostic(
+                call,
+                "SMS store unavailable.",
+                "SMS_STORE_UNAVAILABLE",
+                "mark_processed",
+                "Unable to initialize shared local SMS database."
+            );
+
+            return;
+        }
+
         JSArray ids =
-            call.getArray("ids");
+            call.getArray(
+                "ids"
+            );
 
-        if (ids == null || ids.length() == 0) {
+        if (
+            ids == null ||
+            ids.length() == 0
+        ) {
 
-            call.resolve();
+            JSObject result =
+                new JSObject();
+
+            result.put(
+                "acknowledged",
+                0
+            );
+
+            call.resolve(
+                result
+            );
 
             return;
         }
 
         int acknowledged = 0;
 
-        for (int i = 0; i < ids.length(); i++) {
+        for (
+            int i = 0;
+            i < ids.length();
+            i++
+        ) {
 
             try {
 
@@ -622,16 +997,20 @@ public class SmsReaderPlugin extends Plugin {
                     ids.getString(i);
 
                 if (
-                    id != null &&
-                    !id.trim().isEmpty()
+                    id == null ||
+                    id.trim().isEmpty()
                 ) {
 
-                    if (
-                        smsStore.markProcessed(id)
-                    ) {
+                    continue;
+                }
 
-                        acknowledged++;
-                    }
+                if (
+                    smsStore.markProcessed(
+                        id
+                    )
+                ) {
+
+                    acknowledged++;
                 }
 
             } catch (Exception e) {
@@ -652,8 +1031,11 @@ public class SmsReaderPlugin extends Plugin {
             acknowledged
         );
 
-        call.resolve(result);
+        call.resolve(
+            result
+        );
     }
+
 
     /* =========================================================
        PENDING COUNT
@@ -666,14 +1048,32 @@ public class SmsReaderPlugin extends Plugin {
 
         ensureStore();
 
-        long cutoff =
-            System.currentTimeMillis()
-                - THIRTY_SIX_HOURS_MS;
+        if (smsStore == null) {
 
-        long now =
+            rejectWithDiagnostic(
+                call,
+                "SMS store unavailable.",
+                "SMS_STORE_UNAVAILABLE",
+                "pending_count",
+                "Unable to initialize shared local SMS database."
+            );
+
+            return;
+        }
+
+        final long now =
             System.currentTimeMillis();
 
-        smsStore.deleteOlderThan(cutoff);
+        final long cutoff =
+            now - THIRTY_SIX_HOURS_MS;
+
+        /*
+         * Remove anything outside the active processing window
+         * before reporting the pending count.
+         */
+        smsStore.deleteOlderThan(
+            cutoff
+        );
 
         JSObject result =
             new JSObject();
@@ -686,8 +1086,11 @@ public class SmsReaderPlugin extends Plugin {
             )
         );
 
-        call.resolve(result);
+        call.resolve(
+            result
+        );
     }
+
 
     /* =========================================================
        PERMISSIONS
@@ -712,26 +1115,37 @@ public class SmsReaderPlugin extends Plugin {
         return readSms && receiveSms;
     }
 
+
     /* =========================================================
-       STORE
+       SHARED STORE INITIALIZATION
     ========================================================= */
 
+    /**
+     * Initializes the ONE shared SMS queue used by:
+     *
+     *     SmsReceiver
+     *     SmsProcessingWorker
+     *     SmsReaderPlugin
+     */
     private void ensureStore() {
 
-        if (smsStore == null) {
-
-            Context context =
-                getContext();
-
-            if (context != null) {
-
-                smsStore =
-                    new SmsStore(
-                        context.getApplicationContext()
-                    );
-            }
+        if (smsStore != null) {
+            return;
         }
+
+        Context context =
+            getContext();
+
+        if (context == null) {
+            return;
+        }
+
+        smsStore =
+            new SmsQueueStore(
+                context.getApplicationContext()
+            );
     }
+
 
     /* =========================================================
        ERROR HELPER
@@ -765,334 +1179,23 @@ public class SmsReaderPlugin extends Plugin {
         );
     }
 
+
     /* =========================================================
-       LOCAL SMS STORE
+       RECONCILIATION RESULT
     ========================================================= */
 
     /**
-     * Persistent SQLite queue.
-     *
-     * This is deliberately independent from the Capacitor
-     * WebView and JavaScript.
+     * Internal diagnostic object used only to report the
+     * reconciliation operation back to JavaScript.
      */
-    private static final class SmsStore
-        extends SQLiteOpenHelper {
+    private static final class ReconciliationResult {
 
-        private static final String DATABASE_NAME =
-            "geoshua_sms.db";
+        int scanned = 0;
 
-        private static final int DATABASE_VERSION =
-            1;
+        int stored = 0;
 
-        private static final String TABLE =
-            "sms_queue";
+        int duplicates = 0;
 
-        SmsStore(
-            Context context
-        ) {
-
-            super(
-                context,
-                DATABASE_NAME,
-                null,
-                DATABASE_VERSION
-            );
-        }
-
-        @Override
-        public void onCreate(
-            SQLiteDatabase db
-        ) {
-
-            db.execSQL(
-                "CREATE TABLE "
-                    + TABLE
-                    + " ("
-                    + "id TEXT PRIMARY KEY,"
-                    + "address TEXT NOT NULL,"
-                    + "body TEXT NOT NULL,"
-                    + "sms_date INTEGER NOT NULL,"
-                    + "received_at INTEGER NOT NULL,"
-                    + "processed INTEGER NOT NULL DEFAULT 0"
-                    + ")"
-            );
-
-            db.execSQL(
-                "CREATE INDEX idx_sms_queue_date "
-                    + "ON "
-                    + TABLE
-                    + "(sms_date)"
-            );
-
-            db.execSQL(
-                "CREATE INDEX idx_sms_queue_pending "
-                    + "ON "
-                    + TABLE
-                    + "(processed, sms_date)"
-            );
-        }
-
-        @Override
-        public void onUpgrade(
-            SQLiteDatabase db,
-            int oldVersion,
-            int newVersion
-        ) {
-
-            /*
-             * Keep existing SMS data during upgrades.
-             *
-             * Future schema changes should use proper migrations.
-             */
-        }
-
-        /**
-         * Inserts an SMS only if it does not already exist.
-         *
-         * Android's SMS _id is used as the primary identifier.
-         */
-        synchronized boolean insertIfMissing(
-            String id,
-            String address,
-            String body,
-            long smsDate
-        ) {
-
-            if (
-                id == null ||
-                id.trim().isEmpty()
-            ) {
-
-                return false;
-            }
-
-            if (
-                body == null ||
-                body.trim().isEmpty()
-            ) {
-
-                return false;
-            }
-
-            SQLiteDatabase db =
-                getWritableDatabase();
-
-            ContentValues values =
-                new ContentValues();
-
-            values.put(
-                "id",
-                id
-            );
-
-            values.put(
-                "address",
-                address == null
-                    ? ""
-                    : address
-            );
-
-            values.put(
-                "body",
-                body
-            );
-
-            values.put(
-                "sms_date",
-                smsDate
-            );
-
-            values.put(
-                "received_at",
-                System.currentTimeMillis()
-            );
-
-            values.put(
-                "processed",
-                0
-            );
-
-            long result =
-                db.insertWithOnConflict(
-                    TABLE,
-                    null,
-                    values,
-                    SQLiteDatabase.CONFLICT_IGNORE
-                );
-
-            return result != -1;
-        }
-
-        /**
-         * Returns only unprocessed SMS within 36 hours.
-         */
-        synchronized JSArray getPendingMessages(
-            long cutoff,
-            long now
-        ) {
-
-            JSArray result =
-                new JSArray();
-
-            SQLiteDatabase db =
-                getReadableDatabase();
-
-            Cursor cursor = null;
-
-            try {
-
-                cursor =
-                    db.query(
-                        TABLE,
-                        new String[] {
-                            "id",
-                            "address",
-                            "body",
-                            "sms_date"
-                        },
-                        "processed = 0"
-                            + " AND sms_date >= ?"
-                            + " AND sms_date <= ?",
-                        new String[] {
-                            String.valueOf(cutoff),
-                            String.valueOf(now)
-                        },
-                        null,
-                        null,
-                        "sms_date DESC, id DESC"
-                    );
-
-                while (
-                    cursor.moveToNext()
-                ) {
-
-                    JSObject message =
-                        new JSObject();
-
-                    message.put(
-                        "id",
-                        cursor.getString(0)
-                    );
-
-                    message.put(
-                        "address",
-                        cursor.getString(1)
-                    );
-
-                    message.put(
-                        "body",
-                        cursor.getString(2)
-                    );
-
-                    message.put(
-                        "date",
-                        cursor.getLong(3)
-                    );
-
-                    result.put(
-                        message
-                    );
-                }
-
-            } finally {
-
-                if (cursor != null) {
-                    cursor.close();
-                }
-            }
-
-            return result;
-        }
-
-        synchronized boolean markProcessed(
-            String id
-        ) {
-
-            SQLiteDatabase db =
-                getWritableDatabase();
-
-            ContentValues values =
-                new ContentValues();
-
-            values.put(
-                "processed",
-                1
-            );
-
-            int rows =
-                db.update(
-                    TABLE,
-                    values,
-                    "id = ?",
-                    new String[] {
-                        id
-                    }
-                );
-
-            return rows > 0;
-        }
-
-        /**
-         * SMS older than 36 hours must never remain in the
-         * processing queue.
-         */
-        synchronized void deleteOlderThan(
-            long cutoff
-        ) {
-
-            SQLiteDatabase db =
-                getWritableDatabase();
-
-            db.delete(
-                TABLE,
-                "sms_date < ?",
-                new String[] {
-                    String.valueOf(cutoff)
-                }
-            );
-        }
-
-        synchronized int countPending(
-            long cutoff,
-            long now
-        ) {
-
-            SQLiteDatabase db =
-                getReadableDatabase();
-
-            Cursor cursor = null;
-
-            try {
-
-                cursor =
-                    db.rawQuery(
-                        "SELECT COUNT(*)"
-                            + " FROM "
-                            + TABLE
-                            + " WHERE processed = 0"
-                            + " AND sms_date >= ?"
-                            + " AND sms_date <= ?",
-                        new String[] {
-                            String.valueOf(cutoff),
-                            String.valueOf(now)
-                        }
-                    );
-
-                if (
-                    cursor.moveToFirst()
-                ) {
-
-                    return cursor.getInt(0);
-                }
-
-            } finally {
-
-                if (cursor != null) {
-                    cursor.close();
-                }
-            }
-
-            return 0;
-        }
+        int skipped = 0;
     }
 }

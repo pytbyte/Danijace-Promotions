@@ -1,412 +1,649 @@
 package com.pytbyte.geoshua;
 
 import android.content.BroadcastReceiver;
-import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
-import android.database.Cursor;
 import android.os.Bundle;
+import android.provider.Telephony;
 import android.telephony.SmsMessage;
 import android.util.Log;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
+/**
+ * Native incoming SMS receiver.
+ *
+ * =========================================================
+ * RESPONSIBILITY
+ * =========================================================
+ *
+ * This receiver has ONE job:
+ *
+ *     SMS_RECEIVED
+ *          ↓
+ *     validate/decode SMS
+ *          ↓
+ *     save to SmsQueueStore
+ *          ↓
+ *     wake SmsProcessingWorker
+ *
+ * It does NOT:
+ *
+ * - call the backend
+ * - parse bank transactions
+ * - perform financial operations
+ * - depend on the WebView
+ * - depend on JavaScript
+ *
+ * This is important because the Android application UI may be:
+ *
+ * - closed
+ * - in the background
+ * - not currently loaded
+ * - on the lock screen
+ *
+ * The financial processing happens later in the WorkManager worker.
+ */
 public class SmsReceiver extends BroadcastReceiver {
 
-    private static final String TAG =
-        "GeoShuaSmsReceiver";
+    private static final String TAG = "GeoShuaSmsReceiver";
 
-    private static final String SMS_RECEIVED =
-        "android.provider.Telephony.SMS_RECEIVED";
-
+    /**
+     * Only process SMS messages inside this window.
+     *
+     * Older messages are deliberately ignored.
+     */
     private static final long THIRTY_SIX_HOURS_MS =
-        36L * 60L * 60L * 1000L;
+            36L * 60L * 60L * 1000L;
+
+    /**
+     * Android may provide multiple PDUs for one multipart SMS.
+     *
+     * We group parts using:
+     *
+     *     normalized sender + SMS timestamp
+     *
+     * This matches the way Android normally exposes multipart
+     * SMS messages received in the same message.
+     */
+    private static final class SmsPart {
+
+        final String address;
+        final long timestamp;
+        final String body;
+
+        SmsPart(
+                String address,
+                long timestamp,
+                String body
+        ) {
+            this.address = address;
+            this.timestamp = timestamp;
+            this.body = body;
+        }
+    }
+
+    /**
+     * Internal representation of a complete SMS after its
+     * individual parts have been combined.
+     */
+    private static final class CombinedSms {
+
+        final String address;
+        final long timestamp;
+        final String body;
+
+        CombinedSms(
+                String address,
+                long timestamp,
+                String body
+        ) {
+            this.address = address;
+            this.timestamp = timestamp;
+            this.body = body;
+        }
+    }
 
     @Override
     public void onReceive(
-        Context context,
-        Intent intent
+            Context context,
+            Intent intent
     ) {
 
-        if (intent == null) {
-            return;
-        }
-
-        if (
-            !SMS_RECEIVED.equals(
-                intent.getAction()
-            )
-        ) {
-
-            return;
-        }
-
-        Log.d(
-            TAG,
-            "========== SMS RECEIVED =========="
-        );
-
         /*
-         * Never perform network calls here.
+         * Never perform long-running network or financial work
+         * inside BroadcastReceiver.
          *
-         * The broadcast receiver has limited execution time.
-         *
-         * We only capture and persist the SMS.
+         * We only decode, persist and enqueue WorkManager.
          */
+
+        if (intent == null) {
+            Log.w(TAG, "Received null intent.");
+            return;
+        }
+
+        final String action = intent.getAction();
+
+        if (!Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(action)) {
+            Log.d(
+                    TAG,
+                    "Ignoring unexpected action: " + action
+            );
+            return;
+        }
+
+        final Context appContext =
+                context.getApplicationContext();
+
+        final long now = System.currentTimeMillis();
+
+        final long cutoff =
+                now - THIRTY_SIX_HOURS_MS;
+
         try {
 
-            Bundle extras =
-                intent.getExtras();
+            /*
+             * Clean up anything older than the supported
+             * processing window.
+             *
+             * This also prevents the local queue from growing
+             * indefinitely.
+             */
+            SmsQueueStore store =
+                    new SmsQueueStore(appContext);
 
-            if (extras == null) {
-
-                Log.w(
-                    TAG,
-                    "SMS broadcast has no extras."
-                );
-
-                return;
-            }
-
-            Object[] pdus =
-                (Object[]) extras.get("pdus");
-
-            if (
-                pdus == null ||
-                pdus.length == 0
-            ) {
-
-                Log.w(
-                    TAG,
-                    "SMS broadcast contains no PDUs."
-                );
-
-                return;
-            }
-
-            String format =
-                extras.getString("format");
-
-            SmsReceiverStore store =
-                new SmsReceiverStore(
-                    context.getApplicationContext()
-                );
+            store.deleteOlderThan(cutoff);
 
             /*
-             * Multipart SMS messages can contain multiple PDUs.
+             * Android normally provides the SMS PDUs through
+             * Telephony.Sms.Intents.getMessagesFromIntent().
              *
-             * Group them by originating address + timestamp.
+             * Using Android's helper is preferable to manually
+             * reading "pdus" because it handles the SMS format
+             * supplied by the broadcast.
              */
-            Set<String> handled =
-                new HashSet<>();
-
-            for (Object pdu : pdus) {
-
-                if (pdu == null) {
-                    continue;
-                }
-
-                SmsMessage sms;
-
-                try {
-
-                    if (format != null) {
-
-                        sms =
-                            SmsMessage.createFromPdu(
-                                (byte[]) pdu,
-                                format
-                            );
-
-                    } else {
-
-                        sms =
-                            SmsMessage.createFromPdu(
-                                (byte[]) pdu
-                            );
-                    }
-
-                } catch (Exception e) {
-
-                    Log.w(
-                        TAG,
-                        "Failed to decode SMS PDU.",
-                        e
+            SmsMessage[] messages =
+                    Telephony.Sms.Intents.getMessagesFromIntent(
+                            intent
                     );
 
-                    continue;
-                }
+            if (messages == null || messages.length == 0) {
 
-                if (sms == null) {
+                Log.w(
+                        TAG,
+                        "SMS_RECEIVED contained no SMS messages."
+                );
+
+                return;
+            }
+
+            /*
+             * Convert the Android SMS objects into simple parts.
+             */
+            List<SmsPart> parts =
+                    new ArrayList<>();
+
+            for (SmsMessage message : messages) {
+
+                if (message == null) {
                     continue;
                 }
 
                 String address =
-                    sms.getDisplayOriginatingAddress();
+                        normalizeAddress(
+                                message.getOriginatingAddress()
+                        );
 
                 String body =
-                    sms.getDisplayMessageBody();
+                        message.getMessageBody();
 
                 long timestamp =
-                    sms.getTimestampMillis();
+                        message.getTimestampMillis();
+
+                if (address.isEmpty()) {
+                    Log.w(
+                            TAG,
+                            "Ignoring SMS with empty sender."
+                    );
+                    continue;
+                }
+
+                if (body == null) {
+                    body = "";
+                }
+
+                body = body.trim();
+
+                if (body.isEmpty()) {
+                    Log.w(
+                            TAG,
+                            "Ignoring SMS with empty body."
+                    );
+                    continue;
+                }
 
                 /*
-                 * Absolute 36-hour boundary.
+                 * Protect against malformed/future timestamps.
                  *
-                 * Older SMS are ignored immediately.
+                 * We only accept:
+                 *
+                 *     cutoff <= timestamp <= now
+                 *
+                 * A small future tolerance is intentionally NOT
+                 * added here. Android's SMS timestamp should be
+                 * trustworthy enough for this boundary.
                  */
-                long now =
-                    System.currentTimeMillis();
-
-                long cutoff =
-                    now - THIRTY_SIX_HOURS_MS;
-
-                if (
-                    timestamp <= 0L ||
-                    timestamp < cutoff ||
-                    timestamp > now
-                ) {
+                if (timestamp < cutoff) {
 
                     Log.d(
-                        TAG,
-                        "Ignoring SMS outside 36-hour window."
+                            TAG,
+                            "Ignoring SMS older than 36 hours. " +
+                            "timestamp=" + timestamp
                     );
 
                     continue;
                 }
 
-                if (
-                    body == null ||
-                    body.trim().isEmpty()
-                ) {
+                if (timestamp > now) {
+
+                    Log.w(
+                            TAG,
+                            "Ignoring future SMS. " +
+                            "timestamp=" + timestamp +
+                            ", now=" + now
+                    );
 
                     continue;
                 }
+
+                parts.add(
+                        new SmsPart(
+                                address,
+                                timestamp,
+                                body
+                        )
+                );
+            }
+
+            if (parts.isEmpty()) {
+
+                Log.d(
+                        TAG,
+                        "No usable SMS parts found."
+                );
+
+                return;
+            }
+
+            /*
+             * Combine multipart messages.
+             */
+            List<CombinedSms> combinedMessages =
+                    combineParts(parts);
+
+            int insertedCount = 0;
+
+            for (CombinedSms sms : combinedMessages) {
 
                 /*
-                 * Prevent multiple PDUs from creating duplicate
-                 * local entries.
+                 * Re-check the 36-hour window after combining.
                  */
-                String fingerprint =
-                    String.valueOf(address)
-                        + "|"
-                        + timestamp;
-
-                if (
-                    handled.contains(
-                        fingerprint
-                    )
-                ) {
-
+                if (sms.timestamp < cutoff) {
                     continue;
                 }
 
-                handled.add(
-                    fingerprint
+                if (sms.timestamp > now) {
+                    continue;
+                }
+
+                if (sms.body == null ||
+                        sms.body.trim().isEmpty()) {
+                    continue;
+                }
+
+                String id =
+                        createStableSmsId(
+                                sms.address,
+                                sms.timestamp,
+                                sms.body
+                        );
+
+                boolean inserted =
+                        store.insertIfMissing(
+                                id,
+                                sms.address,
+                                sms.body,
+                                sms.timestamp,
+                                now
+                        );
+
+                if (inserted) {
+
+                    insertedCount++;
+
+                    Log.i(
+                            TAG,
+                            "Incoming SMS queued. " +
+                            "id=" + id +
+                            ", address=" + sms.address +
+                            ", timestamp=" + sms.timestamp
+                    );
+
+                } else {
+
+                    Log.d(
+                            TAG,
+                            "SMS already exists in local queue. " +
+                            "id=" + id
+                    );
+                }
+            }
+
+            /*
+             * Wake the processing worker whenever we received
+             * something that could be processed.
+             *
+             * WorkManager's ExistingWorkPolicy.KEEP prevents
+             * multiple immediate workers from being created
+             * simultaneously.
+             */
+            if (insertedCount > 0) {
+
+                SmsProcessingWorker.enqueueNow(
+                        appContext
                 );
 
                 /*
-                 * IMPORTANT:
+                 * Also make sure the periodic recovery worker
+                 * exists.
                  *
-                 * SmsReceiver does not know Android's inbox _id
-                 * yet. We therefore use a stable receiver ID.
+                 * This is safe to call repeatedly because the
+                 * worker uses ExistingPeriodicWorkPolicy.KEEP.
                  */
-                String id =
-                    buildReceiverId(
-                        address,
-                        timestamp,
-                        body
-                    );
+                SmsProcessingWorker.schedule(
+                        appContext
+                );
 
-                boolean inserted =
-                    store.insertIfMissing(
-                        id,
-                        address,
-                        body,
-                        timestamp
-                    );
+                Log.i(
+                        TAG,
+                        "Queued " +
+                        insertedCount +
+                        " new SMS message(s). " +
+                        "Processing worker enqueued."
+                );
+
+            } else {
 
                 Log.d(
-                    TAG,
-                    "SMS captured."
-                        + " inserted="
-                        + inserted
-                        + " timestamp="
-                        + timestamp
+                        TAG,
+                        "No new SMS inserted."
                 );
             }
 
         } catch (Exception e) {
 
             /*
-             * Never allow a malformed SMS to crash the receiver.
+             * IMPORTANT:
+             *
+             * Never allow a malformed SMS or an unexpected
+             * decoding/storage exception to crash the entire
+             * broadcast receiver.
+             *
+             * The reconciliation path can recover SMS messages
+             * later from Android's inbox.
              */
             Log.e(
-                TAG,
-                "Failed while receiving SMS.",
-                e
+                    TAG,
+                    "Failed to capture incoming SMS.",
+                    e
             );
         }
-
-        Log.d(
-            TAG,
-            "========== SMS RECEIVED END =========="
-        );
-    }
-
-    private static String buildReceiverId(
-        String address,
-        long timestamp,
-        String body
-    ) {
-
-        /*
-         * Deterministic local ID.
-         *
-         * The body is included so two SMS from the same sender
-         * with the same timestamp do not collide unnecessarily.
-         */
-        return "RX-"
-            + Integer.toHexString(
-                (
-                    String.valueOf(address)
-                        + "|"
-                        + timestamp
-                        + "|"
-                        + body
-                ).hashCode()
-            );
     }
 
     /**
-     * Small independent SQLite queue used by the receiver.
+     * Combines SMS parts that belong to the same logical message.
      *
-     * This intentionally does not depend on SmsReaderPlugin
-     * being instantiated.
+     * Android normally delivers multipart SMS parts with the same:
+     *
+     *     sender
+     *     timestamp
+     *
+     * We preserve the incoming order supplied by Android.
+     *
+     * If the same sender/timestamp appears more than once, the
+     * bodies are concatenated.
      */
-    private static final class SmsReceiverStore
-        extends android.database.sqlite.SQLiteOpenHelper {
+    private static List<CombinedSms> combineParts(
+            List<SmsPart> parts
+    ) {
 
-        private static final String DATABASE_NAME =
-            "geoshua_sms.db";
+        /*
+         * LinkedHashMap would preserve insertion order, but using
+         * a normal HashMap followed by deterministic sorting makes
+         * the final result explicit.
+         */
+        Map<String, List<SmsPart>> grouped =
+                new HashMap<>();
 
-        private static final int DATABASE_VERSION =
-            1;
+        for (SmsPart part : parts) {
 
-        private static final String TABLE =
-            "sms_queue";
+            String key =
+                    part.address +
+                    "|" +
+                    part.timestamp;
 
-        SmsReceiverStore(
-            Context context
-        ) {
+            List<SmsPart> group =
+                    grouped.get(key);
 
-            super(
-                context,
-                DATABASE_NAME,
-                null,
-                DATABASE_VERSION
-            );
-        }
+            if (group == null) {
 
-        @Override
-        public void onCreate(
-            android.database.sqlite.SQLiteDatabase db
-        ) {
+                group = new ArrayList<>();
 
-            db.execSQL(
-                "CREATE TABLE IF NOT EXISTS "
-                    + TABLE
-                    + " ("
-                    + "id TEXT PRIMARY KEY,"
-                    + "address TEXT NOT NULL,"
-                    + "body TEXT NOT NULL,"
-                    + "sms_date INTEGER NOT NULL,"
-                    + "received_at INTEGER NOT NULL,"
-                    + "processed INTEGER NOT NULL DEFAULT 0"
-                    + ")"
-            );
-
-            db.execSQL(
-                "CREATE INDEX IF NOT EXISTS idx_sms_queue_date "
-                    + "ON "
-                    + TABLE
-                    + "(sms_date)"
-            );
-
-            db.execSQL(
-                "CREATE INDEX IF NOT EXISTS idx_sms_queue_pending "
-                    + "ON "
-                    + TABLE
-                    + "(processed, sms_date)"
-            );
-        }
-
-        @Override
-        public void onUpgrade(
-            android.database.sqlite.SQLiteDatabase db,
-            int oldVersion,
-            int newVersion
-        ) {
-            /*
-             * Do not destroy SMS data.
-             */
-        }
-
-        synchronized boolean insertIfMissing(
-            String id,
-            String address,
-            String body,
-            long smsDate
-        ) {
-
-            android.database.sqlite.SQLiteDatabase db =
-                getWritableDatabase();
-
-            ContentValues values =
-                new ContentValues();
-
-            values.put(
-                "id",
-                id
-            );
-
-            values.put(
-                "address",
-                address == null
-                    ? ""
-                    : address
-            );
-
-            values.put(
-                "body",
-                body
-            );
-
-            values.put(
-                "sms_date",
-                smsDate
-            );
-
-            values.put(
-                "received_at",
-                System.currentTimeMillis()
-            );
-
-            values.put(
-                "processed",
-                0
-            );
-
-            long result =
-                db.insertWithOnConflict(
-                    TABLE,
-                    null,
-                    values,
-                    android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE
+                grouped.put(
+                        key,
+                        group
                 );
+            }
 
-            return result != -1;
+            group.add(part);
+        }
+
+        List<CombinedSms> result =
+                new ArrayList<>();
+
+        for (List<SmsPart> group : grouped.values()) {
+
+            if (group.isEmpty()) {
+                continue;
+            }
+
+            /*
+             * Android generally already supplies parts in order.
+             *
+             * This sort is deterministic but does not attempt to
+             * invent a multipart sequence number that may not be
+             * available from the broadcast.
+             */
+            Collections.sort(
+                    group,
+                    new Comparator<SmsPart>() {
+                        @Override
+                        public int compare(
+                                SmsPart first,
+                                SmsPart second
+                        ) {
+                            return 0;
+                        }
+                    }
+            );
+
+            StringBuilder body =
+                    new StringBuilder();
+
+            SmsPart first =
+                    group.get(0);
+
+            for (SmsPart part : group) {
+
+                if (part.body == null ||
+                        part.body.isEmpty()) {
+                    continue;
+                }
+
+                body.append(
+                        part.body
+                );
+            }
+
+            String combinedBody =
+                    body.toString().trim();
+
+            if (combinedBody.isEmpty()) {
+                continue;
+            }
+
+            result.add(
+                    new CombinedSms(
+                            first.address,
+                            first.timestamp,
+                            combinedBody
+                    )
+            );
+        }
+
+        /*
+         * Oldest first makes processing/recovery deterministic.
+         */
+        Collections.sort(
+                result,
+                new Comparator<CombinedSms>() {
+                    @Override
+                    public int compare(
+                            CombinedSms first,
+                            CombinedSms second
+                    ) {
+                        return Long.compare(
+                                first.timestamp,
+                                second.timestamp
+                        );
+                    }
+                }
+        );
+
+        return result;
+    }
+
+    /**
+     * Normalize sender addresses without changing their identity.
+     *
+     * We deliberately do NOT convert Kenyan numbers here from:
+     *
+     *     07xxxxxxxx
+     *
+     * to:
+     *
+     *     +2547xxxxxxxx
+     *
+     * because the SMS parser/backend already has its own phone
+     * normalization rules.
+     *
+     * The receiver should preserve what Android actually reported.
+     */
+    private static String normalizeAddress(
+            String address
+    ) {
+
+        if (address == null) {
+            return "";
+        }
+
+        return address.trim();
+    }
+
+    /**
+     * Generates a deterministic ID for an SMS.
+     *
+     * SHA-256 is used instead of String.hashCode() because
+     * hashCode() is only 32-bit and collisions are possible.
+     *
+     * The ID is stable for the same:
+     *
+     *     sender
+     *     timestamp
+     *     body
+     *
+     * This is useful for:
+     *
+     * - local deduplication
+     * - backend idempotency
+     * - receiver/recovery reconciliation
+     */
+    private static String createStableSmsId(
+            String address,
+            long timestamp,
+            String body
+    ) {
+
+        String identity =
+                address +
+                "|" +
+                timestamp +
+                "|" +
+                body;
+
+        try {
+
+            MessageDigest digest =
+                    MessageDigest.getInstance(
+                            "SHA-256"
+                    );
+
+            byte[] hash =
+                    digest.digest(
+                            identity.getBytes(
+                                    StandardCharsets.UTF_8
+                            )
+                    );
+
+            StringBuilder hex =
+                    new StringBuilder(
+                            hash.length * 2
+                    );
+
+            for (byte value : hash) {
+
+                hex.append(
+                        String.format(
+                                Locale.US,
+                                "%02x",
+                                value & 0xff
+                        )
+                );
+            }
+
+            return "sms-" + hex;
+
+        } catch (Exception e) {
+
+            /*
+             * SHA-256 is guaranteed by Android, so reaching here
+             * would be extremely unusual.
+             *
+             * Still provide a deterministic fallback rather than
+             * dropping the SMS.
+             */
+            return "sms-" +
+                    Integer.toHexString(
+                            identity.hashCode()
+                    );
         }
     }
 }

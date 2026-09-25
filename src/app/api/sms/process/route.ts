@@ -7,11 +7,11 @@
  * RESPONSIBILITY
  * ---------------------------------------------------------
  *
- * HTTP boundary for Android foreground SMS ingestion.
+ * HTTP boundary for Android SMS ingestion.
  *
  * Flow:
  *
- * Android SmsReader
+ * Android SmsReader / native SmsProcessingWorker
  *       ↓
  * POST /api/sms/process
  *       ↓
@@ -54,6 +54,7 @@ import {
   processIncomingTransaction,
 } from "@/lib/sms/processor";
 
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -71,6 +72,7 @@ type ApiStatus =
   | "ignored"
   | "error";
 
+
 /* =========================================================
    CONSTANTS
 ========================================================= */
@@ -84,20 +86,19 @@ type ApiStatus =
 const FUTURE_SMS_TOLERANCE_MS =
   5 * 60 * 1000;
 
+
 /**
  * Diagnostic threshold only.
  *
- * We do NOT automatically reject old SMS here because
- * legitimate old bank messages may be encountered when
- * the foreground inbox is first read.
+ * We do NOT automatically reject old SMS here.
  *
  * The actual financial applicability of a loan SMS is
- * determined by the loan repayment service using the
- * bank transaction timestamp versus the loan
- * disbursement timestamp.
+ * determined by the loan processor using the bank
+ * transaction timestamp and loan dates.
  */
 const OLD_SMS_WARNING_MS =
   30 * 24 * 60 * 60 * 1000;
+
 
 /* =========================================================
    HELPERS
@@ -109,6 +110,7 @@ const OLD_SMS_WARNING_MS =
 function getOptionalString(
   value: unknown,
 ): string | null {
+
   if (
     typeof value !== "string"
   ) {
@@ -118,11 +120,11 @@ function getOptionalString(
   const clean =
     value.trim();
 
-  return clean.length >
-    0
+  return clean.length > 0
     ? clean
     : null;
 }
+
 
 /**
  * Safely extract a positive SMS timestamp.
@@ -130,6 +132,7 @@ function getOptionalString(
 function getSmsDate(
   value: unknown,
 ): number | null {
+
   if (
     typeof value !== "number" ||
     !Number.isFinite(value) ||
@@ -141,16 +144,17 @@ function getSmsDate(
   return value;
 }
 
+
 /**
  * Extract a useful error message.
  */
 function getErrorMessage(
   error: unknown,
 ): string {
+
   if (
     error instanceof Error &&
-    error.message.trim()
-      .length > 0
+    error.message.trim().length > 0
   ) {
     return error.message;
   }
@@ -165,6 +169,7 @@ function getErrorMessage(
   return "SMS processing failed.";
 }
 
+
 /**
  * Build a standardized API response.
  */
@@ -172,6 +177,7 @@ function response(
   body: Record<string, unknown>,
   status = 200,
 ) {
+
   return NextResponse.json(
     body,
     {
@@ -184,6 +190,7 @@ function response(
   );
 }
 
+
 /* =========================================================
    POST
 ========================================================= */
@@ -191,8 +198,10 @@ function response(
 export async function POST(
   request: Request,
 ) {
+
   const receivedAt =
     Date.now();
+
 
   /* =======================================================
      READ REQUEST BODY
@@ -203,9 +212,12 @@ export async function POST(
     | null = null;
 
   try {
+
     payload =
       (await request.json()) as SmsProcessRequest;
+
   } catch {
+
     return response(
       {
         status:
@@ -227,11 +239,12 @@ export async function POST(
     );
   }
 
+
   if (
     !payload ||
-    typeof payload !==
-      "object"
+    typeof payload !== "object"
   ) {
+
     return response(
       {
         status:
@@ -252,6 +265,7 @@ export async function POST(
       400,
     );
   }
+
 
   /* =======================================================
      EXTRACT ENVELOPE
@@ -277,11 +291,13 @@ export async function POST(
       payload.date,
     );
 
+
   /* =======================================================
      VALIDATE SMS BODY
   ======================================================= */
 
   if (!body) {
+
     return response(
       {
         status:
@@ -305,14 +321,15 @@ export async function POST(
     );
   }
 
+
   /* =======================================================
      VALIDATE SMS DATE
   ======================================================= */
 
   if (
-    smsDate ===
-    null
+    smsDate === null
   ) {
+
     return response(
       {
         status:
@@ -336,6 +353,7 @@ export async function POST(
     );
   }
 
+
   /* =======================================================
      FUTURE SMS PROTECTION
   ======================================================= */
@@ -348,6 +366,7 @@ export async function POST(
     futureDifference >
     FUTURE_SMS_TOLERANCE_MS
   ) {
+
     return response(
       {
         status:
@@ -378,6 +397,7 @@ export async function POST(
     );
   }
 
+
   /* =======================================================
      AGE DIAGNOSTIC
   ======================================================= */
@@ -390,6 +410,7 @@ export async function POST(
     ageMs >
     OLD_SMS_WARNING_MS;
 
+
   /* =======================================================
      PARSE SMS
   ======================================================= */
@@ -397,19 +418,24 @@ export async function POST(
   let parsed;
 
   try {
+
     parsed =
-      parseBankSms({
-        id:
-          smsId,
+      parseBankSms(
+        {
+          id:
+            smsId,
 
-        address,
+          address,
 
-        body,
+          body,
 
-        date:
-          smsDate,
-      });
+          date:
+            smsDate,
+        },
+      );
+
   } catch (error) {
+
     const message =
       getErrorMessage(
         error,
@@ -418,8 +444,9 @@ export async function POST(
     /**
      * Parsing failures are intentionally returned as
      * HTTP 200 because an inbox contains many unrelated
-     * messages and one non-bank SMS should not be treated
-     * as an API/server failure.
+     * messages.
+     *
+     * A non-bank SMS is not an API/server failure.
      */
     return response(
       {
@@ -456,6 +483,7 @@ export async function POST(
     );
   }
 
+
   /* =======================================================
      PARSED DIAGNOSTICS
   ======================================================= */
@@ -489,8 +517,7 @@ export async function POST(
       parsed.transactionType,
 
     transactionDate:
-      parsed.transactionDate
-        .toISOString(),
+      parsed.transactionDate.toISOString(),
 
     address:
       parsed.address,
@@ -502,24 +529,28 @@ export async function POST(
       parsed.status,
   };
 
+
   /* =======================================================
      PROCESS FINANCIAL TRANSACTION
   ======================================================= */
 
   try {
+
     const result =
       await processIncomingTransaction(
         parsed,
       );
 
+
     /* =====================================================
        SAVINGS
-    ===================================================== */
+    ====================================================== */
 
     if (
       result.type ===
       "savings"
     ) {
+
       return response(
         {
           status:
@@ -562,14 +593,16 @@ export async function POST(
       );
     }
 
+
     /* =====================================================
        LOAN
-    ===================================================== */
+    ====================================================== */
 
     if (
       result.type ===
       "loan"
     ) {
+
       return response(
         {
           status:
@@ -612,9 +645,10 @@ export async function POST(
       );
     }
 
+
     /* =====================================================
        DEFENSIVE FALLBACK
-    ===================================================== */
+    ====================================================== */
 
     return response(
       {
@@ -642,44 +676,38 @@ export async function POST(
       },
       500,
     );
+
   } catch (error) {
+
     const message =
       getErrorMessage(
         error,
       );
 
+
     /* =====================================================
        SMS BEFORE LOAN DISBURSEMENT
-    ===================================================== */
+    ====================================================== */
 
     /**
-     * This is a valid business decision, NOT a server
+     * This is a terminal business outcome, NOT a server
      * failure.
      *
-     * The SMS may be perfectly valid and may contain a
-     * genuine bank transaction, but that transaction
-     * happened at or before the disbursement of the loan
-     * currently being considered.
+     * The processor currently rejects only when:
      *
-     * Rule:
+     *     transactionDate < disbursementDate
      *
-     * transactionDate > disbursementDate → allowed
+     * Same-day transactions are currently allowed by the
+     * processor.
      *
-     * transactionDate <= disbursementDate → ignored
-     *
-     * This specifically protects against old bank SMS
-     * messages being attached to newly created loans.
-     *
-     * IMPORTANT:
-     * Do not classify this as a duplicate.
-     * Do not return HTTP 500.
-     * Do not retry it.
+     * This SMS must therefore NOT be retried indefinitely.
      */
     if (
       error instanceof Error &&
       error.message ===
         "SMS_REPAYMENT_BEFORE_DISBURSEMENT"
     ) {
+
       return response(
         {
           status:
@@ -695,7 +723,7 @@ export async function POST(
             "sms_before_loan_disbursement",
 
           message:
-            "SMS repayment predates or matches the loan disbursement timestamp and was not recorded.",
+            "SMS repayment predates the loan disbursement date and was not recorded.",
 
           smsId,
 
@@ -708,16 +736,77 @@ export async function POST(
       );
     }
 
+
+    /* =====================================================
+       SMS BEFORE LOAN AUTHORIZATION
+    ====================================================== */
+
+    /**
+     * IMPORTANT:
+     *
+     * This is the Step 5 fix.
+     *
+     * The processor can deliberately throw:
+     *
+     * SMS_REPAYMENT_RECEIVED_BEFORE_LOAN_AUTHORIZATION
+     *
+     * This is NOT a server failure.
+     *
+     * It means the SMS itself was received before the loan
+     * authorization timestamp.
+     *
+     * Retrying the same SMS cannot change its original
+     * timestamp, so returning HTTP 500 would cause
+     * WorkManager to retry the same message unnecessarily.
+     *
+     * Return HTTP 200 + ignored so Android can mark the
+     * queued SMS as terminally handled.
+     */
+    if (
+      error instanceof Error &&
+      error.message ===
+        "SMS_REPAYMENT_RECEIVED_BEFORE_LOAN_AUTHORIZATION"
+    ) {
+
+      return response(
+        {
+          status:
+            "ignored" satisfies ApiStatus,
+
+          processed:
+            false,
+
+          financialChange:
+            false,
+
+          reason:
+            "sms_before_loan_authorization",
+
+          message:
+            "SMS was received before the loan authorization timestamp and was not recorded.",
+
+          smsId,
+
+          parsed:
+            parsedDiagnostic,
+
+          oldSms,
+        },
+        200,
+      );
+    }
+
+
     /* =====================================================
        DUPLICATE DETECTION
-    ===================================================== */
+    ====================================================== */
 
     /**
      * Current financial services are responsible for
      * idempotency.
      *
      * We recognize common duplicate wording here so the
-     * foreground SMS monitor can display it correctly.
+     * Android worker can treat the result as terminal.
      */
     const lowerMessage =
       message.toLowerCase();
@@ -735,16 +824,20 @@ export async function POST(
       lowerMessage.includes(
         "already recorded",
       ) ||
-      lowerMessage.includes(
-        "transaction reference",
-      ) &&
+      (
+        lowerMessage.includes(
+          "transaction reference",
+        ) &&
         lowerMessage.includes(
           "exists",
-        );
+        )
+      );
+
 
     if (
       isDuplicate
     ) {
+
       return response(
         {
           status:
@@ -773,9 +866,10 @@ export async function POST(
       );
     }
 
+
     /* =====================================================
        UNKNOWN DESTINATION
-    ===================================================== */
+    ====================================================== */
 
     if (
       lowerMessage.includes(
@@ -785,6 +879,7 @@ export async function POST(
         "not configured",
       )
     ) {
+
       return response(
         {
           status:
@@ -815,9 +910,10 @@ export async function POST(
       );
     }
 
+
     /* =====================================================
        MEMBER NOT FOUND
-    ===================================================== */
+    ====================================================== */
 
     if (
       lowerMessage.includes(
@@ -829,13 +925,16 @@ export async function POST(
       lowerMessage.includes(
         "multiple geo-shua members",
       ) ||
-      lowerMessage.includes(
-        "member",
-      ) &&
+      (
+        lowerMessage.includes(
+          "member",
+        ) &&
         lowerMessage.includes(
           "not active",
         )
+      )
     ) {
+
       return response(
         {
           status:
@@ -866,9 +965,10 @@ export async function POST(
       );
     }
 
+
     /* =====================================================
        LOAN/SAVINGS ROUTING FAILURE
-    ===================================================== */
+    ====================================================== */
 
     if (
       lowerMessage.includes(
@@ -878,6 +978,7 @@ export async function POST(
         "multiple active loans",
       )
     ) {
+
       return response(
         {
           status:
@@ -908,15 +1009,17 @@ export async function POST(
       );
     }
 
+
     /* =====================================================
        SAVINGS ACCOUNT FAILURE
-    ===================================================== */
+    ====================================================== */
 
     if (
       lowerMessage.includes(
         "savings account",
       )
     ) {
+
       return response(
         {
           status:
@@ -947,15 +1050,22 @@ export async function POST(
       );
     }
 
+
     /* =====================================================
        UNEXPECTED PROCESSOR ERROR
-    ===================================================== */
+    ====================================================== */
 
     console.error(
       "[GEO-SHUA SMS PROCESS] Unexpected processor error:",
       error,
     );
 
+    /**
+     * HTTP 500 is reserved for genuinely unexpected
+     * failures.
+     *
+     * SmsProcessingWorker will retry these.
+     */
     return response(
       {
         status:
@@ -984,11 +1094,13 @@ export async function POST(
   }
 }
 
+
 /* =========================================================
-   OPTIONAL METHOD HANDLING
+   GET
 ========================================================= */
 
 export async function GET() {
+
   return response(
     {
       status:
@@ -1015,3 +1127,4 @@ export async function GET() {
     200,
   );
 }
+

@@ -44,8 +44,8 @@
  * Existing fines never compound.
  * One fine is allowed per repayment cycle.
  *
- * Loan contractual dates are stored as YYYY-MM-DD calendar strings.
- * Repayment transactionDate remains a real timestamp.
+ * All loan financial dates, including repayment transactionDate,
+ * are stored as exact YYYY-MM-DD calendar strings.
  *
  * Financial ledgers remain separate from the loan master record.
  */
@@ -147,9 +147,6 @@ const DEFAULT_REPAYMENT_CYCLE_DAYS =
 
 const DEFAULT_FINE_RATE =
   0.10;
-
-const FUTURE_TRANSACTION_TOLERANCE_MS =
-  5 * 60 * 1000;
 
 /* =========================================================
    MONGODB DOCUMENT TYPES
@@ -2189,8 +2186,12 @@ async function getLoanPaidTotal(
  * Returns repayments recorded on or before the supplied
  * Kenyan calendar date.
  *
- * transactionDate is stored as a real MongoDB Date, therefore
- * the CalendarDate is converted only for timestamp comparison.
+ * Canonical repayment transactionDate values are stored as
+ * YYYY-MM-DD strings. Lexical comparison is therefore also
+ * chronological comparison.
+ *
+ * A legacy Date branch is retained so older repayment records
+ * do not disappear from historical calculations.
  */
 async function getLoanPaidTotalAsOf(
   loanId: ObjectId,
@@ -2202,19 +2203,17 @@ async function getLoanPaidTotalAsOf(
     "repayment cutoff date",
   );
 
-  const {
-    repayments,
-  } =
+  const { repayments } =
     await getCollections();
 
-  const cutoffStart =
+  const legacyCutoffStart =
     calendarDateToKenyanStartDate(
       asOfDate,
     );
 
-  const cutoffEnd =
+  const legacyCutoffEnd =
     new Date(
-      cutoffStart.getTime() +
+      legacyCutoffStart.getTime() +
         24 * 60 * 60 * 1000 -
         1,
     );
@@ -2230,10 +2229,20 @@ async function getLoanPaidTotalAsOf(
             $match: {
               loanId,
 
-              transactionDate: {
-                $lte:
-                  cutoffEnd,
-              },
+              $or: [
+                {
+                  transactionDate: {
+                    $lte: asOfDate,
+                  },
+                },
+
+                {
+                  transactionDate: {
+                    $type: "date",
+                    $lte: legacyCutoffEnd,
+                  },
+                },
+              ],
             },
           },
 
@@ -2242,8 +2251,7 @@ async function getLoanPaidTotalAsOf(
               _id: null,
 
               total: {
-                $sum:
-                  "$amount",
+                $sum: "$amount",
               },
             },
           },
@@ -3469,9 +3477,9 @@ function getAssessmentPeriod(
 /**
  * Returns the number of fully completed repayment cycles.
  */
-function getLatestDueAssessmentPeriod(
+function getLatestDueAssessmentPeriodForCalendarDate(
   loan: LoanDocument,
-  asOfDate: Date,
+  asOfCalendarDate: CalendarDate,
 ): number {
   const cycleDays =
     normalizeCycleDays(
@@ -3485,28 +3493,15 @@ function getLatestDueAssessmentPeriod(
       loan.loanNumber,
     );
 
-  const asOfCalendarDate =
-    dateToKenyanCalendarDate(
-      asOfDate,
-    );
+  assertCalendarDate(
+    asOfCalendarDate,
+    "as-of calendar date",
+  );
 
-  /*
-   * Calculate elapsed calendar days as:
-   *
-   *   asOfDate - disbursementDate
-   *
-   * Example:
-   *
-   *   disbursement = 2026-09-09
-   *   asOf         = 2026-09-16
-   *   elapsed      = 7 days
-   *
-   * Therefore period 1 is completed.
-   */
   const elapsedDays =
     differenceInCalendarDays(
-      asOfCalendarDate,
       disbursementDate,
+      asOfCalendarDate,
     );
 
   if (
@@ -3518,6 +3513,24 @@ function getLatestDueAssessmentPeriod(
   return Math.floor(
     elapsedDays /
       cycleDays,
+  );
+}
+
+/**
+ * Returns the number of fully completed repayment cycles for
+ * a real timestamp. The timestamp is converted once to the
+ * Kenyan calendar date and the financial calculation remains
+ * entirely calendar-date based.
+ */
+function getLatestDueAssessmentPeriod(
+  loan: LoanDocument,
+  asOfDate: Date,
+): number {
+  return getLatestDueAssessmentPeriodForCalendarDate(
+    loan,
+    dateToKenyanCalendarDate(
+      asOfDate,
+    ),
   );
 }
 
@@ -6336,64 +6349,100 @@ export async function updateLoan(
 ========================================================= */
 
 /**
- * Finds active loans that have reached at least their first
- * repayment cycle and passes them to accrueLoanFines().
+ * Accrues every completed repayment cycle that is currently
+ * eligible for assessment.
  *
- * accrueLoanFines() remains the authoritative financial
- * assessment and persistence engine.
+ * IMPORTANT:
+ * - This is an explicit financial operation.
+ * - getLoans() does NOT call it.
+ * - Fines are persisted to loanFines.
+ * - Assessments are persisted to loanAssessments.
+ * - Loan projections are reconciled after successful accrual.
+ *
+ * It is safe to call repeatedly because completed periods are
+ * protected by unique MongoDB indexes and are skipped once an
+ * assessment already exists.
  */
-export async function accrueAllLoanFines(): Promise<number> {
+export async function accrueAllLoanFines(
+  asOfDate: Date = new Date(),
+): Promise<number> {
+  if (!isValidDate(asOfDate)) {
+    throw new Error(
+      "Invalid as-of date.",
+    );
+  }
+
   const { loans } =
     await getCollections();
 
-  const now =
-    new Date();
-
-  const today =
+  const asOfCalendarDate =
     dateToKenyanCalendarDate(
-      now,
+      asOfDate,
     );
 
+  /*
+   * Canonical loans use string calendar dates. The legacy Date
+   * branch allows old loans to be discovered as well; the final
+   * eligibility check is performed in JavaScript after normalizing
+   * the value so a BSON type mismatch can never suppress a loan.
+   */
   const candidates =
     await loans
       .find(
         {
-          status:
-            "active",
-
-          fineStatus:
-            "active",
-
-          firstDueDate: {
-            $lte:
-              today,
-          },
+          status: "active",
+          fineStatus: "active",
+          $or: [
+            {
+              firstDueDate: {
+                $lte: asOfCalendarDate,
+              },
+            },
+            {
+              firstDueDate: {
+                $type: "date",
+              },
+            },
+          ],
         },
         {
           projection: {
             _id: 1,
+            firstDueDate: 1,
           },
         },
       )
       .toArray();
 
-  let created =
-    0;
+  let created = 0;
 
-  for (
-    const loan of candidates
-  ) {
+  for (const loan of candidates) {
     if (!loan._id) {
       continue;
     }
 
+    const firstDueDate =
+      normalizeLoanCalendarDate(
+        loan.firstDueDate,
+        "loan.firstDueDate",
+        loan._id.toString(),
+      );
+
+    if (firstDueDate > asOfCalendarDate) {
+      continue;
+    }
+
     try {
-      created +=
-        await accrueLoanFines(
-          loan._id.toString(),
-          now,
-        );
+      created += await accrueLoanFines(
+        loan._id.toString(),
+        asOfDate,
+      );
     } catch (error) {
+      /*
+       * One damaged loan must not prevent the remaining loans
+       * from being assessed. The failed loan is logged and can
+       * be retried on the next batch run.
+       */
       console.error(
         `Failed to accrue fines for loan ${loan._id.toString()}:`,
         error,
@@ -6405,12 +6454,9 @@ export async function accrueAllLoanFines(): Promise<number> {
 }
 
 
-
 /* =========================================================
    ASSESSMENT PERIOD
 ========================================================= */
-
-
 
 async function getPeriodPaymentTotal(
   loanId: ObjectId,
@@ -6420,13 +6466,6 @@ async function getPeriodPaymentTotal(
   const { repayments } =
     await getCollections();
 
-  /*
-   * Financial dates are stored as exact
-   * YYYY-MM-DD strings.
-   *
-   * Do NOT convert them to JavaScript Date.
-   * Do NOT use $dateToString.
-   */
   assertCalendarDate(
     period.periodStart,
     "repayment period start",
@@ -6437,17 +6476,7 @@ async function getPeriodPaymentTotal(
     "repayment period end",
   );
 
-  /*
-   * Period 1:
-   *   start <= transactionDate <= end
-   *
-   * Period 2+:
-   *   start < transactionDate <= end
-   *
-   * This prevents a repayment on a period boundary
-   * from being counted in two different periods.
-   */
-  const transactionDateFilter =
+  const canonicalDateFilter =
     period.periodNumber === 1
       ? {
           $gte: period.periodStart,
@@ -6456,6 +6485,40 @@ async function getPeriodPaymentTotal(
       : {
           $gt: period.periodStart,
           $lte: period.periodEnd,
+        };
+
+  /*
+   * Legacy repayment records may still contain a BSON Date.
+   * Keep them visible without changing the canonical storage
+   * format used by new records.
+   */
+  const periodStartDate =
+    calendarDateToKenyanStartDate(
+      period.periodStart,
+    );
+
+  const periodEndStartDate =
+    calendarDateToKenyanStartDate(
+      period.periodEnd,
+    );
+
+  const legacyDateFilter =
+    period.periodNumber === 1
+      ? {
+          $gte: periodStartDate,
+          $lte: new Date(
+            periodEndStartDate.getTime() +
+              24 * 60 * 60 * 1000 -
+              1,
+          ),
+        }
+      : {
+          $gt: periodStartDate,
+          $lte: new Date(
+            periodEndStartDate.getTime() +
+              24 * 60 * 60 * 1000 -
+              1,
+          ),
         };
 
   const result =
@@ -6468,8 +6531,18 @@ async function getPeriodPaymentTotal(
           {
             $match: {
               loanId,
-              transactionDate:
-                transactionDateFilter,
+              $or: [
+                {
+                  transactionDate:
+                    canonicalDateFilter,
+                },
+                {
+                  transactionDate: {
+                    $type: "date",
+                    ...legacyDateFilter,
+                  },
+                },
+              ],
             },
           },
           {
@@ -6493,7 +6566,6 @@ async function getPeriodPaymentTotal(
 }
 
 
-
 /* =========================================================
    ASSESS LOAN PERIOD
 ========================================================= */
@@ -6501,7 +6573,7 @@ async function getPeriodPaymentTotal(
 async function assessLoanPeriod(
   loanId: ObjectId,
   periodNumber: number,
-  assessmentDate: Date,
+  assessmentDate: CalendarDate,
   session: ClientSession,
 ): Promise<LoanAssessment> {
   const {
@@ -6558,8 +6630,13 @@ async function assessLoanPeriod(
       periodNumber,
     );
 
+  assertCalendarDate(
+    assessmentDate,
+    "assessment date",
+  );
+
   if (
-    dateToKenyanCalendarDate(assessmentDate) <
+    assessmentDate <
     period.periodEnd
   ) {
     throw new Error(
@@ -6890,8 +6967,7 @@ async function assessLoanPeriod(
     periodEnd:
       period.periodEnd,
 
-    assessmentDate:
-      dateToKenyanCalendarDate(assessmentDate),
+    assessmentDate,
 
     openingCoreBalance,
 
@@ -7039,297 +7115,257 @@ async function assessLoanPeriod(
 }
 
 
+
+
 /* =========================================================
    ACCRUE LOAN FINES
 ========================================================= */
 
+/**
+ * Internal assessment engine.
+ *
+ * It MUST run inside an existing MongoDB transaction. It only
+ * creates missing assessments/fines. It does not reconcile the
+ * loan projection, because callers such as createLoanRepayment()
+ * may still be in the middle of the same financial transaction.
+ */
+async function accrueLoanFinesInSession(
+  loanId: ObjectId,
+  asOfCalendarDate: CalendarDate,
+  session: ClientSession,
+): Promise<number> {
+  assertCalendarDate(
+    asOfCalendarDate,
+    "as-of calendar date",
+  );
+
+  const { loans, assessments } =
+    await getCollections();
+
+  const loan =
+    await loans.findOne(
+      { _id: loanId },
+      { session },
+    );
+
+  if (!loan) {
+    throw new Error(
+      "Loan not found.",
+    );
+  }
+
+  if (
+    loan.status !== "active" ||
+    loan.fineStatus === "stopped"
+  ) {
+    return 0;
+  }
+
+  const latestPeriod =
+    getLatestDueAssessmentPeriodForCalendarDate(
+      loan,
+      asOfCalendarDate,
+    );
+
+  if (latestPeriod <= 0) {
+    return 0;
+  }
+
+  let created = 0;
+
+  for (
+    let periodNumber = 1;
+    periodNumber <= latestPeriod;
+    periodNumber++
+  ) {
+    const existing =
+      await assessments.findOne(
+        {
+          loanId,
+          periodNumber,
+        },
+        { session },
+      );
+
+    if (existing) {
+      continue;
+    }
+
+    await assessLoanPeriod(
+      loanId,
+      periodNumber,
+      asOfCalendarDate,
+      session,
+    );
+
+    const inserted =
+      await assessments.findOne(
+        {
+          loanId,
+          periodNumber,
+        },
+        { session },
+      );
+
+    if (inserted) {
+      created++;
+    }
+  }
+
+  return created;
+}
+
+/**
+ * Public transactional wrapper.
+ *
+ * Every fine written by this function is committed together with
+ * its assessment. After the ledger write succeeds, the loan's
+ * maintained projection is reconciled from the ledgers.
+ */
 export async function accrueLoanFines(
   loanId: string,
   asOfDate: Date = new Date(),
 ): Promise<number> {
-  if (
-    !ObjectId.isValid(
-      loanId,
-    )
-  ) {
+  if (!ObjectId.isValid(loanId)) {
     throw new Error(
       "Invalid loan ID.",
     );
   }
 
-  if (
-    !isValidDate(
-      asOfDate,
-    )
-  ) {
+  if (!isValidDate(asOfDate)) {
     throw new Error(
       "Invalid as-of date.",
     );
   }
 
-  const {
-    client,
-  } = await getCollections();
+  const { client, loans, assessments } =
+    await getCollections();
+
+  const objectId =
+    createObjectId(loanId);
+
+  const asOfCalendarDate =
+    dateToKenyanCalendarDate(
+      asOfDate,
+    );
 
   const session =
     client.startSession();
 
   try {
-    const createdCount =
-      await session.withTransaction(
-        async (): Promise<number> => {
-          const {
-            loans,
-          } = await getCollections();
-
-          const objectId =
-            createObjectId(
-              loanId,
-            );
-
-          const loan =
-            await loans.findOne(
-              {
-                _id:
-                  objectId,
-              },
-              {
-                session,
-              },
-            );
-
-          if (!loan) {
-            throw new Error(
-              "Loan not found.",
-            );
-          }
-
-          if (
-            loan.status === "cancelled" ||
-            loan.status === "completed"
-          ) {
-            return 0;
-          }
-
-          if (
-            loan.fineStatus ===
-            "stopped"
-          ) {
-            return 0;
-          }
-
-          /*
-           * Determine how many complete repayment
-           * cycles have elapsed.
-           */
-          const latestPeriod =
-            getLatestDueAssessmentPeriod(
-              loan,
-              asOfDate,
-            );
-
-          if (
-            latestPeriod <= 0
-          ) {
-            return 0;
-          }
-
-          let created = 0;
-
-          /*
-           * Assess every completed repayment cycle
-           * that has not already been assessed.
-           *
-           * Example:
-           * 7 days  -> period 1
-           * 14 days -> period 2
-           * 21 days -> period 3
-           */
-          for (
-            let periodNumber = 1;
-            periodNumber <=
-            latestPeriod;
-            periodNumber++
-          ) {
-            const {
-              assessments,
-            } = await getCollections();
-
-            const existing =
-              await assessments.findOne(
-                {
-                  loanId:
-                    objectId,
-
-                  periodNumber,
-                },
-                {
-                  session,
-                },
-              );
-
-            if (existing) {
-              continue;
-            }
-
-            await assessLoanPeriod(
-              objectId,
-              periodNumber,
-              asOfDate,
-              session,
-            );
-
-            /*
-             * Confirm that the assessment now exists.
-             */
-            const inserted =
-              await assessments.findOne(
-                {
-                  loanId:
-                    objectId,
-
-                  periodNumber,
-                },
-                {
-                  session,
-                },
-              );
-
-            if (inserted) {
-              created++;
-            }
-          }
-
-          /*
-           * Determine whether the loan has ever
-           * defaulted on a completed repayment cycle.
-           */
-          const {
-            assessments,
-          } = await getCollections();
-
-          const defaultAssessment =
-            await assessments.findOne(
-              {
-                loanId:
-                  objectId,
-
-                defaulted:
-                  true,
-              },
-              {
-                session,
-              },
-            );
-
-          /*
-           * Read authoritative financial totals
-           * from the append-only ledgers.
-           */
-          const paid =
-            await getLoanPaidTotal(
-              objectId,
-              session,
-            );
-
-          const fines =
-            await getLoanFineTotal(
-              objectId,
-              session,
-            );
-
-          const waived =
-            await getLoanWaivedFineTotal(
-              objectId,
-              session,
-            );
-
-          /*
-           * Final outstanding:
-           *
-           * core balance
-           * + fines
-           * - effective waivers
-           * - payments
-           *
-           * Existing fines never compound.
-           */
-          const outstanding =
-            calculateFinalOutstanding(
-              loan.principal,
-              loan.interestAmount,
-              fines,
-              waived,
-              paid,
-            );
-
-          let repaymentStatus:
-            Loan["repaymentStatus"] =
-            "current";
-
-          if (
-            outstanding <= 0
-          ) {
-            repaymentStatus =
-              "completed";
-          } else if (
-            defaultAssessment ||
-            dateToKenyanCalendarDate(asOfDate) >=
-              loan.endDate
-          ) {
-            repaymentStatus =
-              "defaulted";
-          }
-
-          /*
-           * Update the loan status projection.
-           */
-          await loans.updateOne(
-            {
-              _id:
-                objectId,
-            },
-            {
-              $set: {
-                repaymentStatus,
-
-                updatedAt:
-                  new Date(),
-              },
-            },
-            {
-              session,
-            },
+    return await session.withTransaction(
+      async (): Promise<number> => {
+        const loan =
+          await loans.findOne(
+            { _id: objectId },
+            { session },
           );
 
-          /*
-           * Reconcile the loan projections from
-           * the authoritative ledgers.
-           */
-          await reconcileLoan(
+        if (!loan) {
+          throw new Error(
+            "Loan not found.",
+          );
+        }
+
+        if (
+          loan.status !== "active" ||
+          loan.fineStatus === "stopped"
+        ) {
+          return 0;
+        }
+
+        const created =
+          await accrueLoanFinesInSession(
+            objectId,
+            asOfCalendarDate,
+            session,
+          );
+
+        /*
+         * Determine whether any completed cycle defaulted.
+         */
+        const defaultAssessment =
+          await assessments.findOne(
+            {
+              loanId: objectId,
+              defaulted: true,
+            },
+            { session },
+          );
+
+        const paid =
+          await getLoanPaidTotal(
             objectId,
             session,
           );
 
-          return created;
-        },
-        {
-          readConcern: {
-            level:
-              "snapshot",
+        const fines =
+          await getLoanFineTotal(
+            objectId,
+            session,
+          );
+
+        const waived =
+          await getLoanWaivedFineTotal(
+            objectId,
+            session,
+          );
+
+        const outstanding =
+          calculateFinalOutstanding(
+            loan.principal,
+            loan.interestAmount,
+            fines,
+            waived,
+            paid,
+          );
+
+        let repaymentStatus:
+          Loan["repaymentStatus"] =
+          "current";
+
+        if (outstanding <= 0) {
+          repaymentStatus = "completed";
+        } else if (
+          defaultAssessment ||
+          asOfCalendarDate >=
+            normalizeLoanCalendarDate(
+              loan.endDate,
+              "loan.endDate",
+              loan.loanNumber,
+            )
+        ) {
+          repaymentStatus = "defaulted";
+        }
+
+        await loans.updateOne(
+          { _id: objectId },
+          {
+            $set: {
+              repaymentStatus,
+              updatedAt: new Date(),
+            },
           },
+          { session },
+        );
 
-          writeConcern: {
-            w:
-              "majority",
-          },
+        await reconcileLoan(
+          objectId,
+          session,
+        );
 
-          maxCommitTimeMS:
-            10_000,
+        return created;
+      },
+      {
+        readConcern: {
+          level: "snapshot",
         },
-      );
-
-    return createdCount;
+        writeConcern: {
+          w: "majority",
+        },
+        maxCommitTimeMS: 10_000,
+      },
+    );
   } finally {
     await session.endSession();
   }
@@ -7871,6 +7907,7 @@ export async function createLoanRepayment(
        YYYY-MM-DD
 
      Do NOT convert transactionDate to JavaScript Date.
+     Repayment transactionDate is stored as a calendar date string.
   ======================================================= */
 
   const transactionDate =
@@ -8204,36 +8241,15 @@ export async function createLoanRepayment(
               session,
             );
 
-          const currentOutstanding =
-            calculateFinalOutstanding(
-              loan.principal,
-              loan.interestAmount,
-              totalFinesBefore,
-              totalWaivedFinesBefore,
-              amountPaidBefore,
-            );
-
-          if (
-            currentOutstanding <=
-            0
-          ) {
-            throw new Error(
-              "Loan has no outstanding balance.",
-            );
-          }
-
-          /* =================================================
-             OVERPAYMENT PROTECTION
-          ================================================= */
-
-          if (
-            amount >
-            currentOutstanding
-          ) {
-            throw new Error(
-              `Repayment exceeds the outstanding balance of KSh ${currentOutstanding.toLocaleString()}.`,
-            );
-          }
+          /*
+           * The final outstanding/overpayment check is deliberately
+           * performed after the repayment has been inserted and
+           * completed-cycle fines have been assessed.
+           *
+           * The old projection totals are still retained below for
+           * audit compatibility, but they are not trusted as the
+           * authoritative source of current financial state.
+           */
 
           /* =================================================
              REPAYMENT DOCUMENT
@@ -8315,6 +8331,73 @@ export async function createLoanRepayment(
           }
 
           /* =================================================
+             ASSESS COMPLETED CYCLES BEFORE FINALIZING PAYMENT
+
+             The repayment is inserted first so a payment made
+             exactly on a cycle-end date is included in that
+             cycle's payment total and cannot be fined.
+
+             A late payment is naturally excluded from the
+             completed cycle because the cycle has already ended.
+
+             This is deliberately performed inside the SAME
+             MongoDB transaction. If fine/assessment persistence
+             fails, the repayment also rolls back.
+          ================================================= */
+
+          await accrueLoanFinesInSession(
+            loanObjectId,
+            transactionDate,
+            session,
+          );
+
+          /* =================================================
+             RE-READ FINANCIAL LEDGER TOTALS
+
+             The fine ledger may have changed during the
+             assessment above, so the totals used for the
+             outstanding calculation MUST be refreshed.
+          ================================================= */
+
+          const totalFinesAfterAccrual =
+            await getLoanFineTotal(
+              loanObjectId,
+              session,
+            );
+
+          const totalWaivedFinesAfterAccrual =
+            await getLoanWaivedFineTotal(
+              loanObjectId,
+              session,
+            );
+
+          const currentOutstandingAfterAccrual =
+            calculateFinalOutstanding(
+              loan.principal,
+              loan.interestAmount,
+              totalFinesAfterAccrual,
+              totalWaivedFinesAfterAccrual,
+              amountPaidBefore,
+            );
+
+          if (
+            currentOutstandingAfterAccrual <= 0
+          ) {
+            throw new Error(
+              "Loan has no outstanding balance.",
+            );
+          }
+
+          if (
+            amount >
+            currentOutstandingAfterAccrual
+          ) {
+            throw new Error(
+              `Repayment exceeds the outstanding balance of KSh ${currentOutstandingAfterAccrual.toLocaleString()}.`,
+            );
+          }
+
+          /* =================================================
              CALCULATE NEW FINANCIAL STATE
           ================================================= */
 
@@ -8328,8 +8411,8 @@ export async function createLoanRepayment(
             calculateFinalOutstanding(
               loan.principal,
               loan.interestAmount,
-              totalFinesBefore,
-              totalWaivedFinesBefore,
+              totalFinesAfterAccrual,
+              totalWaivedFinesAfterAccrual,
               newAmountPaid,
             );
 
@@ -8394,12 +8477,12 @@ export async function createLoanRepayment(
                     newAmountPaid,
 
                   totalFines:
-                    totalFinesBefore,
+                    totalFinesAfterAccrual,
 
                   totalWaivedFines:
                     Math.min(
-                      totalFinesBefore,
-                      totalWaivedFinesBefore,
+                      totalFinesAfterAccrual,
+                      totalWaivedFinesAfterAccrual,
                     ),
 
                   outstandingBalance:
@@ -8479,7 +8562,7 @@ export async function createLoanRepayment(
                 repayment.transactionDate,
 
               outstandingBefore:
-                currentOutstanding,
+                currentOutstandingAfterAccrual,
 
               outstandingAfter:
                 newOutstanding,
@@ -8489,11 +8572,17 @@ export async function createLoanRepayment(
               amountPaidAfter:
                 newAmountPaid,
 
-              totalFines:
+              totalFinesBefore:
                 totalFinesBefore,
 
-              totalWaivedFines:
+              totalFinesAfter:
+                totalFinesAfterAccrual,
+
+              totalWaivedFinesBefore:
                 totalWaivedFinesBefore,
+
+              totalWaivedFinesAfter:
+                totalWaivedFinesAfterAccrual,
             },
             session,
           );
@@ -8522,10 +8611,10 @@ export async function createLoanRepayment(
                   loan.totalDue,
 
                 totalFines:
-                  totalFinesBefore,
+                  totalFinesAfterAccrual,
 
                 totalWaivedFines:
-                  totalWaivedFinesBefore,
+                  totalWaivedFinesAfterAccrual,
 
                 finalOutstandingBalance:
                   newOutstanding,

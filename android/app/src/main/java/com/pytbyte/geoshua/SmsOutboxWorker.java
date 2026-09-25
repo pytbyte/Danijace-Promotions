@@ -5,9 +5,11 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.telephony.SmsManager;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
+import androidx.work.BackoffPolicy;
 import androidx.work.Constraints;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.ExistingWorkPolicy;
@@ -34,564 +36,620 @@ import java.util.concurrent.TimeUnit;
 
 public class SmsOutboxWorker extends Worker {
 
+    private static final String TAG =
+            "SmsOutboxWorker";
 
-/*
- * =========================================================
- * CONFIGURATION
- * =========================================================
- */
+    /*
+     * =========================================================
+     * CONFIGURATION
+     * =========================================================
+     */
 
-private static final String API_BASE_URL =
-        "https://geo-shua.vercel.app";
+    private static final String API_BASE_URL =
+            "https://geo-shua.vercel.app";
 
-private static final String CLAIM_URL =
-        API_BASE_URL + "/api/sms/outbox/claim";
+    private static final String CLAIM_URL =
+            API_BASE_URL + "/api/sms/outbox/claim";
 
-private static final String RESULT_URL =
-        API_BASE_URL + "/api/sms/outbox/result";
+    private static final String RESULT_URL =
+            API_BASE_URL + "/api/sms/outbox/result";
 
-private static final int CLAIM_LIMIT = 10;
+    private static final int CLAIM_LIMIT = 10;
 
-private static final int CONNECT_TIMEOUT_MS = 15_000;
+    private static final int CONNECT_TIMEOUT_MS =
+            15_000;
 
-private static final int READ_TIMEOUT_MS = 30_000;
+    private static final int READ_TIMEOUT_MS =
+            30_000;
 
-private static final String PREFS_NAME =
-        "geoshua_sms_worker";
+    private static final String PREFS_NAME =
+            "geoshua_sms_worker";
 
-private static final String DEVICE_ID_KEY =
-        "device_id";
+    private static final String DEVICE_ID_KEY =
+            "device_id";
 
-private static final String IMMEDIATE_WORK_NAME =
-        "geoshua_sms_outbox_now";
+    /*
+     * Unique work names.
+     */
 
-private static final String PERIODIC_WORK_NAME =
-        "geoshua_sms_outbox";
+    private static final String IMMEDIATE_WORK_NAME =
+            "geoshua_sms_outbox_now";
 
-/*
- * =========================================================
- * CONSTRUCTOR
- * =========================================================
- */
+    private static final String PERIODIC_WORK_NAME =
+            "geoshua_sms_outbox";
 
-public SmsOutboxWorker(
-        @NonNull Context context,
-        @NonNull WorkerParameters workerParams
-) {
-    super(context, workerParams);
-}
+    /*
+     * =========================================================
+     * CONSTRUCTOR
+     * =========================================================
+     */
 
-/*
- * =========================================================
- * WORK
- * =========================================================
- */
+    public SmsOutboxWorker(
+            @NonNull Context context,
+            @NonNull WorkerParameters workerParams
+    ) {
+        super(
+                context,
+                workerParams
+        );
+    }
 
-@NonNull
-@Override
-public Result doWork() {
-    Context context =
-            getApplicationContext();
+    /*
+     * =========================================================
+     * WORK
+     * =========================================================
+     */
 
-    String deviceId =
-            getDeviceId(context);
+    @NonNull
+    @Override
+    public Result doWork() {
 
-    try {
-        ClaimResponse claim =
-                claimMessages(deviceId);
+        Context context =
+                getApplicationContext();
 
-        if (!claim.success) {
-            return Result.retry();
-        }
+        String deviceId =
+                getDeviceId(context);
 
-        /*
-         * Nothing waiting.
-         */
-        if (claim.messages.length() == 0) {
-            return Result.success();
-        }
+        Log.d(
+                TAG,
+                "SMS outbox worker started. deviceId=" +
+                        deviceId
+        );
 
-        boolean reportFailure = false;
-
-        for (
-                int i = 0;
-                i < claim.messages.length();
-                i++
-        ) {
-            JSONObject sms =
-                    claim.messages.getJSONObject(i);
-
-            String smsId =
-                    sms.optString(
-                            "id",
-                            ""
-                    ).trim();
-
-            String recipient =
-                    sms.optString(
-                            "recipient",
-                            ""
-                    ).trim();
-
-            String message =
-                    sms.optString(
-                            "message",
-                            ""
-                    );
+        try {
 
             /*
-             * A malformed claimed record should not
-             * remain stuck in "processing".
+             * =================================================
+             * CLAIM
+             * =================================================
              */
+
+            ClaimResponse claim =
+                    claimMessages(deviceId);
+
+            if (!claim.success) {
+
+                Log.e(
+                        TAG,
+                        "Unable to claim SMS outbox messages"
+                );
+
+                return Result.retry();
+            }
+
+            /*
+             * Nothing waiting.
+             */
+
             if (
-                    smsId.isEmpty() ||
-                    recipient.isEmpty() ||
-                    message.isEmpty()
+                    claim.messages == null ||
+                    claim.messages.length() == 0
             ) {
-                if (!smsId.isEmpty()) {
+
+                Log.d(
+                        TAG,
+                        "SMS outbox is empty"
+                );
+
+                return Result.success();
+            }
+
+            Log.d(
+                    TAG,
+                    "Claimed " +
+                            claim.messages.length() +
+                            " SMS message(s)"
+            );
+
+            boolean reportFailure =
+                    false;
+
+            /*
+             * =================================================
+             * PROCESS CLAIMED MESSAGES
+             * =================================================
+             */
+
+            for (
+                    int i = 0;
+                    i < claim.messages.length();
+                    i++
+            ) {
+
+                /*
+                 * If Android stops this worker, stop processing
+                 * immediately.
+                 */
+
+                if (isStopped()) {
+
+                    Log.w(
+                            TAG,
+                            "Worker stopped while processing SMS"
+                    );
+
+                    return Result.retry();
+                }
+
+                JSONObject sms =
+                        claim.messages.getJSONObject(i);
+
+                String smsId =
+                        sms.optString(
+                                "id",
+                                ""
+                        ).trim();
+
+                String recipient =
+                        sms.optString(
+                                "recipient",
+                                ""
+                        ).trim();
+
+                String message =
+                        sms.optString(
+                                "message",
+                                ""
+                        );
+
+                /*
+                 * =================================================
+                 * VALIDATE CLAIMED RECORD
+                 * =================================================
+                 */
+
+                if (
+                        smsId.isEmpty() ||
+                        recipient.isEmpty() ||
+                        message.trim().isEmpty()
+                ) {
+
+                    Log.e(
+                            TAG,
+                            "Malformed SMS outbox record. smsId=" +
+                                    smsId
+                    );
+
+                    /*
+                     * Do not leave malformed records permanently
+                     * stuck in processing.
+                     */
+
+                    if (!smsId.isEmpty()) {
+
+                        boolean reported =
+                                reportResult(
+                                        deviceId,
+                                        smsId,
+                                        "failed",
+                                        null,
+                                        "SMS outbox record is missing recipient or message."
+                                );
+
+                        if (!reported) {
+                            reportFailure = true;
+                        }
+                    }
+
+                    continue;
+                }
+
+                /*
+                 * =================================================
+                 * SEND SMS NATIVELY
+                 * =================================================
+                 *
+                 * This deliberately does NOT depend on:
+                 *
+                 * - Capacitor
+                 * - WebView
+                 * - MainActivity
+                 * - SmsSenderPlugin
+                 *
+                 * The worker can therefore operate while the
+                 * application UI is completely closed.
+                 */
+
+                Log.d(
+                        TAG,
+                        "Sending SMS. smsId=" +
+                                smsId +
+                                " recipient=" +
+                                maskPhone(recipient)
+                );
+
+                SendResult sendResult =
+                        sendSms(
+                                context,
+                                recipient,
+                                message
+                        );
+
+                /*
+                 * =================================================
+                 * SMS ACCEPTED BY ANDROID
+                 * =================================================
+                 */
+
+                if (sendResult.success) {
+
+                    Log.d(
+                            TAG,
+                            "SMS accepted by Android. smsId=" +
+                                    smsId
+                    );
+
+                    boolean reported =
+                            reportResult(
+                                    deviceId,
+                                    smsId,
+                                    "sent",
+                                    "android-sms-accepted",
+                                    null
+                            );
+
+                    if (!reported) {
+
+                        /*
+                         * The SMS may already have been accepted
+                         * by Android. We still retry reporting so
+                         * the backend can eventually reconcile it.
+                         */
+
+                        Log.e(
+                                TAG,
+                                "Unable to report successful SMS. smsId=" +
+                                        smsId
+                        );
+
+                        reportFailure = true;
+                    }
+
+                } else {
+
+                    /*
+                     * =================================================
+                     * SMS FAILED LOCALLY
+                     * =================================================
+                     */
+
+                    Log.e(
+                            TAG,
+                            "SMS failed. smsId=" +
+                                    smsId +
+                                    " error=" +
+                                    sendResult.error
+                    );
+
                     boolean reported =
                             reportResult(
                                     deviceId,
                                     smsId,
                                     "failed",
                                     null,
-                                    "SMS outbox record is missing recipient or message."
+                                    sendResult.error
                             );
 
                     if (!reported) {
                         reportFailure = true;
                     }
                 }
-
-                continue;
             }
 
             /*
              * =================================================
-             * SEND SMS NATIVELY
-             *
-             * This deliberately uses SmsManager directly.
-             * It does not depend on the Capacitor WebView or
-             * SmsSenderPlugin.
+             * REPORTING FAILURE
              * =================================================
+             *
+             * If backend reporting failed, retry the worker.
+             *
+             * The server-side claim timeout/recovery mechanism
+             * is responsible for messages that remain in a
+             * processing state.
              */
 
-            SendResult sendResult =
-                    sendSms(
-                            context,
-                            recipient,
-                            message
-                    );
+            if (reportFailure) {
 
-            if (sendResult.success) {
-                boolean reported =
-                        reportResult(
-                                deviceId,
-                                smsId,
-                                "sent",
-                                "android-sms-accepted",
-                                null
-                        );
+                Log.w(
+                        TAG,
+                        "At least one SMS result could not be reported"
+                );
 
-                if (!reported) {
-                    reportFailure = true;
-                }
-            } else {
-                boolean reported =
-                        reportResult(
-                                deviceId,
-                                smsId,
-                                "failed",
-                                null,
-                                sendResult.error
-                        );
-
-                if (!reported) {
-                    reportFailure = true;
-                }
+                return Result.retry();
             }
-        }
 
-        /*
-         * If reporting failed, retry the worker.
-         *
-         * The server-side claim timeout/retry mechanism
-         * protects messages that were already claimed.
-         */
-        if (reportFailure) {
+            Log.d(
+                    TAG,
+                    "SMS outbox worker completed successfully"
+            );
+
+            return Result.success();
+
+        } catch (Exception exception) {
+
+            Log.e(
+                    TAG,
+                    "SMS outbox worker failed",
+                    exception
+            );
+
             return Result.retry();
         }
-
-        return Result.success();
-
-    } catch (Exception exception) {
-        return Result.retry();
     }
-}
-
-/*
- * =========================================================
- * WORKMANAGER SCHEDULING
- * =========================================================
- *
- * Called from MainActivity:
- *
- *     SmsOutboxWorker.schedule(this);
- *
- * This does two things:
- *
- * 1. Runs the worker immediately.
- * 2. Registers persistent periodic background polling.
- *
- * WorkManager requires a minimum periodic interval of
- * 15 minutes.
- */
-
-public static void schedule(
-        Context context
-) {
-    Constraints constraints =
-            new Constraints.Builder()
-                    .setRequiredNetworkType(
-                            NetworkType.CONNECTED
-                    )
-                    .build();
 
     /*
-     * =====================================================
-     * IMMEDIATE CHECK
-     * =====================================================
-     */
-
-    OneTimeWorkRequest immediateWork =
-            new OneTimeWorkRequest.Builder(
-                    SmsOutboxWorker.class
-            )
-                    .setConstraints(
-                            constraints
-                    )
-                    .build();
-
-    WorkManager
-            .getInstance(context)
-            .enqueueUniqueWork(
-                    IMMEDIATE_WORK_NAME,
-                    ExistingWorkPolicy.REPLACE,
-                    immediateWork
-            );
-
-    /*
-     * =====================================================
-     * PERIODIC BACKGROUND CHECK
-     * =====================================================
+     * =========================================================
+     * FCM WAKE
+     * =========================================================
      *
-     * This remains registered after the application UI
-     * is closed.
+     * Called by GeoShuaFirebaseMessagingService when the
+     * backend sends:
+     *
+     *     event=sms_outbox
+     *
+     * This does NOT require the application UI to be open.
+     *
+     * FCM wakes the Android process.
+     * WorkManager performs the actual SMS work.
      */
 
-    PeriodicWorkRequest periodicWork =
-            new PeriodicWorkRequest.Builder(
-                    SmsOutboxWorker.class,
-                    15,
-                    TimeUnit.MINUTES
-            )
-                    .setConstraints(
-                            constraints
-                    )
-                    .build();
-
-    WorkManager
-            .getInstance(context)
-            .enqueueUniquePeriodicWork(
-                    PERIODIC_WORK_NAME,
-                    ExistingPeriodicWorkPolicy.KEEP,
-                    periodicWork
-            );
-}
-
-/*
- * =========================================================
- * DEVICE ID
- * =========================================================
- *
- * Stable for this Android installation.
- *
- * This method is shared by:
- *
- * - SmsOutboxWorker
- * - FcmTokenRegistrar
- *
- * Keeping device identity in one place prevents the FCM
- * registration and SMS worker from accidentally using
- * different device IDs.
- */
-
-public static synchronized String getDeviceId(
-        Context context
-) {
-    Context applicationContext =
-            context.getApplicationContext();
-
-    SharedPreferences preferences =
-            applicationContext.getSharedPreferences(
-                    PREFS_NAME,
-                    Context.MODE_PRIVATE
-            );
-
-    String deviceId =
-            preferences.getString(
-                    DEVICE_ID_KEY,
-                    null
-            );
-
-    if (
-            deviceId != null &&
-            !deviceId.trim().isEmpty()
+    public static void enqueueNow(
+            Context context
     ) {
-        return deviceId.trim();
-    }
 
-    deviceId =
-            "android-" +
-            UUID.randomUUID()
-                    .toString();
-
-    preferences
-            .edit()
-            .putString(
-                    DEVICE_ID_KEY,
-                    deviceId
-            )
-            .apply();
-
-    return deviceId;
-}
-
-/*
- * =========================================================
- * CLAIM
- * =========================================================
- */
-
-private ClaimResponse claimMessages(
-        String deviceId
-) throws Exception {
-
-    JSONObject body =
-            new JSONObject();
-
-    body.put(
-            "deviceId",
-            deviceId
-    );
-
-    body.put(
-            "limit",
-            CLAIM_LIMIT
-    );
-
-    HttpResponse response =
-            postJson(
-                    CLAIM_URL,
-                    body
+        if (context == null) {
+            Log.e(
+                    TAG,
+                    "enqueueNow called with null context"
             );
+            return;
+        }
 
-    if (
-            response.statusCode < 200 ||
-            response.statusCode >= 300
-    ) {
-        return new ClaimResponse(
-                false,
-                new JSONArray()
+        Context applicationContext =
+                context.getApplicationContext();
+
+        Constraints constraints =
+                new Constraints.Builder()
+                        .setRequiredNetworkType(
+                                NetworkType.CONNECTED
+                        )
+                        .build();
+
+        OneTimeWorkRequest request =
+                new OneTimeWorkRequest.Builder(
+                        SmsOutboxWorker.class
+                )
+                        .setConstraints(
+                                constraints
+                        )
+                        .setBackoffCriteria(
+                                BackoffPolicy.EXPONENTIAL,
+                                30,
+                                TimeUnit.SECONDS
+                        )
+                        .build();
+
+        /*
+         * KEEP is intentional.
+         *
+         * If an SMS worker is already running, another FCM
+         * notification should not cancel and replace it.
+         *
+         * The existing worker claims multiple messages in
+         * one run.
+         */
+
+        WorkManager
+                .getInstance(applicationContext)
+                .enqueueUniqueWork(
+                        IMMEDIATE_WORK_NAME,
+                        ExistingWorkPolicy.KEEP,
+                        request
+                );
+
+        Log.d(
+                TAG,
+                "SMS outbox worker wake requested"
         );
     }
 
-    JSONObject json =
-            new JSONObject(
-                    response.body
-            );
+    /*
+     * =========================================================
+     * WORKMANAGER SCHEDULING
+     * =========================================================
+     *
+     * Called from MainActivity:
+     *
+     *     SmsOutboxWorker.schedule(this);
+     *
+     * This registers:
+     *
+     * 1. An immediate check.
+     * 2. A persistent 15-minute fallback.
+     *
+     * The periodic worker is important because FCM is a wake-up
+     * mechanism, not an absolute delivery guarantee.
+     */
 
-    boolean success =
-            json.optBoolean(
-                    "success",
-                    false
-            );
-
-    JSONArray messages =
-            json.optJSONArray(
-                    "messages"
-            );
-
-    if (messages == null) {
-        messages =
-                new JSONArray();
-    }
-
-    return new ClaimResponse(
-            success,
-            messages
-    );
-}
-
-/*
- * =========================================================
- * SEND SMS
- * =========================================================
- */
-
-private SendResult sendSms(
-        Context context,
-        String phone,
-        String message
-) {
-    if (
-            ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.SEND_SMS
-            )
-                    != PackageManager.PERMISSION_GRANTED
+    public static void schedule(
+            Context context
     ) {
-        return SendResult.failure(
-                "SEND_SMS permission is not granted."
+
+        if (context == null) {
+            return;
+        }
+
+        Context applicationContext =
+                context.getApplicationContext();
+
+        Constraints constraints =
+                new Constraints.Builder()
+                        .setRequiredNetworkType(
+                                NetworkType.CONNECTED
+                        )
+                        .build();
+
+        /*
+         * =====================================================
+         * IMMEDIATE CHECK
+         * =====================================================
+         */
+
+        OneTimeWorkRequest immediateWork =
+                new OneTimeWorkRequest.Builder(
+                        SmsOutboxWorker.class
+                )
+                        .setConstraints(
+                                constraints
+                        )
+                        .setBackoffCriteria(
+                                BackoffPolicy.EXPONENTIAL,
+                                30,
+                                TimeUnit.SECONDS
+                        )
+                        .build();
+
+        WorkManager
+                .getInstance(applicationContext)
+                .enqueueUniqueWork(
+                        IMMEDIATE_WORK_NAME,
+                        ExistingWorkPolicy.KEEP,
+                        immediateWork
+                );
+
+        /*
+         * =====================================================
+         * PERIODIC FALLBACK
+         * =====================================================
+         *
+         * Android requires at least 15 minutes for periodic
+         * WorkManager work.
+         *
+         * KEEP means we do not recreate the periodic worker
+         * every time MainActivity starts.
+         */
+
+        PeriodicWorkRequest periodicWork =
+                new PeriodicWorkRequest.Builder(
+                        SmsOutboxWorker.class,
+                        15,
+                        TimeUnit.MINUTES
+                )
+                        .setConstraints(
+                                constraints
+                        )
+                        .build();
+
+        WorkManager
+                .getInstance(applicationContext)
+                .enqueueUniquePeriodicWork(
+                        PERIODIC_WORK_NAME,
+                        ExistingPeriodicWorkPolicy.KEEP,
+                        periodicWork
+                );
+
+        Log.d(
+                TAG,
+                "SMS outbox background scheduling registered"
         );
     }
 
-    String normalizedPhone =
-            normalizePhone(phone);
+    /*
+     * =========================================================
+     * DEVICE ID
+     * =========================================================
+     *
+     * Stable for this Android installation.
+     *
+     * Shared by:
+     *
+     * - SmsOutboxWorker
+     * - FcmTokenRegistrar
+     *
+     * This is important because the backend must see the same
+     * device identity when:
+     *
+     * 1. Registering the FCM token.
+     * 2. Claiming SMS messages.
+     */
 
-    if (normalizedPhone.isEmpty()) {
-        return SendResult.failure(
-                "Recipient phone number is empty."
-        );
-    }
-
-    if (
-            message == null ||
-            message.trim().isEmpty()
+    public static synchronized String getDeviceId(
+            Context context
     ) {
-        return SendResult.failure(
-                "SMS message is empty."
-        );
-    }
 
-    try {
-        SmsManager smsManager =
-                SmsManager.getDefault();
+        Context applicationContext =
+                context.getApplicationContext();
 
-        ArrayList<String> parts =
-                smsManager.divideMessage(
-                        message
+        SharedPreferences preferences =
+                applicationContext.getSharedPreferences(
+                        PREFS_NAME,
+                        Context.MODE_PRIVATE
+                );
+
+        String deviceId =
+                preferences.getString(
+                        DEVICE_ID_KEY,
+                        null
                 );
 
         if (
-                parts == null ||
-                parts.isEmpty()
+                deviceId != null &&
+                !deviceId.trim().isEmpty()
         ) {
-            return SendResult.failure(
-                    "Unable to divide SMS message."
-            );
+            return deviceId.trim();
         }
 
-        /*
-         * Single-part SMS.
-         */
-        if (parts.size() == 1) {
-            smsManager.sendTextMessage(
-                    normalizedPhone,
-                    null,
-                    parts.get(0),
-                    null,
-                    null
-            );
+        deviceId =
+                "android-" +
+                        UUID.randomUUID()
+                                .toString();
 
-            return SendResult.success();
-        }
+        preferences
+                .edit()
+                .putString(
+                        DEVICE_ID_KEY,
+                        deviceId
+                )
+                .apply();
 
-        /*
-         * Multipart SMS.
-         */
-        smsManager.sendMultipartTextMessage(
-                normalizedPhone,
-                null,
-                parts,
-                null,
-                null
+        Log.d(
+                TAG,
+                "Created new SMS worker device ID"
         );
 
-        return SendResult.success();
-
-    } catch (SecurityException exception) {
-        return SendResult.failure(
-                "SMS security error: " +
-                safeError(exception)
-        );
-
-    } catch (IllegalArgumentException exception) {
-        return SendResult.failure(
-                "SMS argument error: " +
-                safeError(exception)
-        );
-
-    } catch (Exception exception) {
-        return SendResult.failure(
-                "SMS send error: " +
-                safeError(exception)
-        );
-    }
-}
-
-/*
- * =========================================================
- * PHONE NORMALIZATION
- * =========================================================
- */
-
-private String normalizePhone(
-        String phone
-) {
-    if (phone == null) {
-        return "";
+        return deviceId;
     }
 
-    String value =
-            phone.trim()
-                    .replace(" ", "")
-                    .replace("-", "")
-                    .replace("(", "")
-                    .replace(")", "");
+    /*
+     * =========================================================
+     * CLAIM
+     * =========================================================
+     */
 
-    if (value.startsWith("+254")) {
-        return "0" + value.substring(4);
-    }
+    private ClaimResponse claimMessages(
+            String deviceId
+    ) throws Exception {
 
-    if (value.startsWith("254")) {
-        return "0" + value.substring(3);
-    }
-
-    return value;
-}
-
-/*
- * =========================================================
- * RESULT
- * =========================================================
- */
-
-private boolean reportResult(
-        String deviceId,
-        String smsId,
-        String status,
-        String providerMessageId,
-        String error
-) {
-    if (
-            smsId == null ||
-            smsId.trim().isEmpty()
-    ) {
-        return false;
-    }
-
-    try {
         JSONObject body =
                 new JSONObject();
 
@@ -601,286 +659,631 @@ private boolean reportResult(
         );
 
         body.put(
-                "smsId",
-                smsId
+                "limit",
+                CLAIM_LIMIT
         );
-
-        body.put(
-                "status",
-                status
-        );
-
-        if (
-                providerMessageId != null &&
-                !providerMessageId
-                        .trim()
-                        .isEmpty()
-        ) {
-            body.put(
-                    "providerMessageId",
-                    providerMessageId
-            );
-        }
-
-        if (
-                error != null &&
-                !error.trim().isEmpty()
-        ) {
-            body.put(
-                    "error",
-                    error
-            );
-        }
 
         HttpResponse response =
                 postJson(
-                        RESULT_URL,
+                        CLAIM_URL,
                         body
                 );
 
-        return response.statusCode >= 200 &&
-                response.statusCode < 300;
+        if (
+                response.statusCode < 200 ||
+                response.statusCode >= 300
+        ) {
 
-    } catch (Exception exception) {
-        return false;
+            Log.e(
+                    TAG,
+                    "SMS claim failed. HTTP " +
+                            response.statusCode
+            );
+
+            return new ClaimResponse(
+                    false,
+                    new JSONArray()
+            );
+        }
+
+        JSONObject json =
+                new JSONObject(
+                        response.body
+                );
+
+        boolean success =
+                json.optBoolean(
+                        "success",
+                        false
+                );
+
+        JSONArray messages =
+                json.optJSONArray(
+                        "messages"
+                );
+
+        if (messages == null) {
+            messages =
+                    new JSONArray();
+        }
+
+        return new ClaimResponse(
+                success,
+                messages
+        );
     }
-}
 
-/*
- * =========================================================
- * HTTP
- * =========================================================
- */
+    /*
+     * =========================================================
+     * SEND SMS
+     * =========================================================
+     */
 
-private HttpResponse postJson(
-        String urlString,
-        JSONObject body
-) throws Exception {
-
-    HttpURLConnection connection =
-            null;
-
-    try {
-        URL url =
-                new URL(urlString);
-
-        connection =
-                (HttpURLConnection)
-                        url.openConnection();
-
-        connection.setRequestMethod(
-                "POST"
-        );
-
-        connection.setConnectTimeout(
-                CONNECT_TIMEOUT_MS
-        );
-
-        connection.setReadTimeout(
-                READ_TIMEOUT_MS
-        );
-
-        connection.setDoOutput(true);
-
-        connection.setRequestProperty(
-                "Content-Type",
-                "application/json"
-        );
-
-        connection.setRequestProperty(
-                "Accept",
-                "application/json"
-        );
+    private SendResult sendSms(
+            Context context,
+            String phone,
+            String message
+    ) {
 
         /*
-         * Temporary background-worker authentication.
-         *
-         * Later this will be replaced with proper
-         * registered-device authentication.
+         * =====================================================
+         * PERMISSION
+         * =====================================================
          */
-        connection.setRequestProperty(
-                "x-geoshua-sms-worker",
-                BuildConfig.GEO_SHUA_SMS_WORKER_TOKEN
-        );
-
-        byte[] payload =
-                body.toString()
-                        .getBytes(
-                                StandardCharsets.UTF_8
-                        );
-
-        try (
-                OutputStream output =
-                        connection.getOutputStream()
-        ) {
-            output.write(payload);
-            output.flush();
-        }
-
-        int statusCode =
-                connection.getResponseCode();
-
-        InputStream stream;
 
         if (
-                statusCode >= 200 &&
-                statusCode < 400
+                ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.SEND_SMS
+                )
+                        != PackageManager.PERMISSION_GRANTED
         ) {
-            stream =
-                    connection.getInputStream();
-        } else {
-            stream =
-                    connection.getErrorStream();
+
+            return SendResult.failure(
+                    "SEND_SMS permission is not granted."
+            );
         }
 
-        String responseBody =
-                readStream(stream);
+        /*
+         * =====================================================
+         * PHONE
+         * =====================================================
+         */
 
-        return new HttpResponse(
-                statusCode,
-                responseBody
-        );
+        String normalizedPhone =
+                normalizePhone(phone);
 
-    } finally {
-        if (connection != null) {
-            connection.disconnect();
+        if (normalizedPhone.isEmpty()) {
+
+            return SendResult.failure(
+                    "Recipient phone number is empty."
+            );
+        }
+
+        /*
+         * =====================================================
+         * MESSAGE
+         * =====================================================
+         */
+
+        if (
+                message == null ||
+                message.trim().isEmpty()
+        ) {
+
+            return SendResult.failure(
+                    "SMS message is empty."
+            );
+        }
+
+        try {
+
+            SmsManager smsManager =
+                    SmsManager.getDefault();
+
+            ArrayList<String> parts =
+                    smsManager.divideMessage(
+                            message
+                    );
+
+            if (
+                    parts == null ||
+                    parts.isEmpty()
+            ) {
+
+                return SendResult.failure(
+                        "Unable to divide SMS message."
+                );
+            }
+
+            /*
+             * =================================================
+             * SINGLE-PART SMS
+             * =================================================
+             */
+
+            if (parts.size() == 1) {
+
+                smsManager.sendTextMessage(
+                        normalizedPhone,
+                        null,
+                        parts.get(0),
+                        null,
+                        null
+                );
+
+                return SendResult.success();
+            }
+
+            /*
+             * =================================================
+             * MULTIPART SMS
+             * =================================================
+             */
+
+            smsManager.sendMultipartTextMessage(
+                    normalizedPhone,
+                    null,
+                    parts,
+                    null,
+                    null
+            );
+
+            return SendResult.success();
+
+        } catch (SecurityException exception) {
+
+            return SendResult.failure(
+                    "SMS security error: " +
+                            safeError(exception)
+            );
+
+        } catch (IllegalArgumentException exception) {
+
+            return SendResult.failure(
+                    "SMS argument error: " +
+                            safeError(exception)
+            );
+
+        } catch (Exception exception) {
+
+            return SendResult.failure(
+                    "SMS send error: " +
+                            safeError(exception)
+            );
         }
     }
-}
 
-/*
- * =========================================================
- * STREAM
- * =========================================================
- */
+    /*
+     * =========================================================
+     * PHONE NORMALIZATION
+     * =========================================================
+     */
 
-private String readStream(
-        InputStream stream
-) throws Exception {
+    private String normalizePhone(
+            String phone
+    ) {
 
-    if (stream == null) {
-        return "";
+        if (phone == null) {
+            return "";
+        }
+
+        String value =
+                phone.trim()
+                        .replace(" ", "")
+                        .replace("-", "")
+                        .replace("(", "")
+                        .replace(")", "");
+
+        if (value.startsWith("+254")) {
+
+            return "0" +
+                    value.substring(4);
+        }
+
+        if (value.startsWith("254")) {
+
+            return "0" +
+                    value.substring(3);
+        }
+
+        return value;
     }
 
-    StringBuilder result =
-            new StringBuilder();
+    /*
+     * =========================================================
+     * MASK PHONE FOR LOGGING
+     * =========================================================
+     */
 
-    try (
-            BufferedReader reader =
-                    new BufferedReader(
-                            new InputStreamReader(
-                                    stream,
+    private String maskPhone(
+            String phone
+    ) {
+
+        if (
+                phone == null ||
+                phone.length() < 4
+        ) {
+            return "***";
+        }
+
+        return "***" +
+                phone.substring(
+                        Math.max(
+                                0,
+                                phone.length() - 4
+                        )
+                );
+    }
+
+    /*
+     * =========================================================
+     * RESULT
+     * =========================================================
+     */
+
+    private boolean reportResult(
+            String deviceId,
+            String smsId,
+            String status,
+            String providerMessageId,
+            String error
+    ) {
+
+        if (
+                smsId == null ||
+                smsId.trim().isEmpty()
+        ) {
+            return false;
+        }
+
+        try {
+
+            JSONObject body =
+                    new JSONObject();
+
+            body.put(
+                    "deviceId",
+                    deviceId
+            );
+
+            body.put(
+                    "smsId",
+                    smsId
+            );
+
+            body.put(
+                    "status",
+                    status
+            );
+
+            if (
+                    providerMessageId != null &&
+                    !providerMessageId
+                            .trim()
+                            .isEmpty()
+            ) {
+
+                body.put(
+                        "providerMessageId",
+                        providerMessageId
+                );
+            }
+
+            if (
+                    error != null &&
+                    !error.trim().isEmpty()
+            ) {
+
+                body.put(
+                        "error",
+                        error
+                );
+            }
+
+            HttpResponse response =
+                    postJson(
+                            RESULT_URL,
+                            body
+                    );
+
+            boolean successful =
+                    response.statusCode >= 200 &&
+                            response.statusCode < 300;
+
+            if (!successful) {
+
+                Log.e(
+                        TAG,
+                        "Unable to report SMS result. " +
+                                "smsId=" +
+                                smsId +
+                                " HTTP=" +
+                                response.statusCode
+                );
+            }
+
+            return successful;
+
+        } catch (Exception exception) {
+
+            Log.e(
+                    TAG,
+                    "Exception while reporting SMS result. smsId=" +
+                            smsId,
+                    exception
+            );
+
+            return false;
+        }
+    }
+
+    /*
+     * =========================================================
+     * HTTP
+     * =========================================================
+     */
+
+    private HttpResponse postJson(
+            String urlString,
+            JSONObject body
+    ) throws Exception {
+
+        HttpURLConnection connection =
+                null;
+
+        try {
+
+            URL url =
+                    new URL(urlString);
+
+            connection =
+                    (HttpURLConnection)
+                            url.openConnection();
+
+            connection.setRequestMethod(
+                    "POST"
+            );
+
+            connection.setConnectTimeout(
+                    CONNECT_TIMEOUT_MS
+            );
+
+            connection.setReadTimeout(
+                    READ_TIMEOUT_MS
+            );
+
+            connection.setDoOutput(true);
+
+            connection.setUseCaches(false);
+
+            connection.setRequestProperty(
+                    "Content-Type",
+                    "application/json"
+            );
+
+            connection.setRequestProperty(
+                    "Accept",
+                    "application/json"
+            );
+
+            /*
+             * Temporary background-worker authentication.
+             *
+             * This is shared by:
+             *
+             * - claim
+             * - result
+             * - device registration
+             *
+             * The registered-device authentication system can
+             * replace this later.
+             */
+
+            connection.setRequestProperty(
+                    "x-geoshua-sms-worker",
+                    BuildConfig.GEO_SHUA_SMS_WORKER_TOKEN
+            );
+
+            byte[] payload =
+                    body.toString()
+                            .getBytes(
                                     StandardCharsets.UTF_8
-                            )
-                    )
-    ) {
-        String line;
+                            );
 
-        while (
-                (line = reader.readLine())
-                        != null
-        ) {
-            result.append(line);
+            try (
+                    OutputStream output =
+                            connection.getOutputStream()
+            ) {
+
+                output.write(payload);
+                output.flush();
+            }
+
+            int statusCode =
+                    connection.getResponseCode();
+
+            InputStream stream;
+
+            if (
+                    statusCode >= 200 &&
+                    statusCode < 400
+            ) {
+
+                stream =
+                        connection.getInputStream();
+
+            } else {
+
+                stream =
+                        connection.getErrorStream();
+            }
+
+            String responseBody =
+                    readStream(stream);
+
+            return new HttpResponse(
+                    statusCode,
+                    responseBody
+            );
+
+        } finally {
+
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
     }
 
-    return result.toString();
-}
+    /*
+     * =========================================================
+     * STREAM
+     * =========================================================
+     */
 
-/*
- * =========================================================
- * ERROR
- * =========================================================
- */
+    private String readStream(
+            InputStream stream
+    ) throws Exception {
 
-private String safeError(
-        Exception exception
-) {
-    if (exception == null) {
-        return "Unknown error";
+        if (stream == null) {
+            return "";
+        }
+
+        StringBuilder result =
+                new StringBuilder();
+
+        try (
+                BufferedReader reader =
+                        new BufferedReader(
+                                new InputStreamReader(
+                                        stream,
+                                        StandardCharsets.UTF_8
+                                )
+                        )
+        ) {
+
+            String line;
+
+            while (
+                    (line = reader.readLine())
+                            != null
+            ) {
+
+                result.append(line);
+            }
+        }
+
+        return result.toString();
     }
 
-    String message =
-            exception.getMessage();
+    /*
+     * =========================================================
+     * ERROR
+     * =========================================================
+     */
 
-    if (
-            message == null ||
-            message.trim().isEmpty()
+    private String safeError(
+            Exception exception
     ) {
-        return exception
-                .getClass()
-                .getSimpleName();
+
+        if (exception == null) {
+            return "Unknown error";
+        }
+
+        String message =
+                exception.getMessage();
+
+        if (
+                message == null ||
+                message.trim().isEmpty()
+        ) {
+
+            return exception
+                    .getClass()
+                    .getSimpleName();
+        }
+
+        return message.trim();
     }
 
-    return message.trim();
-}
+    /*
+     * =========================================================
+     * INTERNAL RESULT TYPES
+     * =========================================================
+     */
 
-/*
- * =========================================================
- * INTERNAL RESULT TYPES
- * =========================================================
- */
+    private static final class ClaimResponse {
 
-private static final class ClaimResponse {
+        final boolean success;
 
-    final boolean success;
+        final JSONArray messages;
 
-    final JSONArray messages;
+        ClaimResponse(
+                boolean success,
+                JSONArray messages
+        ) {
 
-    ClaimResponse(
-            boolean success,
-            JSONArray messages
-    ) {
-        this.success = success;
-        this.messages = messages;
-    }
-}
+            this.success =
+                    success;
 
-private static final class SendResult {
-
-    final boolean success;
-
-    final String error;
-
-    private SendResult(
-            boolean success,
-            String error
-    ) {
-        this.success = success;
-        this.error = error;
+            this.messages =
+                    messages;
+        }
     }
 
-    static SendResult success() {
-        return new SendResult(
-                true,
-                null
-        );
+    private static final class SendResult {
+
+        final boolean success;
+
+        final String error;
+
+        private SendResult(
+                boolean success,
+                String error
+        ) {
+
+            this.success =
+                    success;
+
+            this.error =
+                    error;
+        }
+
+        static SendResult success() {
+
+            return new SendResult(
+                    true,
+                    null
+            );
+        }
+
+        static SendResult failure(
+                String error
+        ) {
+
+            return new SendResult(
+                    false,
+                    error
+            );
+        }
     }
 
-    static SendResult failure(
-            String error
-    ) {
-        return new SendResult(
-                false,
-                error
-        );
+    private static final class HttpResponse {
+
+        final int statusCode;
+
+        final String body;
+
+        HttpResponse(
+                int statusCode,
+                String body
+        ) {
+
+            this.statusCode =
+                    statusCode;
+
+            this.body =
+                    body;
+        }
     }
-}
-
-private static final class HttpResponse {
-
-    final int statusCode;
-
-    final String body;
-
-    HttpResponse(
-            int statusCode,
-            String body
-    ) {
-        this.statusCode = statusCode;
-        this.body = body;
-    }
-}
-
-
 }

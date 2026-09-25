@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- NETWORK -->
-      
+    <!-- =========================================================
+         NETWORK
+    ========================================================== -->
+
     <uses-permission
         android:name="android.permission.INTERNET" />
 
@@ -10,36 +13,55 @@
         android:name="android.permission.ACCESS_NETWORK_STATE" />
 
 
-    <!-- CAMERA -->
+    <!-- =========================================================
+         CAMERA
+    ========================================================== -->
 
     <uses-permission
         android:name="android.permission.CAMERA" />
 
 
-    <!-- DEVICE SECURITY -->
+    <!-- =========================================================
+         DEVICE SECURITY
+    ========================================================== -->
 
     <uses-permission
         android:name="android.permission.USE_BIOMETRIC" />
 
 
-    <!-- SMS -->
-    <!--
-         GEO-SHUA reads SMS only while the app is open
-         and the user explicitly starts SMS processing.
+    <!-- =========================================================
+         SMS
+         
+         READ_SMS
+         - Used by the inbox reconciliation/recovery path.
 
-         No background SMS receiver is used.
-    -->
-   
-    
+         RECEIVE_SMS
+         - Allows the native SmsReceiver to receive incoming
+           SMS broadcasts.
 
+         SEND_SMS
+         - Used by the native outgoing SMS functionality.
 
+         READ_PHONE_STATE
+         - Required by the native SMS sending functionality.
+    ========================================================== -->
 
     <uses-permission
         android:name="android.permission.READ_SMS" />
-    <uses-permission android:name="android.permission.SEND_SMS" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.READ_SMS" />
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+
+    <uses-permission
+        android:name="android.permission.RECEIVE_SMS" />
+
+    <uses-permission
+        android:name="android.permission.SEND_SMS" />
+
+    <uses-permission
+        android:name="android.permission.READ_PHONE_STATE" />
+
+
+    <!-- =========================================================
+         APPLICATION
+    ========================================================== -->
 
     <application
         android:allowBackup="true"
@@ -48,22 +70,75 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+
+
+        <!-- =====================================================
+             FIREBASE CLOUD MESSAGING
+
+             Used by the existing outgoing SMS wake-up system.
+
+             This service is independent of the incoming SMS
+             BroadcastReceiver.
+        ====================================================== -->
+
         <service
             android:name=".GeoShuaFirebaseMessagingService"
             android:exported="false">
 
             <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+                <action
+                    android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
 
         </service>
+
+
+        <!-- =====================================================
+             NATIVE INCOMING SMS RECEIVER
+
+             Top-level class:
+
+                 com.pytbyte.geoshua.SmsReceiver
+
+             IMPORTANT:
+
+             This is NOT:
+
+                 SmsReaderPlugin$SmsReceiver
+
+             The receiver operates independently of:
+
+             - Capacitor
+             - WebView
+             - JavaScript
+             - MainActivity
+
+             When Android delivers SMS_RECEIVED:
+
+                 SMS_RECEIVED
+                       ↓
+                 SmsReceiver
+                       ↓
+                 SmsQueueStore
+                       ↓
+                 SmsProcessingWorker
+                       ↓
+                 /api/sms/process
+
+             The receiver does NOT perform financial processing
+             and does NOT make network requests.
+
+             The 36-hour inbox reconciliation path remains a
+             secondary recovery mechanism.
+        ====================================================== -->
+
         <receiver
             android:name=".SmsReceiver"
             android:enabled="true"
             android:exported="true"
             android:permission="android.permission.BROADCAST_SMS">
 
-            <intent-filter android:priority="999">
+            <intent-filter>
 
                 <action
                     android:name="android.provider.Telephony.SMS_RECEIVED" />
@@ -72,7 +147,10 @@
 
         </receiver>
 
-        <!-- MAIN ACTIVITY -->
+
+        <!-- =====================================================
+             MAIN ACTIVITY
+        ====================================================== -->
 
         <activity
             android:name=".MainActivity"
@@ -81,6 +159,10 @@
             android:launchMode="singleTask"
             android:exported="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density">
+
+            <!-- =================================================
+                 APP LAUNCH
+            ================================================== -->
 
             <intent-filter>
 
@@ -93,7 +175,9 @@
             </intent-filter>
 
 
-            <!-- GEO-SHUA OAuth deep link -->
+            <!-- =================================================
+                 GEO-SHUA GOOGLE/OAUTH DEEP LINK
+            ================================================== -->
 
             <intent-filter>
 
@@ -115,7 +199,9 @@
         </activity>
 
 
-        <!-- FILE PROVIDER -->
+        <!-- =====================================================
+             FILE PROVIDER
+        ====================================================== -->
 
         <provider
             android:name="androidx.core.content.FileProvider"
