@@ -4673,7 +4673,7 @@ function getLoanPaymentReminderPeriod(
   const reminderDate =
     addCalendarDays(
       currentPeriod.periodEnd,
-      -1,
+      -0,
     );
 
   if (
