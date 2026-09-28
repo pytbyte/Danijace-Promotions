@@ -18,7 +18,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
-  Settings,
+  ShieldCheck,
   Users,
   Wallet,
   X,
@@ -569,6 +569,35 @@ export default function TopBar() {
   ] = useState(false);
 
   /* =======================================================
+  AUTHORIZED USERS STATE
+  ======================================================= */
+
+  const [
+    authorizedUsersOpen,
+    setAuthorizedUsersOpen,
+  ] = useState(false);
+
+  const [
+    authorizedEmail,
+    setAuthorizedEmail,
+  ] = useState("");
+
+  const [
+    authorizedEmailLoading,
+    setAuthorizedEmailLoading,
+  ] = useState(false);
+
+  const [
+    authorizedEmailMessage,
+    setAuthorizedEmailMessage,
+  ] = useState("");
+
+  const [
+    authorizedEmailError,
+    setAuthorizedEmailError,
+  ] = useState("");
+
+  /* =======================================================
   PROFIT CALCULATOR STATE
   ======================================================= */
 
@@ -691,8 +720,6 @@ export default function TopBar() {
          * GET /api/loans
          *
          * The endpoint accepts a maximum limit of 1000.
-         * The profit calculator needs the available loan
-         * collection rather than the default first page.
          */
         const response =
           await fetch(
@@ -733,19 +760,6 @@ export default function TopBar() {
           );
         }
 
-        /*
-         * Your GET /api/loans route returns:
-         *
-         * {
-         *   success: true,
-         *   data: Loan[],
-         *   count: number,
-         *   total: number,
-         *   page: number,
-         *   limit: number,
-         *   totalPages: number
-         * }
-         */
         if (
           !Array.isArray(
             result.data,
@@ -827,6 +841,105 @@ export default function TopBar() {
     };
 
   /* =======================================================
+  ADD AUTHORIZED EMAIL
+  ======================================================= */
+
+  const addAuthorizedEmail =
+    async () => {
+      const email =
+        authorizedEmail
+          .trim()
+          .toLowerCase();
+
+      setAuthorizedEmailMessage(
+        "",
+      );
+
+      setAuthorizedEmailError(
+        "",
+      );
+
+      if (!email) {
+        setAuthorizedEmailError(
+          "Enter an email address.",
+        );
+        return;
+      }
+
+      const emailRegex =
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      if (
+        !emailRegex.test(
+          email,
+        )
+      ) {
+        setAuthorizedEmailError(
+          "Enter a valid email address.",
+        );
+        return;
+      }
+
+      try {
+        setAuthorizedEmailLoading(
+          true,
+        );
+
+        const response =
+          await fetch(
+            "/api/access/emails",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Accept:
+                  "application/json",
+              },
+              body: JSON.stringify({
+                email,
+              }),
+            },
+          );
+
+        const result =
+          await response
+            .json()
+            .catch(
+              () => null,
+            );
+
+        if (
+          !response.ok
+        ) {
+          throw new Error(
+            result?.error ||
+              result?.message ||
+              "Failed to add authorized email.",
+          );
+        }
+
+        setAuthorizedEmail(
+          "",
+        );
+
+        setAuthorizedEmailMessage(
+          "Email added successfully.",
+        );
+      } catch (error) {
+        setAuthorizedEmailError(
+          error instanceof Error
+            ? error.message
+            : "Failed to add authorized email.",
+        );
+      } finally {
+        setAuthorizedEmailLoading(
+          false,
+        );
+      }
+    };
+
+  /* =======================================================
   AUTHENTICATED USER
   ======================================================= */
 
@@ -860,6 +973,10 @@ export default function TopBar() {
     );
 
     setProfitOpen(
+      false,
+    );
+
+    setAuthorizedUsersOpen(
       false,
     );
 
@@ -932,6 +1049,10 @@ export default function TopBar() {
       );
 
       setProfitOpen(
+        false,
+      );
+
+      setAuthorizedUsersOpen(
         false,
       );
 
@@ -1137,14 +1258,20 @@ export default function TopBar() {
                 </div>
 
                 <div className="p-2.5">
+                  {/* MOBILE PROJECTIONS */}
+
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
                       setProfitOpen(
                         (value) =>
                           !value,
-                      )
-                    }
+                      );
+
+                      setAuthorizedUsersOpen(
+                        false,
+                      );
+                    }}
                     className="
                       flex
                       w-full
@@ -1219,6 +1346,195 @@ export default function TopBar() {
                       }
                     />
                   )}
+
+                  {/* MOBILE AUTHORIZED USERS */}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthorizedUsersOpen(
+                        (value) =>
+                          !value,
+                      );
+
+                      setProfitOpen(
+                        false,
+                      );
+
+                      setAuthorizedEmailMessage(
+                        "",
+                      );
+
+                      setAuthorizedEmailError(
+                        "",
+                      );
+                    }}
+                    className="
+                      mt-1
+                      flex
+                      w-full
+                      items-center
+                      gap-3
+                      rounded-xl
+                      px-3.5
+                      py-3
+                      text-sm
+                      text-white/60
+                      transition
+                      hover:bg-white/[0.06]
+                      hover:text-white
+                    "
+                  >
+                    <ShieldCheck
+                      size={18}
+                      strokeWidth={1.8}
+                      className="text-yellow-400"
+                    />
+
+                    <span className="flex-1 text-left">
+                      Authorized users
+                    </span>
+
+                    <ChevronDown
+                      size={15}
+                      strokeWidth={1.8}
+                      className={`
+                        text-white/30
+                        transition-transform
+                        ${
+                          authorizedUsersOpen
+                            ? "rotate-180"
+                            : ""
+                        }
+                      `}
+                    />
+                  </button>
+
+                  {authorizedUsersOpen && (
+                    <div className="px-1 pb-2">
+                      <div
+                        className="
+                          rounded-xl
+                          border
+                          border-white/[0.08]
+                          bg-white/[0.025]
+                          p-3
+                        "
+                      >
+                        <p
+                          className="
+                            mb-2
+                            text-[9px]
+                            uppercase
+                            tracking-wide
+                            text-white/30
+                          "
+                        >
+                          Add authorized email
+                        </p>
+
+                        <input
+                          type="email"
+                          value={
+                            authorizedEmail
+                          }
+                          onChange={(
+                            event,
+                          ) => {
+                            setAuthorizedEmail(
+                              event
+                                .target
+                                .value,
+                            );
+
+                            setAuthorizedEmailError(
+                              "",
+                            );
+
+                            setAuthorizedEmailMessage(
+                              "",
+                            );
+                          }}
+                          onKeyDown={(
+                            event,
+                          ) => {
+                            if (
+                              event.key ===
+                              "Enter"
+                            ) {
+                              void addAuthorizedEmail();
+                            }
+                          }}
+                          placeholder="user@gmail.com"
+                          disabled={
+                            authorizedEmailLoading
+                          }
+                          className="
+                            w-full
+                            rounded-lg
+                            border
+                            border-white/10
+                            bg-black/30
+                            px-2.5
+                            py-2
+                            text-xs
+                            text-white
+                            outline-none
+                            placeholder:text-white/20
+                            focus:border-yellow-500/40
+                            disabled:opacity-50
+                          "
+                        />
+
+                        {authorizedEmailError && (
+                          <p className="mt-2 text-[10px] text-red-400">
+                            {
+                              authorizedEmailError
+                            }
+                          </p>
+                        )}
+
+                        {authorizedEmailMessage && (
+                          <p className="mt-2 text-[10px] text-green-400">
+                            {
+                              authorizedEmailMessage
+                            }
+                          </p>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void addAuthorizedEmail()
+                          }
+                          disabled={
+                            authorizedEmailLoading
+                          }
+                          className="
+                            mt-2
+                            w-full
+                            rounded-lg
+                            bg-yellow-500
+                            px-3
+                            py-2
+                            text-[11px]
+                            font-semibold
+                            text-black
+                            transition
+                            hover:bg-yellow-400
+                            disabled:cursor-not-allowed
+                            disabled:opacity-50
+                          "
+                        >
+                          {authorizedEmailLoading
+                            ? "Adding..."
+                            : "Add email"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* MOBILE SIGN OUT */}
 
                   <button
                     type="button"
@@ -1527,14 +1843,20 @@ export default function TopBar() {
                 </div>
 
                 <div className="p-2.5">
+                  {/* DESKTOP LOAN PROFIT */}
+
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
                       setProfitOpen(
                         (value) =>
                           !value,
-                      )
-                    }
+                      );
+
+                      setAuthorizedUsersOpen(
+                        false,
+                      );
+                    }}
                     className="
                       flex
                       w-full
@@ -1610,14 +1932,32 @@ export default function TopBar() {
                     />
                   )}
 
+                  {/* =================================================
+                  AUTHORIZED USERS
+                  ================================================= */}
+
                   <button
                     type="button"
-                    onClick={() =>
-                      navigateTo(
-                        "/dashboard/settings",
-                      )
-                    }
+                    onClick={() => {
+                      setAuthorizedUsersOpen(
+                        (value) =>
+                          !value,
+                      );
+
+                      setProfitOpen(
+                        false,
+                      );
+
+                      setAuthorizedEmailMessage(
+                        "",
+                      );
+
+                      setAuthorizedEmailError(
+                        "",
+                      );
+                    }}
                     className="
+                      mt-1
                       flex
                       w-full
                       items-center
@@ -1632,15 +1972,156 @@ export default function TopBar() {
                       hover:text-white
                     "
                   >
-                    <Settings
+                    <ShieldCheck
                       size={18}
                       strokeWidth={1.8}
+                      className="text-yellow-400"
                     />
 
-                    <span>
-                      Account settings
+                    <span className="flex-1 text-left">
+                      Authorized users
                     </span>
+
+                    <ChevronDown
+                      size={15}
+                      strokeWidth={1.8}
+                      className={`
+                        text-white/30
+                        transition-transform
+                        ${
+                          authorizedUsersOpen
+                            ? "rotate-180"
+                            : ""
+                        }
+                      `}
+                    />
                   </button>
+
+                  {authorizedUsersOpen && (
+                    <div className="px-1 pb-2">
+                      <div
+                        className="
+                          rounded-xl
+                          border
+                          border-white/[0.08]
+                          bg-white/[0.025]
+                          p-3
+                        "
+                      >
+                        <p
+                          className="
+                            mb-2
+                            text-[9px]
+                            uppercase
+                            tracking-wide
+                            text-white/30
+                          "
+                        >
+                          Add authorized email
+                        </p>
+
+                        <input
+                          type="email"
+                          value={
+                            authorizedEmail
+                          }
+                          onChange={(
+                            event,
+                          ) => {
+                            setAuthorizedEmail(
+                              event
+                                .target
+                                .value,
+                            );
+
+                            setAuthorizedEmailError(
+                              "",
+                            );
+
+                            setAuthorizedEmailMessage(
+                              "",
+                            );
+                          }}
+                          onKeyDown={(
+                            event,
+                          ) => {
+                            if (
+                              event.key ===
+                              "Enter"
+                            ) {
+                              void addAuthorizedEmail();
+                            }
+                          }}
+                          placeholder="user@gmail.com"
+                          disabled={
+                            authorizedEmailLoading
+                          }
+                          className="
+                            w-full
+                            rounded-lg
+                            border
+                            border-white/10
+                            bg-black/30
+                            px-2.5
+                            py-2
+                            text-xs
+                            text-white
+                            outline-none
+                            placeholder:text-white/20
+                            focus:border-yellow-500/40
+                            disabled:opacity-50
+                          "
+                        />
+
+                        {authorizedEmailError && (
+                          <p className="mt-2 text-[10px] text-red-400">
+                            {
+                              authorizedEmailError
+                            }
+                          </p>
+                        )}
+
+                        {authorizedEmailMessage && (
+                          <p className="mt-2 text-[10px] text-green-400">
+                            {
+                              authorizedEmailMessage
+                            }
+                          </p>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void addAuthorizedEmail()
+                          }
+                          disabled={
+                            authorizedEmailLoading
+                          }
+                          className="
+                            mt-2
+                            w-full
+                            rounded-lg
+                            bg-yellow-500
+                            px-3
+                            py-2
+                            text-[11px]
+                            font-semibold
+                            text-black
+                            transition
+                            hover:bg-yellow-400
+                            disabled:cursor-not-allowed
+                            disabled:opacity-50
+                          "
+                        >
+                          {authorizedEmailLoading
+                            ? "Adding..."
+                            : "Add email"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SIGN OUT */}
 
                   <button
                     type="button"

@@ -23,9 +23,9 @@ import java.util.Map;
  * ANDROID SMS RECEIVER
  * =========================================================
  *
- * TEMPORARY DIAGNOSTIC MODE
+ * PRODUCTION FINANCIAL SMS CAPTURE
  *
- * Current flow:
+ * Flow:
  *
  *   Android SMS
  *        ↓
@@ -33,37 +33,37 @@ import java.util.Map;
  *        ↓
  *   SmsQueueStore
  *        ↓
- *   SmsDiagnosticWorker
+ *   SmsProcessingWorker
  *        ↓
- *   /api/sms/android-diagnostic
+ *   /api/sms/process
  *        ↓
- *   MongoDB
+ *   Financial SMS processing
  *
  * IMPORTANT
  * ---------------------------------------------------------
  *
- * This receiver does NOT:
+ * This receiver is responsible ONLY for:
  *
- * - call the financial SMS API
+ * - receiving Android SMS broadcasts
+ * - decoding SMS messages
+ * - validating SMS timestamps
+ * - combining multipart SMS messages
+ * - creating stable SMS IDs
+ * - persisting SMS into the local SQLite queue
+ * - waking SmsProcessingWorker
+ *
+ * The receiver does NOT:
+ *
  * - parse bank SMS
  * - resolve members
  * - resolve loans
- * - resolve savings
+ * - resolve savings accounts
  * - create repayments
  * - create savings deposits
- * - send notifications
+ * - send financial notifications
  *
- * The purpose of this temporary mode is to prove that
- * Android can:
- *
- *   1. receive an SMS while the screen is off
- *   2. decode the SMS
- *   3. persist it into SQLite
- *   4. wake WorkManager
- *   5. send it to the backend
- *   6. save it into MongoDB
- *
- * Once this succeeds, we reconnect the financial worker.
+ * All financial intelligence is handled by the backend
+ * through /api/sms/process.
  *
  * =========================================================
  */
@@ -136,9 +136,8 @@ public class SmsReceiver extends BroadcastReceiver {
         /*
          * THIS MUST REMAIN THE FIRST IMPORTANT LOG.
          *
-         * If this appears while the screen is OFF, we have
-         * proven that Android delivered the SMS broadcast to
-         * this receiver.
+         * If this appears while the screen is OFF, Android
+         * delivered the SMS broadcast to this receiver.
          */
         Log.i(
                 TAG,
@@ -267,15 +266,12 @@ public class SmsReceiver extends BroadcastReceiver {
             /*
              * IMPORTANT:
              *
-             * We intentionally DO NOT call:
+             * Do NOT delete old messages here.
              *
-             *     store.deleteOlderThan(cutoff)
-             *
-             * during this diagnostic experiment.
-             *
-             * We want to make absolutely sure that a queued
-             * SMS cannot be deleted before the diagnostic
-             * worker has had a chance to process it.
+             * The financial worker is responsible for queue
+             * cleanup. In particular, unprocessed financial
+             * SMS messages must never be deleted before the
+             * worker has processed them.
              */
 
 
@@ -397,14 +393,14 @@ public class SmsReceiver extends BroadcastReceiver {
 
 
             /* =============================================
-               WAKE DIAGNOSTIC WORKER
+               WAKE FINANCIAL PROCESSING WORKER
             ============================================= */
 
             if (
                     result.inserted > 0
             ) {
 
-                wakeDiagnosticWorker(
+                wakeProcessingWorker(
                         appContext
                 );
 
@@ -413,8 +409,8 @@ public class SmsReceiver extends BroadcastReceiver {
                 Log.i(
                         TAG,
                         "No new SMS inserted. " +
-                                "Diagnostic worker was not explicitly " +
-                                "enqueued by this receiver."
+                                "Financial processing worker was not " +
+                                "explicitly enqueued by this receiver."
                 );
             }
 
@@ -572,6 +568,7 @@ public class SmsReceiver extends BroadcastReceiver {
             if (
                     body == null
             ) {
+
                 body = "";
             }
 
@@ -818,10 +815,10 @@ public class SmsReceiver extends BroadcastReceiver {
 
 
     /* =====================================================
-       DIAGNOSTIC WORKER
+       FINANCIAL SMS PROCESSING WORKER
     ===================================================== */
 
-    private static void wakeDiagnosticWorker(
+    private static void wakeProcessingWorker(
             Context context
     ) {
 
@@ -834,23 +831,23 @@ public class SmsReceiver extends BroadcastReceiver {
 
             Log.i(
                     TAG,
-                    "DIAGNOSTIC MODE"
+                    "FINANCIAL SMS PROCESSING"
             );
 
             Log.i(
                     TAG,
-                    "Enqueuing SmsDiagnosticWorker..."
+                    "Enqueuing SmsProcessingWorker..."
             );
 
 
-            SmsDiagnosticWorker.enqueueNow(
+            SmsProcessingWorker.enqueueNow(
                     context
             );
 
 
             Log.i(
                     TAG,
-                    "SUCCESS: SmsDiagnosticWorker.enqueueNow() completed."
+                    "SUCCESS: SmsProcessingWorker.enqueueNow() completed."
             );
 
 
@@ -861,9 +858,16 @@ public class SmsReceiver extends BroadcastReceiver {
 
         } catch (Exception e) {
 
+            /*
+             * The SMS has already been persisted locally.
+             *
+             * Therefore, even if WorkManager enqueueing fails,
+             * the SMS remains available in SmsQueueStore for
+             * later processing.
+             */
             Log.e(
                     TAG,
-                    "ERROR: SmsDiagnosticWorker.enqueueNow() failed.",
+                    "ERROR: SmsProcessingWorker.enqueueNow() failed.",
                     e
             );
         }
@@ -932,6 +936,7 @@ public class SmsReceiver extends BroadcastReceiver {
             if (
                     group.isEmpty()
             ) {
+
                 continue;
             }
 
@@ -968,6 +973,7 @@ public class SmsReceiver extends BroadcastReceiver {
             if (
                     combinedBody.isEmpty()
             ) {
+
                 continue;
             }
 
@@ -1019,6 +1025,7 @@ public class SmsReceiver extends BroadcastReceiver {
         if (
                 address == null
         ) {
+
             return "";
         }
 
