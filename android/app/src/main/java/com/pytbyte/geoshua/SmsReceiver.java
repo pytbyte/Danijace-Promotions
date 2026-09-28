@@ -18,27 +18,70 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Receives incoming SMS broadcasts, stores valid messages in the
- * local SQLite queue, and wakes the SMS processing worker.
+ * =========================================================
+ * GEO-SHUA
+ * ANDROID SMS RECEIVER
+ * =========================================================
  *
- * This receiver does not:
- * - call the backend
- * - perform financial processing
- * - depend on the WebView
- * - depend on JavaScript
+ * TEMPORARY DIAGNOSTIC MODE
  *
- * It is designed to work even when the application UI is closed
- * or not currently running.
+ * Current flow:
+ *
+ *   Android SMS
+ *        ↓
+ *   SmsReceiver
+ *        ↓
+ *   SmsQueueStore
+ *        ↓
+ *   SmsDiagnosticWorker
+ *        ↓
+ *   /api/sms/android-diagnostic
+ *        ↓
+ *   MongoDB
+ *
+ * IMPORTANT
+ * ---------------------------------------------------------
+ *
+ * This receiver does NOT:
+ *
+ * - call the financial SMS API
+ * - parse bank SMS
+ * - resolve members
+ * - resolve loans
+ * - resolve savings
+ * - create repayments
+ * - create savings deposits
+ * - send notifications
+ *
+ * The purpose of this temporary mode is to prove that
+ * Android can:
+ *
+ *   1. receive an SMS while the screen is off
+ *   2. decode the SMS
+ *   3. persist it into SQLite
+ *   4. wake WorkManager
+ *   5. send it to the backend
+ *   6. save it into MongoDB
+ *
+ * Once this succeeds, we reconnect the financial worker.
+ *
+ * =========================================================
  */
 public class SmsReceiver extends BroadcastReceiver {
 
-    private static final String TAG = "GeoShuaSmsReceiver";
+    private static final String TAG =
+            "GeoShuaSmsReceiver";
 
     /**
      * Only capture SMS messages from the last 36 hours.
      */
     private static final long SMS_WINDOW_MS =
             36L * 60L * 60L * 1000L;
+
+
+    /* =====================================================
+       SMS PART
+    ===================================================== */
 
     private static final class SmsPart {
 
@@ -57,6 +100,11 @@ public class SmsReceiver extends BroadcastReceiver {
         }
     }
 
+
+    /* =====================================================
+       COMBINED SMS
+    ===================================================== */
+
     private static final class CombinedSms {
 
         final String address;
@@ -74,6 +122,11 @@ public class SmsReceiver extends BroadcastReceiver {
         }
     }
 
+
+    /* =====================================================
+       RECEIVE
+    ===================================================== */
+
     @Override
     public void onReceive(
             Context context,
@@ -81,63 +134,166 @@ public class SmsReceiver extends BroadcastReceiver {
     ) {
 
         /*
-         * Keep this as the first important log.
+         * THIS MUST REMAIN THE FIRST IMPORTANT LOG.
          *
-         * If this never appears when an SMS arrives, the problem
-         * is before this class:
-         *
-         * Android broadcast delivery
-         * permissions
-         * manifest registration
-         * device/OS restrictions
+         * If this appears while the screen is OFF, we have
+         * proven that Android delivered the SMS broadcast to
+         * this receiver.
          */
-        Log.i(TAG, "==================================================");
-        Log.i(TAG, "SMS RECEIVER INVOKED");
+        Log.i(
+                TAG,
+                "=================================================="
+        );
+
+        Log.i(
+                TAG,
+                "SMS RECEIVER INVOKED"
+        );
+
+
+        /* =================================================
+           CONTEXT
+        ================================================= */
 
         if (context == null) {
-            Log.e(TAG, "STOP: Context is null.");
+
+            Log.e(
+                    TAG,
+                    "STOP: Context is null."
+            );
+
             return;
         }
+
+
+        /* =================================================
+           INTENT
+        ================================================= */
 
         if (intent == null) {
-            Log.e(TAG, "STOP: Intent is null.");
+
+            Log.e(
+                    TAG,
+                    "STOP: Intent is null."
+            );
+
             return;
         }
 
-        String action = intent.getAction();
 
-        Log.i(TAG, "Broadcast action=" + action);
+        String action =
+                intent.getAction();
 
-        if (!Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(action)) {
-            Log.w(TAG, "STOP: Unexpected broadcast action.");
+
+        Log.i(
+                TAG,
+                "Broadcast action=" +
+                        action
+        );
+
+
+        if (
+                !Telephony.Sms.Intents
+                        .SMS_RECEIVED_ACTION
+                        .equals(action)
+        ) {
+
+            Log.w(
+                    TAG,
+                    "STOP: Unexpected broadcast action."
+            );
+
             return;
         }
 
-        Log.i(TAG, "SMS_RECEIVED action confirmed.");
 
-        final long now = System.currentTimeMillis();
-        final long cutoff = now - SMS_WINDOW_MS;
+        Log.i(
+                TAG,
+                "SMS_RECEIVED action confirmed."
+        );
 
-        Log.i(TAG, "Receiver time=" + now);
-        Log.i(TAG, "36-hour cutoff=" + cutoff);
 
-        Context appContext = context.getApplicationContext();
+        /* =================================================
+           TIME WINDOW
+        ================================================= */
+
+        final long now =
+                System.currentTimeMillis();
+
+        final long cutoff =
+                now -
+                SMS_WINDOW_MS;
+
+
+        Log.i(
+                TAG,
+                "Receiver time=" +
+                        now
+        );
+
+        Log.i(
+                TAG,
+                "36-hour cutoff=" +
+                        cutoff
+        );
+
+
+        Context appContext =
+                context.getApplicationContext();
+
+
+        SmsQueueStore store =
+                null;
+
 
         try {
 
-            SmsQueueStore store =
-                    new SmsQueueStore(appContext);
+            /* =============================================
+               OPEN SQLITE QUEUE
+            ============================================= */
 
-            Log.i(TAG, "SmsQueueStore opened.");
-
-            cleanupOldMessages(store, cutoff);
-
-            SmsMessage[] messages =
-                    Telephony.Sms.Intents.getMessagesFromIntent(
-                            intent
+            store =
+                    new SmsQueueStore(
+                            appContext
                     );
 
-            if (messages == null || messages.length == 0) {
+
+            Log.i(
+                    TAG,
+                    "SUCCESS: SmsQueueStore opened."
+            );
+
+
+            /*
+             * IMPORTANT:
+             *
+             * We intentionally DO NOT call:
+             *
+             *     store.deleteOlderThan(cutoff)
+             *
+             * during this diagnostic experiment.
+             *
+             * We want to make absolutely sure that a queued
+             * SMS cannot be deleted before the diagnostic
+             * worker has had a chance to process it.
+             */
+
+
+            /* =============================================
+               DECODE ANDROID SMS
+            ============================================= */
+
+            SmsMessage[] messages =
+                    Telephony.Sms.Intents
+                            .getMessagesFromIntent(
+                                    intent
+                            );
+
+
+            if (
+                    messages == null ||
+                    messages.length == 0
+            ) {
 
                 Log.e(
                         TAG,
@@ -147,11 +303,17 @@ public class SmsReceiver extends BroadcastReceiver {
                 return;
             }
 
+
             Log.i(
                     TAG,
-                    "SMS messages decoded. count="
-                            + messages.length
+                    "SMS messages decoded. count=" +
+                            messages.length
             );
+
+
+            /* =============================================
+               VALIDATE PARTS
+            ============================================= */
 
             List<SmsPart> parts =
                     decodeParts(
@@ -160,7 +322,10 @@ public class SmsReceiver extends BroadcastReceiver {
                             now
                     );
 
-            if (parts.isEmpty()) {
+
+            if (
+                    parts.isEmpty()
+            ) {
 
                 Log.w(
                         TAG,
@@ -170,15 +335,27 @@ public class SmsReceiver extends BroadcastReceiver {
                 return;
             }
 
+
             Log.i(
                     TAG,
-                    "Usable SMS parts=" + parts.size()
+                    "Usable SMS parts=" +
+                            parts.size()
             );
 
-            List<CombinedSms> messagesToQueue =
-                    combineParts(parts);
 
-            if (messagesToQueue.isEmpty()) {
+            /* =============================================
+               COMBINE MULTIPART SMS
+            ============================================= */
+
+            List<CombinedSms> messagesToQueue =
+                    combineParts(
+                            parts
+                    );
+
+
+            if (
+                    messagesToQueue.isEmpty()
+            ) {
 
                 Log.w(
                         TAG,
@@ -188,11 +365,17 @@ public class SmsReceiver extends BroadcastReceiver {
                 return;
             }
 
+
             Log.i(
                     TAG,
-                    "Logical SMS messages="
-                            + messagesToQueue.size()
+                    "Logical SMS messages=" +
+                            messagesToQueue.size()
             );
+
+
+            /* =============================================
+               PERSIST
+            ============================================= */
 
             QueueResult result =
                     persistMessages(
@@ -202,43 +385,55 @@ public class SmsReceiver extends BroadcastReceiver {
                             now
                     );
 
+
             Log.i(
                     TAG,
-                    "Queue persistence complete. "
-                            + "inserted="
-                            + result.inserted
-                            + ", duplicates="
-                            + result.duplicates
+                    "Queue persistence complete. " +
+                            "inserted=" +
+                            result.inserted +
+                            ", duplicates=" +
+                            result.duplicates
             );
 
-            if (result.inserted > 0) {
 
-                wakeProcessingWorker(appContext);
+            /* =============================================
+               WAKE DIAGNOSTIC WORKER
+            ============================================= */
+
+            if (
+                    result.inserted > 0
+            ) {
+
+                wakeDiagnosticWorker(
+                        appContext
+                );
 
             } else {
 
                 Log.i(
                         TAG,
-                        "No new SMS inserted. "
-                                + "Processing worker not explicitly "
-                                + "enqueued by this receiver."
+                        "No new SMS inserted. " +
+                                "Diagnostic worker was not explicitly " +
+                                "enqueued by this receiver."
                 );
             }
 
+
             Log.i(
                     TAG,
-                    "SMS RECEIVER COMPLETE. "
-                            + "inserted="
-                            + result.inserted
-                            + ", duplicates="
-                            + result.duplicates
+                    "SMS RECEIVER COMPLETE. " +
+                            "inserted=" +
+                            result.inserted +
+                            ", duplicates=" +
+                            result.duplicates
             );
+
 
         } catch (Exception e) {
 
             /*
-             * Never allow an exception here to take down the
-             * broadcast processing silently.
+             * Never allow an exception here to silently kill
+             * the broadcast handling path.
              */
             Log.e(
                     TAG,
@@ -248,46 +443,37 @@ public class SmsReceiver extends BroadcastReceiver {
 
         } finally {
 
-            Log.i(TAG, "==================================================");
-        }
-    }
-
-    /**
-     * Removes queue entries older than the capture window.
-     *
-     * Cleanup failure must never prevent the current SMS from
-     * being captured.
-     */
-    private static void cleanupOldMessages(
-            SmsQueueStore store,
-            long cutoff
-    ) {
-
-        try {
-
-            int deleted =
-                    store.deleteOlderThan(cutoff);
+            /*
+             * IMPORTANT:
+             *
+             * SmsQueueStore does NOT expose a close() method.
+             *
+             * It owns its SQLiteOpenHelper internally, so there
+             * is nothing to close from the receiver.
+             *
+             * Do NOT call:
+             *
+             *     store.close();
+             *
+             * here.
+             */
+            Log.i(
+                    TAG,
+                    "SMS receiver cleanup complete."
+            );
 
             Log.i(
                     TAG,
-                    "Old queue cleanup completed. deleted="
-                            + deleted
-            );
-
-        } catch (Exception e) {
-
-            Log.e(
-                    TAG,
-                    "WARNING: Queue cleanup failed. "
-                            + "Continuing with SMS capture.",
-                    e
+                    "=================================================="
             );
         }
     }
 
-    /**
-     * Converts Android SmsMessage objects into validated SMS parts.
-     */
+
+    /* =====================================================
+       DECODE SMS PARTS
+    ===================================================== */
+
     private static List<SmsPart> decodeParts(
             SmsMessage[] messages,
             long cutoff,
@@ -297,103 +483,159 @@ public class SmsReceiver extends BroadcastReceiver {
         List<SmsPart> parts =
                 new ArrayList<>();
 
-        for (int i = 0; i < messages.length; i++) {
 
-            SmsMessage message = messages[i];
+        for (
+                int i = 0;
+                i < messages.length;
+                i++
+        ) {
 
-            int partNumber = i + 1;
+            SmsMessage message =
+                    messages[i];
 
-            if (message == null) {
+
+            int partNumber =
+                    i + 1;
+
+
+            if (
+                    message == null
+            ) {
 
                 Log.w(
                         TAG,
-                        "SMS part #" + partNumber + " is null."
+                        "SMS part #" +
+                                partNumber +
+                                " is null."
                 );
 
                 continue;
             }
+
 
             String address =
                     normalizeAddress(
                             message.getOriginatingAddress()
                     );
 
+
             String body =
                     message.getMessageBody();
 
+
             long timestamp =
                     message.getTimestampMillis();
+
 
             int bodyLength =
                     body == null
                             ? 0
                             : body.length();
 
+
             Log.i(
                     TAG,
-                    "Decoded SMS part #"
-                            + partNumber
-                            + ": address="
-                            + address
-                            + ", timestamp="
-                            + timestamp
-                            + ", bodyLength="
-                            + bodyLength
+                    "Decoded SMS part #" +
+                            partNumber +
+                            ": address=" +
+                            address +
+                            ", timestamp=" +
+                            timestamp +
+                            ", bodyLength=" +
+                            bodyLength
             );
 
-            if (address.isEmpty()) {
+
+            /* =============================================
+               ADDRESS
+            ============================================= */
+
+            if (
+                    address.isEmpty()
+            ) {
 
                 Log.w(
                         TAG,
-                        "SMS part #"
-                                + partNumber
-                                + " rejected: empty sender."
+                        "SMS part #" +
+                                partNumber +
+                                " rejected: empty sender."
                 );
 
                 continue;
             }
 
-            if (body == null) {
+
+            /* =============================================
+               BODY
+            ============================================= */
+
+            if (
+                    body == null
+            ) {
                 body = "";
             }
 
-            body = body.trim();
 
-            if (body.isEmpty()) {
+            body =
+                    body.trim();
+
+
+            if (
+                    body.isEmpty()
+            ) {
 
                 Log.w(
                         TAG,
-                        "SMS part #"
-                                + partNumber
-                                + " rejected: empty body."
+                        "SMS part #" +
+                                partNumber +
+                                " rejected: empty body."
                 );
 
                 continue;
             }
 
-            if (timestamp < cutoff) {
+
+            /* =============================================
+               AGE
+            ============================================= */
+
+            if (
+                    timestamp < cutoff
+            ) {
 
                 Log.w(
                         TAG,
-                        "SMS part #"
-                                + partNumber
-                                + " rejected: older than 36 hours."
+                        "SMS part #" +
+                                partNumber +
+                                " rejected: older than 36 hours."
                 );
 
                 continue;
             }
 
-            if (timestamp > now) {
+
+            /* =============================================
+               FUTURE
+            ============================================= */
+
+            if (
+                    timestamp > now
+            ) {
 
                 Log.w(
                         TAG,
-                        "SMS part #"
-                                + partNumber
-                                + " rejected: future timestamp."
+                        "SMS part #" +
+                                partNumber +
+                                " rejected: future timestamp."
                 );
 
                 continue;
             }
+
+
+            /* =============================================
+               ACCEPT
+            ============================================= */
 
             parts.add(
                     new SmsPart(
@@ -403,29 +645,36 @@ public class SmsReceiver extends BroadcastReceiver {
                     )
             );
 
+
             Log.i(
                     TAG,
-                    "SMS part #"
-                            + partNumber
-                            + " accepted."
+                    "SMS part #" +
+                            partNumber +
+                            " accepted."
             );
         }
+
 
         return parts;
     }
 
-    /**
-     * Result of local queue persistence.
-     */
+
+    /* =====================================================
+       QUEUE RESULT
+    ===================================================== */
+
     private static final class QueueResult {
 
         int inserted;
+
         int duplicates;
     }
 
-    /**
-     * Persists logical SMS messages into SQLite.
-     */
+
+    /* =====================================================
+       PERSIST
+    ===================================================== */
+
     private static QueueResult persistMessages(
             SmsQueueStore store,
             List<CombinedSms> messages,
@@ -436,29 +685,51 @@ public class SmsReceiver extends BroadcastReceiver {
         QueueResult result =
                 new QueueResult();
 
-        for (CombinedSms sms : messages) {
 
-            if (sms.timestamp < cutoff) {
+        for (
+                CombinedSms sms
+                : messages
+        ) {
+
+            /* =============================================
+               AGE
+            ============================================= */
+
+            if (
+                    sms.timestamp < cutoff
+            ) {
 
                 Log.w(
                         TAG,
-                        "Skipping SMS during persistence: "
-                                + "older than 36 hours."
+                        "Skipping SMS during persistence: " +
+                                "older than 36 hours."
                 );
 
                 continue;
             }
 
-            if (sms.timestamp > now) {
+
+            /* =============================================
+               FUTURE
+            ============================================= */
+
+            if (
+                    sms.timestamp > now
+            ) {
 
                 Log.w(
                         TAG,
-                        "Skipping SMS during persistence: "
-                                + "future timestamp."
+                        "Skipping SMS during persistence: " +
+                                "future timestamp."
                 );
 
                 continue;
             }
+
+
+            /* =============================================
+               BODY
+            ============================================= */
 
             if (
                     sms.body == null ||
@@ -467,12 +738,17 @@ public class SmsReceiver extends BroadcastReceiver {
 
                 Log.w(
                         TAG,
-                        "Skipping SMS during persistence: "
-                                + "empty body."
+                        "Skipping SMS during persistence: " +
+                                "empty body."
                 );
 
                 continue;
             }
+
+
+            /* =============================================
+               STABLE ID
+            ============================================= */
 
             String id =
                     createStableSmsId(
@@ -481,15 +757,22 @@ public class SmsReceiver extends BroadcastReceiver {
                             sms.body
                     );
 
+
             Log.i(
                     TAG,
-                    "Queue insert attempt: id="
-                            + id
-                            + ", address="
-                            + sms.address
-                            + ", timestamp="
-                            + sms.timestamp
+                    "Queue insert attempt: " +
+                            "id=" +
+                            id +
+                            ", address=" +
+                            sms.address +
+                            ", timestamp=" +
+                            sms.timestamp
             );
+
+
+            /* =============================================
+               SQLITE INSERT
+            ============================================= */
 
             boolean inserted =
                     store.insertIfMissing(
@@ -500,38 +783,45 @@ public class SmsReceiver extends BroadcastReceiver {
                             now
                     );
 
-            if (inserted) {
+
+            if (
+                    inserted
+            ) {
 
                 result.inserted++;
 
+
                 Log.i(
                         TAG,
-                        "SUCCESS: SMS INSERTED INTO LOCAL QUEUE. "
-                                + "id="
-                                + id
+                        "SUCCESS: SMS INSERTED INTO LOCAL QUEUE. " +
+                                "id=" +
+                                id
                 );
 
             } else {
 
                 result.duplicates++;
 
+
                 Log.i(
                         TAG,
-                        "SMS already exists in local queue. "
-                                + "id="
-                                + id
+                        "SMS already exists in local queue. " +
+                                "id=" +
+                                id
                 );
             }
         }
 
+
         return result;
     }
 
-    /**
-     * Wakes the processing worker and makes sure the periodic
-     * safety-net worker remains scheduled.
-     */
-    private static void wakeProcessingWorker(
+
+    /* =====================================================
+       DIAGNOSTIC WORKER
+    ===================================================== */
+
+    private static void wakeDiagnosticWorker(
             Context context
     ) {
 
@@ -539,58 +829,51 @@ public class SmsReceiver extends BroadcastReceiver {
 
             Log.i(
                     TAG,
-                    "Enqueuing SmsProcessingWorker..."
+                    "=================================================="
             );
-
-            SmsProcessingWorker.enqueueNow(context);
 
             Log.i(
                     TAG,
-                    "SUCCESS: SmsProcessingWorker.enqueueNow() completed."
+                    "DIAGNOSTIC MODE"
+            );
+
+            Log.i(
+                    TAG,
+                    "Enqueuing SmsDiagnosticWorker..."
+            );
+
+
+            SmsDiagnosticWorker.enqueueNow(
+                    context
+            );
+
+
+            Log.i(
+                    TAG,
+                    "SUCCESS: SmsDiagnosticWorker.enqueueNow() completed."
+            );
+
+
+            Log.i(
+                    TAG,
+                    "=================================================="
             );
 
         } catch (Exception e) {
 
             Log.e(
                     TAG,
-                    "ERROR: SmsProcessingWorker.enqueueNow() failed.",
-                    e
-            );
-        }
-
-        try {
-
-            Log.i(
-                    TAG,
-                    "Ensuring periodic SMS worker is scheduled..."
-            );
-
-            SmsProcessingWorker.schedule(context);
-
-            Log.i(
-                    TAG,
-                    "SUCCESS: Periodic SMS worker schedule completed."
-            );
-
-        } catch (Exception e) {
-
-            Log.e(
-                    TAG,
-                    "ERROR: Failed to schedule periodic SMS worker.",
+                    "ERROR: SmsDiagnosticWorker.enqueueNow() failed.",
                     e
             );
         }
     }
 
-    /**
-     * Combines SMS parts belonging to the same logical SMS.
-     *
-     * Android supplies multipart messages through the broadcast.
-     * We group using sender + timestamp because this code path does
-     * not expose a reliable multipart sequence number.
-     *
-     * The supplied Android order is retained inside each group.
-     */
+
+    /* =====================================================
+       MULTIPART SMS
+    ===================================================== */
+
     private static List<CombinedSms> combineParts(
             List<SmsPart> parts
     ) {
@@ -598,19 +881,31 @@ public class SmsReceiver extends BroadcastReceiver {
         Map<String, List<SmsPart>> grouped =
                 new HashMap<>();
 
-        for (SmsPart part : parts) {
+
+        for (
+                SmsPart part
+                : parts
+        ) {
 
             String key =
                     part.address +
-                    "|" +
-                    part.timestamp;
+                            "|" +
+                            part.timestamp;
+
 
             List<SmsPart> group =
-                    grouped.get(key);
+                    grouped.get(
+                            key
+                    );
 
-            if (group == null) {
 
-                group = new ArrayList<>();
+            if (
+                    group == null
+            ) {
+
+                group =
+                        new ArrayList<>();
+
 
                 grouped.put(
                         key,
@@ -618,40 +913,64 @@ public class SmsReceiver extends BroadcastReceiver {
                 );
             }
 
-            group.add(part);
+
+            group.add(
+                    part
+            );
         }
+
 
         List<CombinedSms> result =
                 new ArrayList<>();
 
-        for (List<SmsPart> group : grouped.values()) {
 
-            if (group.isEmpty()) {
+        for (
+                List<SmsPart> group
+                : grouped.values()
+        ) {
+
+            if (
+                    group.isEmpty()
+            ) {
                 continue;
             }
+
 
             SmsPart first =
                     group.get(0);
 
+
             StringBuilder body =
                     new StringBuilder();
 
-            for (SmsPart part : group) {
+
+            for (
+                    SmsPart part
+                    : group
+            ) {
 
                 if (
                         part.body != null &&
                         !part.body.isEmpty()
                 ) {
-                    body.append(part.body);
+
+                    body.append(
+                            part.body
+                    );
                 }
             }
+
 
             String combinedBody =
                     body.toString().trim();
 
-            if (combinedBody.isEmpty()) {
+
+            if (
+                    combinedBody.isEmpty()
+            ) {
                 continue;
             }
+
 
             result.add(
                     new CombinedSms(
@@ -662,8 +981,9 @@ public class SmsReceiver extends BroadcastReceiver {
             );
         }
 
+
         /*
-         * Process older messages first.
+         * Oldest SMS first.
          */
         Collections.sort(
                 result,
@@ -683,28 +1003,39 @@ public class SmsReceiver extends BroadcastReceiver {
                 }
         );
 
+
         return result;
     }
 
-    /**
-     * Keeps the sender exactly as Android supplied it.
-     *
-     * Phone-number normalization belongs to the backend/processor.
-     */
+
+    /* =====================================================
+       ADDRESS
+    ===================================================== */
+
     private static String normalizeAddress(
             String address
     ) {
 
-        if (address == null) {
+        if (
+                address == null
+        ) {
             return "";
         }
 
+
+        /*
+         * Keep the sender exactly as Android supplied it.
+         *
+         * Phone normalization belongs to the backend.
+         */
         return address.trim();
     }
 
-    /**
-     * Creates a deterministic ID for local deduplication.
-     */
+
+    /* =====================================================
+       SMS ID
+    ===================================================== */
+
     private static String createStableSmsId(
             String address,
             long timestamp,
@@ -713,15 +1044,19 @@ public class SmsReceiver extends BroadcastReceiver {
 
         String identity =
                 address +
-                "|" +
-                timestamp +
-                "|" +
-                body;
+                        "|" +
+                        timestamp +
+                        "|" +
+                        body;
+
 
         try {
 
             MessageDigest digest =
-                    MessageDigest.getInstance("SHA-256");
+                    MessageDigest.getInstance(
+                            "SHA-256"
+                    );
+
 
             byte[] hash =
                     digest.digest(
@@ -730,12 +1065,17 @@ public class SmsReceiver extends BroadcastReceiver {
                             )
                     );
 
+
             StringBuilder hex =
                     new StringBuilder(
                             hash.length * 2
                     );
 
-            for (byte value : hash) {
+
+            for (
+                    byte value
+                    : hash
+            ) {
 
                 hex.append(
                         String.format(
@@ -746,13 +1086,17 @@ public class SmsReceiver extends BroadcastReceiver {
                 );
             }
 
-            return "sms-" + hex;
+
+            return "sms-" +
+                    hex;
+
 
         } catch (Exception e) {
 
             /*
-             * SHA-256 is expected to be available on Android.
-             * Keep a deterministic fallback regardless.
+             * SHA-256 should always be available on Android.
+             *
+             * Keep a deterministic fallback anyway.
              */
             return "sms-" +
                     Integer.toHexString(
