@@ -32,7 +32,7 @@ import {
 import type { Loan } from "@/lib/loans/types";
 
 /* =========================================================
-TYPES
+   TYPES
 ========================================================= */
 
 type MenuItem = {
@@ -61,7 +61,7 @@ type LoanProfitPanelProps = {
 };
 
 /* =========================================================
-NAVIGATION
+   NAVIGATION
 ========================================================= */
 
 const menuItems: MenuItem[] = [
@@ -118,7 +118,7 @@ const menuItems: MenuItem[] = [
 ];
 
 /* =========================================================
-HELPERS
+   HELPERS
 ========================================================= */
 
 function formatKES(
@@ -139,7 +139,7 @@ function formatKES(
 }
 
 /* =========================================================
-LOAN PROFIT PANEL
+   LOAN PROFIT PANEL
 ========================================================= */
 
 function LoanProfitPanel({
@@ -155,8 +155,7 @@ function LoanProfitPanel({
   onRetry,
 }: LoanProfitPanelProps) {
   const result = useMemo(() => {
-    const interestRate =
-      Number(rate);
+    const interestRate = Number(rate);
 
     if (
       !Number.isFinite(
@@ -285,7 +284,6 @@ function LoanProfitPanel({
                 border-t-yellow-400
               "
             />
-
             <span className="text-[11px] text-white/35">
               Loading loans...
             </span>
@@ -351,7 +349,7 @@ function LoanProfitPanel({
         "
       >
         {/* =================================================
-        DATE RANGE
+            DATE RANGE
         ================================================= */}
 
         <div className="grid grid-cols-2 gap-2">
@@ -433,7 +431,7 @@ function LoanProfitPanel({
         </div>
 
         {/* =================================================
-        INTEREST RATE
+            INTEREST RATE
         ================================================= */}
 
         <div className="mt-2">
@@ -479,7 +477,7 @@ function LoanProfitPanel({
         </div>
 
         {/* =================================================
-        RESULTS
+            RESULTS
         ================================================= */}
 
         <div className="mt-3 grid grid-cols-2 gap-2">
@@ -535,22 +533,22 @@ function LoanProfitPanel({
 }
 
 /* =========================================================
-TOP BAR
+   TOP BAR
 ========================================================= */
 
 export default function TopBar() {
   const {
     data: session,
+    status: sessionStatus,
   } = useSession();
 
-  const router =
-    useRouter();
+  const router = useRouter();
 
   const pathname =
     usePathname();
 
   /* =======================================================
-  UI STATE
+     UI STATE
   ======================================================= */
 
   const [
@@ -569,7 +567,7 @@ export default function TopBar() {
   ] = useState(false);
 
   /* =======================================================
-  AUTHORIZED USERS STATE
+     AUTHORIZED USERS STATE
   ======================================================= */
 
   const [
@@ -598,7 +596,33 @@ export default function TopBar() {
   ] = useState("");
 
   /* =======================================================
-  PROFIT CALCULATOR STATE
+     AUTHORIZATION CHECK STATE
+  ======================================================= */
+
+  const [
+    authorizationChecked,
+    setAuthorizationChecked,
+  ] = useState(false);
+
+  const [
+    isAuthorized,
+    setIsAuthorized,
+  ] = useState<boolean | null>(
+    null,
+  );
+
+  const [
+    authorizationError,
+    setAuthorizationError,
+  ] = useState("");
+
+  const [
+    showUnauthorizedModal,
+    setShowUnauthorizedModal,
+  ] = useState(false);
+
+  /* =======================================================
+     PROFIT CALCULATOR STATE
   ======================================================= */
 
   const [
@@ -637,7 +661,7 @@ export default function TopBar() {
   ] = useState("");
 
   /* =======================================================
-  ANDROID GOOGLE USER
+     ANDROID GOOGLE USER
   ======================================================= */
 
   const [
@@ -696,7 +720,228 @@ export default function TopBar() {
   }, []);
 
   /* =======================================================
-  LOAD LOANS WHEN PROFIT CALCULATOR OPENS
+     CHECK AUTHORIZATION
+  ======================================================= */
+
+  useEffect(() => {
+    /*
+     * Do not check while NextAuth is still resolving.
+     */
+    if (
+      sessionStatus ===
+      "loading"
+    ) {
+      return;
+    }
+
+    /*
+     * The authorization endpoint uses auth()
+     * on the server, so we need a real NextAuth
+     * authenticated session before checking.
+     */
+    if (
+      sessionStatus !==
+        "authenticated" ||
+      !session?.user?.email
+    ) {
+      setAuthorizationChecked(
+        false,
+      );
+
+      setIsAuthorized(
+        null,
+      );
+
+      setAuthorizationError(
+        "",
+      );
+
+      setShowUnauthorizedModal(
+        false,
+      );
+
+      return;
+    }
+
+    let cancelled = false;
+
+    const checkAuthorization =
+      async () => {
+        try {
+          setAuthorizationChecked(
+            false,
+          );
+
+          setAuthorizationError(
+            "",
+          );
+
+          const response =
+            await fetch(
+              "/api/access/emails",
+              {
+                method: "GET",
+                headers: {
+                  Accept:
+                    "application/json",
+                },
+                cache: "no-store",
+              },
+            );
+
+          const result =
+            await response
+              .json()
+              .catch(
+                () => null,
+              );
+
+          if (
+            !response.ok
+          ) {
+            throw new Error(
+              result?.error ||
+                result?.message ||
+                `Unable to verify authorization. HTTP ${response.status}`,
+            );
+          }
+
+          const authorized =
+            result?.authorized ===
+              true ||
+            result?.data
+              ?.authorized ===
+              true;
+
+          if (
+            cancelled
+          ) {
+            return;
+          }
+
+          setIsAuthorized(
+            authorized,
+          );
+
+          setAuthorizationChecked(
+            true,
+          );
+
+          setShowUnauthorizedModal(
+            !authorized,
+          );
+        } catch (error) {
+          if (
+            cancelled
+          ) {
+            return;
+          }
+
+          console.error(
+            "Unable to verify GEO-SHUA authorization:",
+            error,
+          );
+
+          setAuthorizationError(
+            error instanceof
+              Error
+              ? error.message
+              : "Failed to verify account authorization.",
+          );
+
+          setAuthorizationChecked(
+            true,
+          );
+
+          /*
+           * Fail closed.
+           *
+           * If authorization cannot be
+           * verified, do NOT allow access.
+           */
+          setIsAuthorized(
+            false,
+          );
+
+          setShowUnauthorizedModal(
+            true,
+          );
+        }
+      };
+
+    void checkAuthorization();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    sessionStatus,
+    session?.user?.email,
+  ]);
+
+  /* =======================================================
+     CLOSE UNAUTHORIZED APP
+  ======================================================= */
+
+  const handleCloseUnauthorizedApp =
+    async () => {
+      try {
+        /*
+         * Capacitor App plugin.
+         *
+         * On Android this attempts to close
+         * the native application.
+         */
+        const capacitor =
+          (
+            window as Window & {
+              Capacitor?: {
+                Plugins?: {
+                  App?: {
+                    exitApp?: () =>
+                      Promise<void>;
+                  };
+                };
+              };
+            }
+          ).Capacitor;
+
+        const exitApp =
+          capacitor?.Plugins
+            ?.App?.exitApp;
+
+        if (
+          typeof exitApp ===
+          "function"
+        ) {
+          await exitApp();
+          return;
+        }
+      } catch (error) {
+        console.error(
+          "Unable to close GEO-SHUA Android application:",
+          error,
+        );
+      }
+
+      /*
+       * Browser fallback.
+       *
+       * Most browsers will refuse to close
+       * a tab that was not opened by script.
+       */
+      try {
+        window.close();
+      } catch (error) {
+        console.error(
+          "Unable to close browser window:",
+          error,
+        );
+      }
+    };
+
+  /* =======================================================
+     LOAD LOANS WHEN PROFIT CALCULATOR OPENS
   ======================================================= */
 
   useEffect(() => {
@@ -719,7 +964,8 @@ export default function TopBar() {
          *
          * GET /api/loans
          *
-         * The endpoint accepts a maximum limit of 1000.
+         * The endpoint accepts a maximum
+         * limit of 1000.
          */
         const response =
           await fetch(
@@ -792,7 +1038,8 @@ export default function TopBar() {
         }
 
         const message =
-          error instanceof Error
+          error instanceof
+            Error
             ? error.message
             : "Unable to load loans.";
 
@@ -802,6 +1049,7 @@ export default function TopBar() {
         );
 
         setLoans([]);
+
         setLoansError(
           message,
         );
@@ -827,13 +1075,15 @@ export default function TopBar() {
   ]);
 
   /* =======================================================
-  RETRY LOAN LOAD
+     RETRY LOAN LOAD
   ======================================================= */
 
   const retryLoanLoad =
     () => {
       setLoans([]);
+
       setLoansError("");
+
       setLoanLoadVersion(
         (value) =>
           value + 1,
@@ -841,12 +1091,12 @@ export default function TopBar() {
     };
 
   /* =======================================================
-  ADD AUTHORIZED EMAIL
+     ADD AUTHORIZED EMAIL
   ======================================================= */
 
   const addAuthorizedEmail =
     async () => {
-      const email =
+      const normalizedEmail =
         authorizedEmail
           .trim()
           .toLowerCase();
@@ -859,10 +1109,11 @@ export default function TopBar() {
         "",
       );
 
-      if (!email) {
+      if (!normalizedEmail) {
         setAuthorizedEmailError(
           "Enter an email address.",
         );
+
         return;
       }
 
@@ -871,12 +1122,13 @@ export default function TopBar() {
 
       if (
         !emailRegex.test(
-          email,
+          normalizedEmail,
         )
       ) {
         setAuthorizedEmailError(
           "Enter a valid email address.",
         );
+
         return;
       }
 
@@ -897,7 +1149,8 @@ export default function TopBar() {
                   "application/json",
               },
               body: JSON.stringify({
-                email,
+                email:
+                  normalizedEmail,
               }),
             },
           );
@@ -927,8 +1180,14 @@ export default function TopBar() {
           "Email added successfully.",
         );
       } catch (error) {
+        console.error(
+          "Unable to add authorized email:",
+          error,
+        );
+
         setAuthorizedEmailError(
-          error instanceof Error
+          error instanceof
+            Error
             ? error.message
             : "Failed to add authorized email.",
         );
@@ -940,7 +1199,7 @@ export default function TopBar() {
     };
 
   /* =======================================================
-  AUTHENTICATED USER
+     AUTHENTICATED USER
   ======================================================= */
 
   const user =
@@ -962,7 +1221,7 @@ export default function TopBar() {
     null;
 
   /* =======================================================
-  NAVIGATION
+     NAVIGATION
   ======================================================= */
 
   const navigateTo = (
@@ -990,7 +1249,7 @@ export default function TopBar() {
   };
 
   /* =======================================================
-  SIGN OUT
+     SIGN OUT
   ======================================================= */
 
   const handleSignOut =
@@ -1015,30 +1274,25 @@ export default function TopBar() {
 
         if (session) {
           await signOut({
-            callbackUrl:
-              "/",
+            callbackUrl: "/",
           });
 
           return;
         }
 
-        router.push(
-          "/",
-        );
+        router.push("/");
       } catch (error) {
         console.error(
           "Sign out error:",
           error,
         );
 
-        router.push(
-          "/",
-        );
+        router.push("/");
       }
     };
 
   /* =======================================================
-  PROFILE TOGGLE
+     PROFILE TOGGLE
   ======================================================= */
 
   const toggleProfile =
@@ -1062,13 +1316,13 @@ export default function TopBar() {
     };
 
   /* =======================================================
-  RENDER
+     RENDER
   ======================================================= */
 
   return (
     <>
       {/* =====================================================
-      TOP BAR
+          TOP BAR
       ===================================================== */}
 
       <header
@@ -1086,7 +1340,7 @@ export default function TopBar() {
         "
       >
         {/* =================================================
-        MOBILE TOP BAR
+            MOBILE TOP BAR
         ================================================= */}
 
         <div
@@ -1572,7 +1826,7 @@ export default function TopBar() {
         </div>
 
         {/* =================================================
-        DESKTOP TOP BAR
+            DESKTOP TOP BAR
         ================================================= */}
 
         <div
@@ -1933,7 +2187,7 @@ export default function TopBar() {
                   )}
 
                   {/* =================================================
-                  AUTHORIZED USERS
+                      AUTHORIZED USERS
                   ================================================= */}
 
                   <button
@@ -2160,7 +2414,7 @@ export default function TopBar() {
       </header>
 
       {/* =====================================================
-      MOBILE BACKDROP
+          MOBILE BACKDROP
       ===================================================== */}
 
       {mobileOpen && (
@@ -2184,7 +2438,7 @@ export default function TopBar() {
       )}
 
       {/* =====================================================
-      MOBILE SIDEBAR
+          MOBILE SIDEBAR
       ===================================================== */}
 
       <aside
@@ -2489,6 +2743,149 @@ export default function TopBar() {
           </button>
         </div>
       </aside>
+
+      {/* =====================================================
+          UNAUTHORIZED ACCESS MODAL
+      ===================================================== */}
+
+      {showUnauthorizedModal &&
+        authorizationChecked &&
+        isAuthorized === false && (
+          <div
+            className="
+              fixed
+              inset-0
+              z-[9999]
+              flex
+              items-center
+              justify-center
+              bg-black/85
+              px-4
+              backdrop-blur-md
+            "
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="unauthorized-title"
+          >
+            <div
+              className="
+                w-full
+                max-w-sm
+                rounded-2xl
+                border
+                border-white/[0.08]
+                bg-[#101010]
+                p-6
+                text-center
+                shadow-[0_30px_100px_rgba(0,0,0,0.7)]
+              "
+            >
+              <div
+                className="
+                  mx-auto
+                  flex
+                  h-14
+                  w-14
+                  items-center
+                  justify-center
+                  rounded-full
+                  bg-red-500/[0.08]
+                  ring-1
+                  ring-red-500/10
+                "
+              >
+                <ShieldCheck
+                  size={27}
+                  strokeWidth={1.7}
+                  className="text-red-300"
+                />
+              </div>
+
+              <h2
+                id="unauthorized-title"
+                className="
+                  mt-4
+                  text-base
+                  font-semibold
+                  text-white
+                "
+              >
+                Not authorized
+              </h2>
+
+              <p
+                className="
+                  mx-auto
+                  mt-2
+                  max-w-xs
+                  text-xs
+                  leading-5
+                  text-white/45
+                "
+              >
+                Your account is not authorized
+                to access GEO-SHUA.
+              </p>
+
+              {email ? (
+                <div
+                  className="
+                    mt-4
+                    rounded-xl
+                    border
+                    border-white/[0.06]
+                    bg-white/[0.025]
+                    px-3
+                    py-2.5
+                  "
+                >
+                  <p className="truncate text-[10px] text-white/35">
+                    {email}
+                  </p>
+                </div>
+              ) : null}
+
+              {authorizationError ? (
+                <p
+                  className="
+                    mt-3
+                    text-[10px]
+                    leading-4
+                    text-red-300/60
+                  "
+                >
+                  Authorization could not
+                  be verified.
+                </p>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={() =>
+                  void handleCloseUnauthorizedApp()
+                }
+                className="
+                  mt-5
+                  flex
+                  h-11
+                  w-full
+                  items-center
+                  justify-center
+                  rounded-xl
+                  bg-red-400
+                  text-xs
+                  font-bold
+                  text-black
+                  transition
+                  hover:bg-red-300
+                  active:scale-[0.99]
+                "
+              >
+                Close App
+              </button>
+            </div>
+          </div>
+        )}
     </>
   );
 }
