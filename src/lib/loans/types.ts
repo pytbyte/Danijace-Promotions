@@ -65,6 +65,7 @@
  * - createdAt
  * - updatedAt
  * - authorizedAt
+ * - transactionAt
  *
  * A timestamp represents an actual point in time.
  * A calendar date represents a business day.
@@ -275,11 +276,6 @@ export interface LoanSettings {
 
   updatedAt: Date;
 }
-
-/* =========================================================
-   LOAN
-========================================================= */
-
 
 /* =========================================================
    WEEKLY REPAYMENT BREAKDOWN
@@ -523,7 +519,6 @@ export interface WeeklyRepaymentBreakdown {
   surpluses: WeeklyRepaymentSurplus[];
 }
 
-
 /* =========================================================
    LOAN
 ========================================================= */
@@ -741,8 +736,6 @@ export interface Loan {
   updatedAt: Date;
 }
 
-
-
 /* =========================================================
    CREATE LOAN
 ========================================================= */
@@ -861,6 +854,30 @@ export interface LoanRepayment {
    */
   transactionDate: CalendarDate;
 
+  /**
+   * Exact timestamp of the original bank transaction.
+   *
+   * This is the actual moment the bank transaction occurred,
+   * as reported by the bank SMS.
+   *
+   * IMPORTANT:
+   *
+   * This is NOT:
+   *
+   * - the Android SMS receipt timestamp
+   * - the GEO-SHUA repayment createdAt timestamp
+   *
+   * It is used for historical loan resolution and replay
+   * protection.
+   *
+   * Example:
+   *
+   *   2026-09-05T10:17:00.000Z
+   *
+   * Manual/system repayments may not have this value.
+   */
+  transactionAt?: Date;
+
   source: TransactionSource;
 
   /**
@@ -879,49 +896,41 @@ export interface LoanRepayment {
 }
 
 /* =========================================================
-   CREATE REPAYMENT
+   CREATE LOAN REPAYMENT
 ========================================================= */
 
 export interface CreateLoanRepaymentInput {
-  /**
-   * Preferred when the payment is already associated
-   * with a specific loan.
-   */
   loanId?: string;
 
-  /**
-   * Can be used when the system must safely resolve
-   * the member's only open loan.
-   *
-   * The service must never select an arbitrary loan
-   * when multiple open loans exist.
-   */
   memberId?: string;
 
-  /**
-   * Amount being repaid.
-   */
   amount: number;
 
-  /**
-   * Immutable payment transaction reference.
-   *
-   * Used as the idempotency key.
-   */
   transactionReference: string;
 
   /**
-   * Calendar date on which the payment occurred.
+   * Canonical financial calendar date.
    *
-   * Format:
+   * Example:
    *
-   *   YYYY-MM-DD
-   *
-   * The SMS processor converts the parser's Date
-   * into this canonical calendar-date string before
-   * calling the loan service.
+   *   2026-09-05
    */
   transactionDate: CalendarDate;
+
+  /**
+   * Exact timestamp of the bank transaction.
+   *
+   * This is NOT the Android SMS receipt timestamp.
+   *
+   * It is the actual financial event time reported
+   * by the bank and is used for historical loan
+   * resolution.
+   *
+   * In particular, it allows the system to determine
+   * whether a payment occurred before or after a loan
+   * was authorized.
+   */
+  transactionAt?: Date;
 
   source: TransactionSource;
 
@@ -1378,4 +1387,3 @@ export type UpdateLoanInput = {
 
   guarantor?: LoanGuarantor;
 };
-

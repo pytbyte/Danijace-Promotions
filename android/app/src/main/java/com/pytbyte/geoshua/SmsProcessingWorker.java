@@ -24,8 +24,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.ConnectException;
 import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
 import java.net.URL;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
@@ -37,11 +40,11 @@ import java.util.concurrent.TimeUnit;
  * NATIVE INCOMING SMS PROCESSING WORKER
  * =========================================================
  *
- * RESPONSIBILITY
+ * PRODUCTION FINANCIAL SMS PIPELINE
  * ---------------------------------------------------------
  *
- * Process incoming SMS messages that have already been
- * captured by SmsReceiver and stored in SmsQueueStore.
+ * This worker processes SMS messages captured by the native
+ * Android SMS receiver and stored in SmsQueueStore.
  *
  * Flow:
  *
@@ -55,7 +58,9 @@ import java.util.concurrent.TimeUnit;
  *       ↓
  *   POST /api/sms/process
  *       ↓
- *   GEO-SHUA financial services
+ *   GEO-SHUA API
+ *       ↓
+ *   Financial processing
  *       ↓
  *   mark SQLite row processed
  *
@@ -67,17 +72,13 @@ import java.util.concurrent.TimeUnit;
  * This worker does NOT:
  *
  * - parse bank SMS
- * - resolve members
- * - resolve loans
- * - resolve savings accounts
+ * - identify members
+ * - identify loans
+ * - identify savings accounts
  * - calculate repayments
- * - modify MongoDB directly
+ * - modify MongoDB
  *
- * All financial processing remains on the server.
- *
- * The existing API remains authoritative:
- *
- *   /api/sms/process
+ * All financial intelligence remains on the server.
  *
  * =========================================================
  *
@@ -91,41 +92,23 @@ import java.util.concurrent.TimeUnit;
  * - React
  * - Capacitor
  * - JavaScript
- * - the GEO-SHUA UI
  *
- * Therefore it can run while:
- *
- * - the app UI is closed
- * - the screen is locked
- * - the user is not looking at the app
- *
- * Subject to normal Android restrictions such as:
- *
- * - app force-stop
- * - revoked permissions
- * - device/network restrictions
+ * It can therefore process queued SMS while the UI is
+ * closed or the screen is locked, subject to Android system
+ * restrictions.
  *
  * =========================================================
  *
- * RETRY MODEL
+ * 36-HOUR WINDOW
  * ---------------------------------------------------------
  *
- * Terminal result:
+ * The 36-hour period is used to select recent pending SMS
+ * for automatic Android reconciliation/processing.
  *
- *   success
- *   duplicate
- *   ignored
+ * It is NOT a financial validity decision.
  *
- * These are marked processed.
- *
- * Retryable result:
- *
- *   network failure
- *   HTTP 5xx
- *
- * These remain pending.
- *
- * The worker returns Result.retry().
+ * The API remains authoritative regarding whether a
+ * transaction is financially valid.
  *
  * =========================================================
  */
@@ -139,6 +122,11 @@ public final class SmsProcessingWorker
        API
     ===================================================== */
 
+    /**
+     * REAL production financial processing endpoint.
+     *
+     * This is NOT the diagnostic endpoint.
+     */
     private static final String API_BASE_URL =
             "https://geo-shua.vercel.app";
 
@@ -149,23 +137,9 @@ public final class SmsProcessingWorker
        WORK NAMES
     ===================================================== */
 
-    /**
-     * Unique immediate work.
-     *
-     * Multiple SMS_RECEIVED broadcasts can arrive close
-     * together. KEEP causes them to share one worker instead
-     * of creating a separate worker for every SMS.
-     */
     private static final String IMMEDIATE_WORK_NAME =
             "geoshua_sms_processing_now";
 
-    /**
-     * Periodic fallback.
-     *
-     * This catches SMS that remain pending because an
-     * immediate worker was delayed or the device temporarily
-     * lacked network connectivity.
-     */
     private static final String PERIODIC_WORK_NAME =
             "geoshua_sms_processing_periodic";
 
@@ -173,6 +147,12 @@ public final class SmsProcessingWorker
        TIMING
     ===================================================== */
 
+    /**
+     * Android automatically processes/reconciles SMS from
+     * the most recent 36 hours.
+     *
+     * This is NOT the server's financial validity rule.
+     */
     private static final long SMS_LOOKBACK_HOURS =
             36L;
 
@@ -195,13 +175,19 @@ public final class SmsProcessingWorker
             30_000;
 
     /**
-     * Maximum number of queued messages handled by one
-     * worker invocation.
-     *
-     * If more remain, the worker schedules another immediate
-     * pass before finishing.
+     * Maximum messages processed in one batch.
      */
     private static final int BATCH_SIZE =
+            10;
+
+    /**
+     * Maximum batches processed by a single Worker
+     * invocation.
+     *
+     * This prevents a pathological queue from keeping one
+     * Worker alive indefinitely.
+     */
+    private static final int MAX_BATCHES_PER_RUN =
             10;
 
     /**
@@ -234,16 +220,27 @@ public final class SmsProcessingWorker
 
         Log.d(
                 TAG,
+                "================================================"
+        );
+
+        Log.d(
+                TAG,
                 "Incoming SMS processing worker started"
+        );
+
+        Log.d(
+                TAG,
+                "Production endpoint: "
+                        + PROCESS_ENDPOINT
         );
 
         try {
 
             /*
-             * WorkManager already has a network constraint,
-             * but this defensive check prevents unnecessary
-             * HTTP attempts if the network disappeared between
-             * scheduling and execution.
+             * WorkManager already requires a connected
+             * network, but perform a defensive check because
+             * connectivity can disappear between scheduling
+             * and actual execution.
              */
             if (!isNetworkAvailable()) {
 
@@ -255,6 +252,18 @@ public final class SmsProcessingWorker
                 return Result.retry();
             }
 
+            SmsQueueStore store =
+                    new SmsQueueStore(
+                            getApplicationContext()
+                    );
+
+            /*
+             * Use one processing window for this worker
+             * invocation.
+             *
+             * The 36-hour window determines which recent
+             * pending SMS are automatically submitted.
+             */
             final long now =
                     System.currentTimeMillis();
 
@@ -262,172 +271,260 @@ public final class SmsProcessingWorker
                     now - SMS_LOOKBACK_MS;
 
             /*
-             * Enforce the 36-hour retention window before
-             * loading pending messages.
+             * Cleanup is safe because SmsQueueStore now deletes
+             * ONLY processed rows.
+             *
+             * Unprocessed financial SMS are preserved.
              */
-            SmsQueueStore store =
-                    new SmsQueueStore(
-                            getApplicationContext()
+            int deleted =
+                    store.deleteOlderThan(
+                            cutoff
                     );
 
-            store.deleteOlderThan(
-                    cutoff
-            );
-
-            /*
-             * Load pending messages in chronological order.
-             */
-            List<SmsQueueStore.SmsMessage> messages =
-                    store.getPendingMessages(
-                            cutoff,
-                            now
-                    );
-
-            if (messages.isEmpty()) {
+            if (deleted > 0) {
 
                 Log.d(
                         TAG,
-                        "No pending incoming SMS messages"
+                        "Cleaned up "
+                                + deleted
+                                + " old processed SMS rows"
                 );
-
-                return Result.success();
             }
 
-            Log.d(
-                    TAG,
-                    "Pending SMS count: "
-                            + messages.size()
-            );
-
-            int processedCount =
+            int totalAttempted =
                     0;
 
-            int attemptedCount =
+            int totalCompleted =
                     0;
 
             /*
-             * Only process a bounded batch per worker
-             * invocation.
+             * =================================================
+             * DRAIN THE QUEUE
+             * =================================================
+             *
+             * Instead of:
+             *
+             *   process 10
+             *   enqueue another Worker
+             *   finish
+             *
+             * we process several controlled batches inside
+             * this Worker invocation.
+             *
+             * This avoids the ExistingWorkPolicy.KEEP race
+             * where a new enqueue can be ignored while the
+             * current Worker is still running.
              */
-            int limit =
-                    Math.min(
-                            messages.size(),
-                            BATCH_SIZE
-                    );
-
             for (
-                    int index = 0;
-                    index < limit;
-                    index++
+                    int batchNumber = 1;
+                    batchNumber <= MAX_BATCHES_PER_RUN;
+                    batchNumber++
             ) {
 
-                SmsQueueStore.SmsMessage sms =
-                        messages.get(index);
+                List<SmsQueueStore.SmsMessage> messages =
+                        store.getPendingMessages(
+                                cutoff,
+                                now
+                        );
 
-                if (sms == null) {
-                    continue;
+                if (messages.isEmpty()) {
+
+                    Log.d(
+                            TAG,
+                            "No pending incoming SMS messages remain"
+                    );
+
+                    break;
                 }
 
-                attemptedCount++;
+                Log.d(
+                        TAG,
+                        "Processing batch "
+                                + batchNumber
+                                + " with "
+                                + messages.size()
+                                + " pending SMS"
+                );
 
-                ProcessingResult result =
-                        processSms(
-                                sms
+                int limit =
+                        Math.min(
+                                messages.size(),
+                                BATCH_SIZE
                         );
 
-                /*
-                 * Terminal outcome.
-                 *
-                 * The backend has either:
-                 *
-                 * - processed the financial transaction
-                 * - confirmed it was already processed
-                 * - deliberately ignored it
-                 *
-                 * Therefore it is safe to remove this SMS
-                 * from the pending financial queue.
-                 */
-                if (result.terminal) {
+                boolean retryRequested =
+                        false;
 
-                    boolean marked =
-                            store.markProcessed(
-                                    sms.getId()
-                            );
+                for (
+                        int index = 0;
+                        index < limit;
+                        index++
+                ) {
 
-                    if (!marked) {
+                    SmsQueueStore.SmsMessage sms =
+                            messages.get(index);
 
-                        /*
-                         * The backend already responded with a
-                         * terminal result, so we do NOT retry the
-                         * financial operation simply because the
-                         * local SQLite update failed.
-                         *
-                         * The SMS remains locally pending and can
-                         * be reconciled later. Backend idempotency
-                         * protects against duplicate financial
-                         * processing if it is sent again.
-                         */
-                        Log.w(
-                                TAG,
-                                "Backend accepted SMS but local "
-                                        + "processed flag could not be updated: "
-                                        + sms.getId()
-                        );
-                    } else {
-
-                        processedCount++;
-
-                        Log.d(
-                                TAG,
-                                "SMS completed: "
-                                        + sms.getId()
-                                        + " status="
-                                        + result.apiStatus
-                        );
+                    if (sms == null) {
+                        continue;
                     }
 
-                    continue;
+                    totalAttempted++;
+
+                    Log.d(
+                            TAG,
+                            "Processing SMS "
+                                    + sms.getId()
+                    );
+
+                    ProcessingResult result =
+                            processSms(
+                                    sms
+                            );
+
+                    /*
+                     * =================================================
+                     * TERMINAL
+                     * =================================================
+                     *
+                     * The API has made a terminal decision.
+                     *
+                     * success
+                     * duplicate
+                     * ignored
+                     *
+                     * are currently terminal API states.
+                     */
+                    if (result.terminal) {
+
+                        boolean marked =
+                                store.markProcessed(
+                                        sms.getId()
+                                );
+
+                        if (!marked) {
+
+                            /*
+                             * The backend already received the
+                             * request and returned a terminal
+                             * result.
+                             *
+                             * Do NOT send the financial operation
+                             * again merely because the local SQLite
+                             * flag could not be updated.
+                             *
+                             * The row remains pending and can be
+                             * reconciled later.
+                             */
+                            Log.w(
+                                    TAG,
+                                    "Backend returned terminal result "
+                                            + "but SQLite row could not be "
+                                            + "marked processed: "
+                                            + sms.getId()
+                            );
+
+                        } else {
+
+                            totalCompleted++;
+
+                            Log.d(
+                                    TAG,
+                                    "SMS completed: "
+                                            + sms.getId()
+                                            + " status="
+                                            + result.apiStatus
+                            );
+                        }
+
+                        continue;
+                    }
+
+                    /*
+                     * =================================================
+                     * RETRYABLE
+                     * =================================================
+                     *
+                     * Do not mark the SMS processed.
+                     */
+                    if (result.retryable) {
+
+                        Log.w(
+                                TAG,
+                                "Retryable SMS processing failure: "
+                                        + sms.getId()
+                                        + " - "
+                                        + result.message
+                        );
+
+                        retryRequested =
+                                true;
+
+                        break;
+                    }
+
+                    /*
+                     * Defensive fallback.
+                     */
+                    Log.w(
+                            TAG,
+                            "Unhandled processing result for SMS: "
+                                    + sms.getId()
+                    );
+
+                    retryRequested =
+                            true;
+
+                    break;
                 }
 
                 /*
-                 * Retryable failure.
+                 * If one SMS needs retrying, stop immediately.
                  *
-                 * Do NOT mark the SMS processed.
+                 * Its SQLite row remains processed=0.
                  */
-                if (result.retryable) {
+                if (retryRequested) {
 
                     Log.w(
                             TAG,
-                            "Retryable SMS processing failure for "
-                                    + sms.getId()
-                                    + ": "
-                                    + result.message
+                            "Worker stopping because a retryable "
+                                    + "SMS processing failure occurred"
                     );
 
                     return Result.retry();
                 }
 
                 /*
-                 * Defensive fallback.
+                 * If fewer than BATCH_SIZE messages were returned,
+                 * we have drained the current queue.
                  */
-                Log.w(
-                        TAG,
-                        "Unhandled SMS processing result for "
-                                + sms.getId()
-                );
+                if (messages.size() < BATCH_SIZE) {
 
-                return Result.retry();
+                    break;
+                }
             }
 
             /*
-             * If there are more messages than this worker's
-             * batch size, schedule another immediate pass.
+             * Check whether messages still remain inside the
+             * current 36-hour processing window.
+             *
+             * If so, schedule another immediate pass.
+             *
+             * Because this Worker is currently finishing, the
+             * enqueue is safe and KEEP will allow the next work
+             * item to be created.
              */
-            if (messages.size() > BATCH_SIZE) {
+            List<SmsQueueStore.SmsMessage> remaining =
+                    store.getPendingMessages(
+                            cutoff,
+                            now
+                    );
+
+            if (!remaining.isEmpty()) {
 
                 Log.d(
                         TAG,
-                        "More pending SMS remain; scheduling next batch"
+                        "Pending SMS remain after worker safety limit: "
+                                + remaining.size()
                 );
 
                 enqueueNow(
@@ -439,9 +536,9 @@ public final class SmsProcessingWorker
                     TAG,
                     "Incoming SMS processing worker finished. "
                             + "attempted="
-                            + attemptedCount
+                            + totalAttempted
                             + ", completed="
-                            + processedCount
+                            + totalCompleted
             );
 
             return Result.success();
@@ -455,11 +552,19 @@ public final class SmsProcessingWorker
             );
 
             /*
-             * The queue remains untouched.
+             * No SMS is marked processed because of this
+             * exception.
              *
-             * WorkManager will retry.
+             * WorkManager will retry the Worker.
              */
             return Result.retry();
+
+        } finally {
+
+            Log.d(
+                    TAG,
+                    "================================================"
+            );
         }
     }
 
@@ -467,6 +572,7 @@ public final class SmsProcessingWorker
        PROCESS ONE SMS
     ===================================================== */
 
+    @NonNull
     private ProcessingResult processSms(
             @NonNull SmsQueueStore.SmsMessage sms
     ) {
@@ -519,23 +625,28 @@ public final class SmsProcessingWorker
                     "application/json"
             );
 
-            /*
-             * Prevent accidental proxy/cache behaviour from
-             * interfering with transaction processing.
-             */
             connection.setRequestProperty(
                     "Cache-Control",
                     "no-cache"
             );
 
+            /*
+             * =================================================
+             * PRODUCTION API CONTRACT
+             * =================================================
+             *
+             * POST /api/sms/process
+             *
+             * {
+             *   "smsId": "...",
+             *   "address": "...",
+             *   "body": "...",
+             *   "date": 123456789
+             * }
+             */
             JSONObject requestBody =
                     new JSONObject();
 
-            /*
-             * EXACT CONTRACT expected by:
-             *
-             * /api/sms/process
-             */
             requestBody.put(
                     "smsId",
                     sms.getId()
@@ -571,6 +682,7 @@ public final class SmsProcessingWorker
                     OutputStream outputStream =
                             connection.getOutputStream()
             ) {
+
                 outputStream.write(
                         bodyBytes
                 );
@@ -587,13 +699,21 @@ public final class SmsProcessingWorker
                             responseCode
                     );
 
+            Log.d(
+                    TAG,
+                    "API response for "
+                            + sms.getId()
+                            + ": HTTP "
+                            + responseCode
+            );
+
             return classifyResponse(
                     responseCode,
                     responseBody
             );
 
         } catch (
-                java.net.SocketTimeoutException exception
+                SocketTimeoutException exception
         ) {
 
             return ProcessingResult.retry(
@@ -602,7 +722,7 @@ public final class SmsProcessingWorker
             );
 
         } catch (
-                java.net.UnknownHostException exception
+                UnknownHostException exception
         ) {
 
             return ProcessingResult.retry(
@@ -610,7 +730,7 @@ public final class SmsProcessingWorker
             );
 
         } catch (
-                java.net.ConnectException exception
+                ConnectException exception
         ) {
 
             return ProcessingResult.retry(
@@ -632,9 +752,10 @@ public final class SmsProcessingWorker
         ) {
 
             /*
-             * JSON construction or another unexpected local
-             * failure is treated as retryable because the SMS
-             * remains safely stored in SQLite.
+             * Unexpected local failure.
+             *
+             * The SMS remains safely stored as pending, so
+             * retrying is safer than marking it processed.
              */
             return ProcessingResult.retry(
                     "Unexpected SMS API processing failure: "
@@ -665,6 +786,7 @@ public final class SmsProcessingWorker
                 responseCode >= 200 &&
                 responseCode < 400
         ) {
+
             inputStream =
                     connection.getInputStream();
 
@@ -673,12 +795,6 @@ public final class SmsProcessingWorker
             inputStream =
                     connection.getErrorStream();
 
-            /*
-             * Some HTTP implementations may not provide an
-             * error stream. Return an empty body rather than
-             * throwing another exception and losing the
-             * original HTTP status.
-             */
             if (inputStream == null) {
                 return "";
             }
@@ -727,14 +843,6 @@ public final class SmsProcessingWorker
          * =================================================
          * HTTP 2xx
          * =================================================
-         *
-         * The API deliberately uses HTTP 200 for:
-         *
-         *   success
-         *   duplicate
-         *   ignored
-         *
-         * We inspect the JSON status.
          */
         if (
                 responseCode >= 200 &&
@@ -746,6 +854,9 @@ public final class SmsProcessingWorker
                             responseBody
                     );
 
+            /*
+             * REAL FINANCIAL SUCCESS
+             */
             if (
                     "success".equals(
                             status
@@ -758,6 +869,12 @@ public final class SmsProcessingWorker
                 );
             }
 
+            /*
+             * SERVER-SIDE IDEMPOTENCY
+             *
+             * The server says this transaction already exists.
+             * It is therefore safe to stop submitting this SMS.
+             */
             if (
                     "duplicate".equals(
                             status
@@ -770,27 +887,21 @@ public final class SmsProcessingWorker
                 );
             }
 
+            /*
+             * CURRENT API CONTRACT
+             *
+             * At this stage of the Android work, the existing
+             * API still returns "ignored" for terminal cases.
+             *
+             * We will refine this contract when we modify
+             * /api/sms/process.
+             */
             if (
                     "ignored".equals(
                             status
                     )
             ) {
 
-                /*
-                 * The API explicitly classifies these as
-                 * ignored rather than failed.
-                 *
-                 * Examples:
-                 *
-                 * - non-bank SMS
-                 * - future SMS
-                 * - unknown bank destination
-                 * - member resolution failure
-                 * - loan resolution failure
-                 * - savings-account resolution failure
-                 *
-                 * These are terminal decisions from the API.
-                 */
                 return ProcessingResult.terminal(
                         "ignored",
                         extractApiMessage(
@@ -801,14 +912,45 @@ public final class SmsProcessingWorker
             }
 
             /*
-             * HTTP 200 without a recognized API status is not
-             * safe to treat as success.
+             * FUTURE API STATUS
              *
-             * Leave the message pending and retry.
+             * We intentionally recognize "unresolved" here so
+             * the Android worker is prepared for the API contract
+             * we will implement next.
+             *
+             * IMPORTANT:
+             *
+             * The current API does not yet return this status.
+             */
+            if (
+                    "unresolved".equals(
+                            status
+                    )
+            ) {
+
+                /*
+                 * For now this remains retryable.
+                 *
+                 * When the API is changed to persist an
+                 * unresolved financial event server-side, this
+                 * can become a terminal result.
+                 */
+                return ProcessingResult.retry(
+                        extractApiMessage(
+                                responseBody,
+                                "SMS could not yet be resolved."
+                        )
+                );
+            }
+
+            /*
+             * HTTP 2xx without a recognized status is NOT safe
+             * to mark processed.
              */
             return ProcessingResult.retry(
-                    "SMS API returned HTTP 200 with an "
-                            + "unrecognized response status."
+                    "SMS API returned HTTP "
+                            + responseCode
+                            + " with an unrecognized response status."
             );
         }
 
@@ -817,13 +959,9 @@ public final class SmsProcessingWorker
          * HTTP 4xx
          * =================================================
          *
-         * The request itself is invalid.
+         * The API rejected the request itself.
          *
-         * Since the SMS was generated by our native queue,
-         * this normally indicates a permanent request/data
-         * problem rather than a temporary network failure.
-         *
-         * Do not endlessly retry it.
+         * Do not retry indefinitely.
          */
         if (
                 responseCode >= 400 &&
@@ -847,9 +985,9 @@ public final class SmsProcessingWorker
          * HTTP 5xx
          * =================================================
          *
-         * Server-side failure.
+         * Server failure.
          *
-         * Keep the SMS pending and retry.
+         * Keep the SMS pending.
          */
         if (
                 responseCode >= 500 &&
@@ -868,8 +1006,7 @@ public final class SmsProcessingWorker
         }
 
         /*
-         * Any unexpected HTTP status is treated as
-         * retryable.
+         * Unexpected HTTP status.
          */
         return ProcessingResult.retry(
                 "Unexpected SMS API HTTP status: "
@@ -957,6 +1094,7 @@ public final class SmsProcessingWorker
                     message != null &&
                     !message.trim().isEmpty()
             ) {
+
                 return message.trim();
             }
 
@@ -970,6 +1108,7 @@ public final class SmsProcessingWorker
                     reason != null &&
                     !reason.trim().isEmpty()
             ) {
+
                 return reason.trim();
             }
 
@@ -1030,8 +1169,8 @@ public final class SmsProcessingWorker
             );
 
             /*
-             * Let the HTTP request determine whether the
-             * network actually works.
+             * Let the actual HTTP request determine whether
+             * the network works.
              */
             return true;
         }
@@ -1042,13 +1181,12 @@ public final class SmsProcessingWorker
     ===================================================== */
 
     /**
-     * Wake the incoming SMS processor immediately.
+     * Wake the production SMS processor immediately.
      *
-     * ExistingWorkPolicy.KEEP is intentional.
+     * Multiple SMS broadcasts can arrive close together.
      *
-     * If several SMS arrive at almost the same time, we do
-     * not want ten independent workers processing the same
-     * queue.
+     * KEEP prevents a new worker from being created when
+     * one is already running.
      */
     public static void enqueueNow(
             @NonNull Context context
@@ -1087,7 +1225,7 @@ public final class SmsProcessingWorker
 
         Log.d(
                 TAG,
-                "Immediate SMS processing work queued"
+                "Immediate production SMS processing work queued"
         );
     }
 
@@ -1096,12 +1234,12 @@ public final class SmsProcessingWorker
     ===================================================== */
 
     /**
-     * Schedule the periodic fallback worker.
+     * Schedule periodic recovery processing.
      *
      * WorkManager controls the exact execution time.
-     * Android does not guarantee exact 15-minute execution.
      *
-     * Its purpose is recovery, not precise scheduling.
+     * The 15-minute interval is a minimum scheduling
+     * interval, not a guaranteed exact execution time.
      */
     public static void schedule(
             @NonNull Context context
@@ -1142,7 +1280,7 @@ public final class SmsProcessingWorker
 
         Log.d(
                 TAG,
-                "Periodic SMS processing fallback scheduled"
+                "Periodic production SMS processing fallback scheduled"
         );
     }
 
@@ -1184,6 +1322,7 @@ public final class SmsProcessingWorker
                 @NonNull String status,
                 @NonNull String message
         ) {
+
             return new ProcessingResult(
                     true,
                     false,
@@ -1196,6 +1335,7 @@ public final class SmsProcessingWorker
         static ProcessingResult retry(
                 @NonNull String message
         ) {
+
             return new ProcessingResult(
                     false,
                     true,
@@ -1205,3 +1345,4 @@ public final class SmsProcessingWorker
         }
     }
 }
+

@@ -7749,52 +7749,158 @@ export async function resumeLoanFines(
   }
 }
 
-/* =========================================================
-   RESOLVE REPAYMENT LOAN
-========================================================= */
+/**
+ * =========================================================
+ * HISTORICAL LOAN RESOLUTION FOR REPAYMENTS
+ * =========================================================
+ *
+ * For SMS repayments, loan ownership is determined from the
+ * financial event time, NOT from the loan that happens to be
+ * active when Android/API processes the SMS.
+ *
+ * Required historical rules:
+ *
+ *   transactionAt >= authorizedAt
+ *   transactionDate >= disbursementDate
+ *
+ * Example:
+ *
+ *   LOAN-A authorized:  2026-09-05 09:00
+ *   payment occurred:  2026-09-05 10:00
+ *   LOAN-A cleared:    2026-09-05 11:00
+ *   LOAN-B authorized: 2026-09-05 12:00
+ *
+ * If Android replays the 10:00 payment at 14:00,
+ * it must still resolve to LOAN-A.
+ *
+ * It must NEVER resolve to LOAN-B merely because LOAN-B
+ * is the current active loan.
+ * =========================================================
+ */
 
 async function resolveLoanForRepayment(
   input: CreateLoanRepaymentInput,
   session: ClientSession,
 ): Promise<LoanDocument> {
-  const {
-    loans,
-  } =
-    await getCollections();
+  const { loans } = await getCollections();
+
+  /* =======================================================
+     EXPLICIT LOAN ID
+  ======================================================= */
 
   if (input.loanId) {
-    if (
-      !ObjectId.isValid(
-        input.loanId,
-      )
-    ) {
-      throw new Error(
-        "Invalid loan ID.",
-      );
+    if (!ObjectId.isValid(input.loanId)) {
+      throw new Error("Invalid loan ID.");
     }
 
-    const loan =
-      await loans.findOne(
-        {
-          _id:
-            createObjectId(
-              input.loanId,
-            ),
-        },
-
-        {
-          session,
-        },
-      );
+    const loan = await loans.findOne(
+      {
+        _id: createObjectId(input.loanId),
+      },
+      {
+        session,
+      },
+    );
 
     if (!loan) {
-      throw new Error(
-        "Loan not found.",
-      );
+      throw new Error("Loan not found.");
+    }
+
+    /*
+     * For SMS repayments, an explicitly supplied loan must
+     * still pass the historical timestamp checks.
+     *
+     * Do not allow an explicit loan ID to bypass replay
+     * protection.
+     */
+    if (input.source === "sms") {
+      /* -----------------------------------------------------
+         EXACT BANK TRANSACTION TIMESTAMP
+      ----------------------------------------------------- */
+
+      if (!input.transactionAt) {
+        throw new Error(
+          "SMS repayment requires the exact bank transaction timestamp.",
+        );
+      }
+
+      const transactionAt =
+        input.transactionAt instanceof Date
+          ? input.transactionAt.getTime()
+          : NaN;
+
+      if (!Number.isFinite(transactionAt)) {
+        throw new Error(
+          "SMS repayment transaction timestamp is invalid.",
+        );
+      }
+
+      /* -----------------------------------------------------
+         LOAN AUTHORIZATION TIMESTAMP
+      ----------------------------------------------------- */
+
+      if (
+        loan.authorizedAt === undefined ||
+        loan.authorizedAt === null
+      ) {
+        throw new Error(
+          `Loan "${loan.loanNumber}" has no authorization timestamp. Automatic SMS repayment processing is blocked.`,
+        );
+      }
+
+      const authorizedAt =
+        loan.authorizedAt instanceof Date
+          ? loan.authorizedAt.getTime()
+          : new Date(
+              loan.authorizedAt as string | number,
+            ).getTime();
+
+      if (!Number.isFinite(authorizedAt)) {
+        throw new Error(
+          `Loan "${loan.loanNumber}" has an invalid authorization timestamp. Automatic SMS repayment processing is blocked.`,
+        );
+      }
+
+      /*
+       * The bank transaction must happen at or after the
+       * loan was authorized.
+       *
+       * IMPORTANT:
+       * Use transactionAt, NOT the Android SMS receipt time.
+       */
+      if (transactionAt < authorizedAt) {
+        throw new Error(
+          "SMS_REPAYMENT_RECEIVED_BEFORE_LOAN_AUTHORIZATION",
+        );
+      }
+
+      /* -----------------------------------------------------
+         LOAN DISBURSEMENT DATE
+      ----------------------------------------------------- */
+
+      const disbursementDate =
+        normalizeLoanCalendarDate(
+          loan.disbursementDate,
+          `Loan "${loan.loanNumber}" disbursement date`,
+        );
+
+      /*
+       * The financial transaction date cannot be before the
+       * loan's disbursement date.
+       */
+      if (input.transactionDate < disbursementDate) {
+        throw new Error(
+          "SMS_REPAYMENT_BEFORE_DISBURSEMENT",
+        );
+      }
     }
 
     return loan;
   }
+
+  /* =======================================================
+     MEMBER IS REQUIRED WHEN LOAN ID IS NOT PROVIDED
+  ======================================================= */
 
   if (!input.memberId) {
     throw new Error(
@@ -7802,60 +7908,253 @@ async function resolveLoanForRepayment(
     );
   }
 
-  if (
-    !ObjectId.isValid(
-      input.memberId,
-    )
-  ) {
-    throw new Error(
-      "Invalid member ID.",
-    );
+  if (!ObjectId.isValid(input.memberId)) {
+    throw new Error("Invalid member ID.");
   }
 
-  const memberId =
-    createObjectId(
-      input.memberId,
-    );
+  const memberId = createObjectId(input.memberId);
 
-  const openLoans =
-    await loans
+  /* =======================================================
+     SMS REPAYMENT
+     =======================================================
+   *
+   * SMS requires HISTORICAL loan resolution.
+   *
+   * We deliberately do NOT resolve against only the current
+   * active loan.
+   *
+   * Example:
+   *
+   *   09:00 payment SMS
+   *   10:00 old loan cleared
+   *   10:05 new loan created
+   *
+   * A replay of the 09:00 SMS must not suddenly become a
+   * payment against the new loan.
+   */
+
+  if (input.source === "sms") {
+    /* -----------------------------------------------------
+       EXACT BANK TRANSACTION TIMESTAMP
+    ----------------------------------------------------- */
+
+    if (!input.transactionAt) {
+      throw new Error(
+        "SMS repayment requires the exact bank transaction timestamp.",
+      );
+    }
+
+    const transactionAt =
+      input.transactionAt instanceof Date
+        ? input.transactionAt.getTime()
+        : NaN;
+
+    if (!Number.isFinite(transactionAt)) {
+      throw new Error(
+        "SMS repayment transaction timestamp is invalid.",
+      );
+    }
+
+    /* -----------------------------------------------------
+       GET ALL HISTORICAL LOANS
+    -----------------------------------------------------
+     *
+     * Do NOT use:
+     *
+     *   status: "active"
+     *
+     * because the loan receiving the payment may already
+     * have been completed by the time the SMS is replayed.
+     */
+
+    const historicalLoans = await loans
       .find(
         {
           memberId,
-
-          status: {
-            $in: [
-              "pending",
-              "active",
-            ],
-          },
         },
-
         {
           session,
         },
       )
       .sort({
-        createdAt:
-          -1,
-
-        _id:
-          -1,
+        createdAt: 1,
+        _id: 1,
       })
-      .limit(2)
       .toArray();
 
-  if (
-    openLoans.length >
-    1
-  ) {
+    if (historicalLoans.length === 0) {
+      throw new Error(
+        "No historical loan could be found for this member.",
+      );
+    }
+
+    /* =====================================================
+       FIND HISTORICALLY ELIGIBLE LOANS
+    ===================================================== */
+
+    const eligibleLoans = historicalLoans.filter(
+      (loan) => {
+        /* -------------------------------------------------
+           1. LOAN AUTHORIZATION TIMESTAMP
+        -------------------------------------------------
+         *
+         * The bank transaction must have happened at or
+         * after this loan was authorized.
+         */
+
+        if (
+          loan.authorizedAt === undefined ||
+          loan.authorizedAt === null
+        ) {
+          return false;
+        }
+
+        const authorizedAt =
+          loan.authorizedAt instanceof Date
+            ? loan.authorizedAt.getTime()
+            : new Date(
+                loan.authorizedAt as string | number,
+              ).getTime();
+
+        if (!Number.isFinite(authorizedAt)) {
+          return false;
+        }
+
+        if (transactionAt < authorizedAt) {
+          return false;
+        }
+
+        /* -------------------------------------------------
+           2. LOAN DISBURSEMENT DATE
+        -------------------------------------------------
+         *
+         * The financial transaction cannot predate the
+         * loan's disbursement date.
+         */
+
+        let disbursementDate: CalendarDate;
+
+        try {
+          disbursementDate =
+            normalizeLoanCalendarDate(
+              loan.disbursementDate,
+              `Loan "${loan.loanNumber}" disbursement date`,
+            );
+        } catch {
+          /*
+           * A malformed historical loan date must never make
+           * the SMS resolver guess.
+           */
+          return false;
+        }
+
+        if (
+          input.transactionDate <
+          disbursementDate
+        ) {
+          return false;
+        }
+
+        return true;
+      },
+    );
+
+    /* =====================================================
+       NO HISTORICAL MATCH
+    ===================================================== */
+
+    if (eligibleLoans.length === 0) {
+      throw new Error(
+        "SMS_REPAYMENT_NO_HISTORICALLY_ELIGIBLE_LOAN",
+      );
+    }
+
+    /* =====================================================
+       MULTIPLE HISTORICAL MATCHES
+    =====================================================
+     *
+     * NEVER GUESS.
+     *
+     * If multiple loans were legitimately eligible at the
+     * exact transaction timestamp, the SMS does not contain
+     * enough information for this resolver to safely choose
+     * one.
+     */
+
+    if (eligibleLoans.length > 1) {
+      const loanNumbers = eligibleLoans
+        .map(
+          (loan) =>
+            loan.loanNumber,
+        )
+        .filter(
+          (
+            value,
+          ): value is string =>
+            typeof value === "string" &&
+            value.trim().length > 0,
+        )
+        .join(", ");
+
+      throw new Error(
+        `SMS_REPAYMENT_AMBIGUOUS_LOAN:${loanNumbers}`,
+      );
+    }
+
+    /* =====================================================
+       EXACTLY ONE HISTORICAL MATCH
+    ===================================================== */
+
+    const loan = eligibleLoans[0];
+
+    if (!loan) {
+      throw new Error(
+        "Unable to resolve historically eligible loan.",
+      );
+    }
+
+    return loan;
+  }
+
+  /* =======================================================
+     NON-SMS REPAYMENT
+     =======================================================
+   *
+   * Preserve the existing behavior for manual/system
+   * repayments.
+   *
+   * Historical SMS replay protection does not apply here.
+   */
+
+  const openLoans = await loans
+    .find(
+      {
+        memberId,
+        status: {
+          $in: [
+            "pending",
+            "active",
+          ],
+        },
+      },
+      {
+        session,
+      },
+    )
+    .sort({
+      createdAt: -1,
+      _id: -1,
+    })
+    .limit(2)
+    .toArray();
+
+  if (openLoans.length > 1) {
     throw new Error(
       "Member has multiple open loans. Loan ID is required to record this repayment safely.",
     );
   }
 
-  const loan =
-    openLoans[0];
+  const loan = openLoans[0];
 
   if (!loan) {
     throw new Error(
@@ -7902,12 +8201,14 @@ export async function createLoanRepayment(
   /* =======================================================
      FINANCIAL TRANSACTION DATE
 
-     Financial dates use the canonical CalendarDate format:
+     Financial dates are CalendarDate values:
 
        YYYY-MM-DD
 
-     Do NOT convert transactionDate to JavaScript Date.
-     Repayment transactionDate is stored as a calendar date string.
+     Do NOT convert this to JavaScript Date.
+
+     This represents the bank transaction's financial
+     calendar date.
   ======================================================= */
 
   const transactionDate =
@@ -7919,12 +8220,82 @@ export async function createLoanRepayment(
   );
 
   /* =======================================================
+     EXACT BANK TRANSACTION TIMESTAMP
+
+     transactionAt is the exact timestamp reported by the
+     bank transaction/SMS.
+
+     It is NOT:
+
+       - Android SMS receipt time
+       - SMS queue insertion time
+       - GEO-SHUA createdAt
+       - repayment.createdAt
+
+     This timestamp is required for automatic SMS loan
+     resolution and historical replay protection.
+  ======================================================= */
+
+  let transactionAt:
+    Date | undefined;
+
+  if (
+    input.transactionAt !==
+    undefined
+  ) {
+    if (
+      !(
+        input.transactionAt instanceof
+        Date
+      ) ||
+      !Number.isFinite(
+        input.transactionAt.getTime(),
+      )
+    ) {
+      throw new Error(
+        "Repayment transaction timestamp is invalid.",
+      );
+    }
+
+    /*
+     * Clone the Date so the object stored in the repayment
+     * document cannot be affected by accidental mutation of
+     * the caller's Date instance.
+     */
+    transactionAt =
+      new Date(
+        input.transactionAt.getTime(),
+      );
+  }
+
+  /* =======================================================
+     SMS TRANSACTION TIMESTAMP REQUIREMENT
+
+     Every automatic SMS repayment MUST carry the exact
+     bank transaction timestamp.
+
+     Without this timestamp we cannot safely determine which
+     historical loan existed when the payment actually
+     happened.
+  ======================================================= */
+
+  if (
+    input.source === "sms" &&
+    !transactionAt
+  ) {
+    throw new Error(
+      "SMS repayment requires the exact bank transaction timestamp.",
+    );
+  }
+
+  /* =======================================================
      FUTURE TRANSACTION PROTECTION
 
-     CalendarDate strings sort chronologically when stored
-     in YYYY-MM-DD format.
+     Financial calendar dates are compared as canonical
+     YYYY-MM-DD strings.
 
-     The current Kenyan calendar date is the boundary.
+     This is intentionally based on the Kenyan calendar
+     date rather than UTC.
   ======================================================= */
 
   const today =
@@ -7932,7 +8303,10 @@ export async function createLoanRepayment(
       new Date(),
     );
 
-  if (transactionDate > today) {
+  if (
+    transactionDate >
+    today
+  ) {
     throw new Error(
       "Repayment transaction date cannot be in the future.",
     );
@@ -7953,10 +8327,10 @@ export async function createLoanRepayment(
   /* =======================================================
      FAST IDEMPOTENCY CHECK
 
-     This is an optimization only.
+     This is only an optimization.
 
-     The unique MongoDB index remains the final
-     concurrency protection.
+     The unique MongoDB transactionReference index remains
+     the authoritative concurrency protection.
   ======================================================= */
 
   const existing =
@@ -7995,14 +8369,18 @@ export async function createLoanRepayment(
       );
     }
 
-    return toRepayment(existing);
+    return toRepayment(
+      existing,
+    );
   }
 
   /* =======================================================
-     SMS NOTIFICATION STATE
+     POST-COMMIT NOTIFICATION STATE
 
-     These values are captured inside the transaction but
-     the SMS is queued only after the transaction commits.
+     These values are populated inside the transaction.
+
+     Notifications are sent ONLY after the transaction
+     successfully commits.
   ======================================================= */
 
   let loanPaymentRecipient =
@@ -8033,7 +8411,8 @@ export async function createLoanRepayment(
           /* =================================================
              SECOND IDEMPOTENCY CHECK
 
-             Protects against concurrent requests.
+             Protects against concurrent requests that both
+             passed the fast pre-transaction lookup.
           ================================================= */
 
           const alreadyExists =
@@ -8088,6 +8467,15 @@ export async function createLoanRepayment(
 
           /* =================================================
              RESOLVE LOAN
+
+             For SMS repayments this resolver is responsible
+             for determining the historically correct loan.
+
+             It receives input.transactionAt and therefore
+             has access to the actual bank transaction instant.
+
+             It must NOT use Android SMS receipt time for
+             financial loan resolution.
           ================================================= */
 
           const loan =
@@ -8105,11 +8493,10 @@ export async function createLoanRepayment(
           /* =================================================
              LOAN MEMBER
 
-             The member is already part of the repayment
-             transaction. We only retrieve the fields needed
-             for SMS notifications.
+             Retrieve only the member information needed for
+             post-commit SMS notifications.
 
-             This does NOT alter any financial logic.
+             This does not affect financial processing.
           ================================================= */
 
           const member =
@@ -8175,6 +8562,18 @@ export async function createLoanRepayment(
             );
           }
 
+          /*
+           * IMPORTANT:
+           *
+           * Do NOT remove the completed-loan protection yet.
+           *
+           * Historical loan resolution and historical
+           * repayment acceptance are separate problems.
+           *
+           * A future change that allows a historically valid
+           * SMS to update a completed loan must also redesign
+           * the optimistic-concurrency/update logic below.
+           */
           if (
             loan.status ===
             "completed"
@@ -8185,21 +8584,23 @@ export async function createLoanRepayment(
           }
 
           /* =================================================
-             SMS TEMPORAL PROTECTION
+             SMS DISBURSEMENT DATE PROTECTION
 
-             SMS repayments cannot have a transaction date
-             before the loan disbursement date.
-
-             Same-day repayment IS allowed.
+             The bank transaction cannot financially precede
+             the loan's disbursement date.
 
                transactionDate < disbursementDate
-                 -> rejected
+                 -> reject
 
                transactionDate === disbursementDate
                  -> allowed
 
                transactionDate > disbursementDate
                  -> allowed
+
+             The exact timestamp comparison against
+             authorizedAt is handled by
+             resolveLoanForRepayment().
           ================================================= */
 
           if (
@@ -8220,7 +8621,12 @@ export async function createLoanRepayment(
             loan._id;
 
           /* =================================================
-             CURRENT FINANCIAL STATE
+             CURRENT LEDGER STATE
+
+             Do NOT trust the projection fields on the loan
+             document as the authoritative financial ledger.
+
+             Recalculate from immutable transaction records.
           ================================================= */
 
           const amountPaidBefore =
@@ -8241,20 +8647,20 @@ export async function createLoanRepayment(
               session,
             );
 
-          /*
-           * The final outstanding/overpayment check is deliberately
-           * performed after the repayment has been inserted and
-           * completed-cycle fines have been assessed.
-           *
-           * The old projection totals are still retained below for
-           * audit compatibility, but they are not trusted as the
-           * authoritative source of current financial state.
-           */
-
           /* =================================================
-             REPAYMENT DOCUMENT
+             IMMUTABLE REPAYMENT DOCUMENT
 
-             transactionDate remains a CalendarDate string.
+             transactionDate:
+               Financial calendar date.
+
+             transactionAt:
+               Exact original bank transaction timestamp.
+
+             createdAt:
+               GEO-SHUA ledger insertion timestamp.
+
+             These three values have different meanings and
+             must not be substituted for one another.
           ================================================= */
 
           const repaymentDocument:
@@ -8281,6 +8687,13 @@ export async function createLoanRepayment(
 
             transactionDate:
               transactionDate,
+
+            ...(transactionAt
+              ? {
+                  transactionAt:
+                    transactionAt,
+                }
+              : {}),
 
             source:
               input.source,
@@ -8331,18 +8744,20 @@ export async function createLoanRepayment(
           }
 
           /* =================================================
-             ASSESS COMPLETED CYCLES BEFORE FINALIZING PAYMENT
+             ASSESS COMPLETED REPAYMENT CYCLES
 
-             The repayment is inserted first so a payment made
-             exactly on a cycle-end date is included in that
-             cycle's payment total and cannot be fined.
+             The repayment is inserted BEFORE fine assessment.
 
-             A late payment is naturally excluded from the
-             completed cycle because the cycle has already ended.
+             Therefore:
 
-             This is deliberately performed inside the SAME
-             MongoDB transaction. If fine/assessment persistence
-             fails, the repayment also rolls back.
+             Payment exactly on cycle-end date
+               -> included in that cycle
+
+             Payment after cycle-end
+               -> excluded from the completed cycle
+
+             Everything occurs inside the same MongoDB
+             transaction.
           ================================================= */
 
           await accrueLoanFinesInSession(
@@ -8352,11 +8767,10 @@ export async function createLoanRepayment(
           );
 
           /* =================================================
-             RE-READ FINANCIAL LEDGER TOTALS
+             RELOAD FINE LEDGER
 
-             The fine ledger may have changed during the
-             assessment above, so the totals used for the
-             outstanding calculation MUST be refreshed.
+             Fine assessment may have created new fine records,
+             so reload the authoritative totals.
           ================================================= */
 
           const totalFinesAfterAccrual =
@@ -8371,6 +8785,19 @@ export async function createLoanRepayment(
               session,
             );
 
+          /* =================================================
+             CURRENT OUTSTANDING BEFORE THIS PAYMENT
+
+             IMPORTANT:
+
+             amountPaidBefore intentionally excludes the
+             repayment inserted above.
+
+             Therefore this represents the actual amount that
+             was outstanding immediately before this payment,
+             after any completed-cycle fines were assessed.
+          ================================================= */
+
           const currentOutstandingAfterAccrual =
             calculateFinalOutstanding(
               loan.principal,
@@ -8381,12 +8808,17 @@ export async function createLoanRepayment(
             );
 
           if (
-            currentOutstandingAfterAccrual <= 0
+            currentOutstandingAfterAccrual <=
+            0
           ) {
             throw new Error(
               "Loan has no outstanding balance.",
             );
           }
+
+          /* =================================================
+             OVERPAYMENT PROTECTION
+          ================================================= */
 
           if (
             amount >
@@ -8398,7 +8830,7 @@ export async function createLoanRepayment(
           }
 
           /* =================================================
-             CALCULATE NEW FINANCIAL STATE
+             NEW FINANCIAL STATE
           ================================================= */
 
           const newAmountPaid =
@@ -8424,10 +8856,9 @@ export async function createLoanRepayment(
               : loan.status;
 
           /* =================================================
-             CAPTURE SMS FINANCIAL STATE
+             NOTIFICATION STATE
 
-             This is the actual outstanding balance AFTER
-             this repayment.
+             Capture the balance AFTER this specific payment.
           ================================================= */
 
           loanPaymentRemainingBalance =
@@ -8438,11 +8869,16 @@ export async function createLoanRepayment(
             "completed";
 
           /* =================================================
-             UPDATE LOAN
+             UPDATE LOAN PROJECTION
 
-             Optimistic concurrency protection ensures that
-             another repayment cannot silently overwrite
-             this transaction's financial state.
+             Optimistic concurrency protection prevents another
+             repayment from overwriting this repayment's
+             calculated state.
+
+             Only pending/active loans are accepted here.
+
+             This is intentional until historical repayment
+             handling for completed loans is redesigned.
           ================================================= */
 
           const updateResult =
@@ -8517,7 +8953,7 @@ export async function createLoanRepayment(
           }
 
           /* =================================================
-             CONVERT TO DOMAIN MODEL
+             DOMAIN MODEL
           ================================================= */
 
           const repayment =
@@ -8560,6 +8996,13 @@ export async function createLoanRepayment(
 
               transactionDate:
                 repayment.transactionDate,
+
+              ...(repayment.transactionAt
+                ? {
+                    transactionAt:
+                      repayment.transactionAt,
+                  }
+                : {}),
 
               outstandingBefore:
                 currentOutstandingAfterAccrual,
@@ -8627,7 +9070,6 @@ export async function createLoanRepayment(
             repayment,
           };
         },
-
         {
           readConcern: {
             level:
@@ -8647,20 +9089,22 @@ export async function createLoanRepayment(
     /* =====================================================
        TRANSACTION COMMITTED
 
-       Everything below this point is notification work.
+       From this point onward the financial transaction is
+       permanent.
 
-       Financial success has already been committed.
-       SMS failures must NEVER roll back the repayment.
+       Notification failure MUST NOT roll back the payment.
     ===================================================== */
 
     const repayment =
       transactionResult.repayment;
 
     /* =====================================================
-       LOAN PAYMENT RECEIVED SMS
+       PAYMENT RECEIVED SMS
     ===================================================== */
 
-    if (loanPaymentRecipient) {
+    if (
+      loanPaymentRecipient
+    ) {
       try {
         await queueLoanPaymentReceivedSms({
           repaymentId:
@@ -8726,12 +9170,8 @@ export async function createLoanRepayment(
     /* =====================================================
        LOAN CLEARED SMS
 
-       Only send this when THIS repayment actually
-       completed the loan.
-
-       queueLoanClearedSms() uses the loan ID as part of
-       its idempotency key, preventing duplicate clearance
-       notifications.
+       Only this repayment can trigger the clearance SMS
+       when it moves the loan to completed.
     ===================================================== */
 
     if (
@@ -8856,7 +9296,6 @@ export async function createLoanRepayment(
     await session.endSession();
   }
 }
-
 /* =========================================================
    CREATE LOAN WAIVER
 ========================================================= */

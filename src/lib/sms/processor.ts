@@ -11,7 +11,7 @@
  *     ↓
  * parser.ts
  *     ↓
- * 36-hour SMS validation
+ * SMS validation
  *     ↓
  * bank destination classification
  *     ↓
@@ -19,7 +19,7 @@
  *     ↓
  * savings service OR loan service
  *
- * This file is orchestration only.
+ * This module is orchestration only.
  *
  * Financial persistence remains authoritative in:
  *
@@ -28,114 +28,68 @@
  *
  * =========================================================
  *
- * BANK ACCOUNT SEMANTIC
+ * BANK DESTINATION ACCOUNTS
  * ---------------------------------------------------------
  *
- * The destination account in the bank SMS is a BANK
- * COLLECTION / DESTINATION ACCOUNT.
+ * These are BANK COLLECTION / DESTINATION accounts.
  *
- * It is NOT:
+ *   082083   → loan repayments
+ *   2650821  → savings deposits
  *
- * - a GEO-SHUA member ID
- * - a GEO-SHUA savings account ID
- * - a GEO-SHUA loan ID
- * - a GEO-SHUA loan number
+ * They are NOT GEO-SHUA financial account IDs.
  *
- * Routing:
- *
- *   082083  → loan
- *   2650821 → savings
- *
- * Sender name identifies the GEO-SHUA member.
- *
- * Bank transaction reference identifies the external
- * payment.
+ * Member identity comes from the bank SMS sender name.
  *
  * =========================================================
  *
  * DATE ARCHITECTURE
  * ---------------------------------------------------------
  *
- * Financial/calendar dates are canonical:
+ * Financial dates:
  *
  *   YYYY-MM-DD
  *
- * Legacy MongoDB records may still contain:
+ * Exact system timestamps:
  *
- *   Date
- *   ISO timestamp string
- *   numeric timestamp
+ *   milliseconds since epoch / Date / ISO timestamp
  *
- * Legacy values are normalized at the boundary using:
+ * Financial dates are normalized using:
  *
  *   Africa/Nairobi
  *
- * Financial comparisons are then string-to-string.
+ * Exact bank transaction timestamps are preserved as
+ * instants because they are required for historical loan
+ * resolution and SMS replay protection.
  *
- * Example:
+ * IMPORTANT:
  *
- *   "2026-09-05" < "2026-09-11"
+ *   parsedTransaction.smsDate
  *
- * is chronologically correct.
+ * is the Android SMS inbox/receipt timestamp.
  *
- * System timestamps such as createdAt/updatedAt/authorizedAt
- * remain Date/timestamp values and are NOT converted to
- * financial calendar dates.
+ *   parsedTransaction.transactionDate
  *
- * =========================================================
+ * is the bank-reported transaction timestamp.
  *
- * SMS WINDOW
- * ---------------------------------------------------------
- *
- * Only SMS messages received within the previous 36 hours
- * are eligible for automatic processing.
- *
- * The 36-hour window is based on the SMS timestamp, NOT
- * the financial transaction date.
- *
- * This allows a payment from the previous calendar day to
- * be processed while still preventing stale SMS messages
- * from entering automatic financial processing.
+ * They are NOT interchangeable.
  *
  * =========================================================
  *
- * LOAN SMS REPLAY PROTECTION
+ * LOAN REPLAY PROTECTION
  * ---------------------------------------------------------
  *
- * There are TWO different date concepts involved in loan
- * repayment routing.
+ * Two chronological checks are intentionally separate:
  *
- * Financial date:
+ * 1. transactionDate >= loan.disbursementDate
  *
- *   transactionDate
+ *    Protects the financial calendar.
  *
- * Exact SMS event time:
+ * 2. transactionAt >= loan.authorizedAt
  *
- *   smsDate
+ *    Prevents a bank transaction that occurred before a
+ *    loan was authorized from being attached to that loan.
  *
- * The financial date protects the accounting rule:
- *
- *   transactionDate >= loan.disbursementDate
- *
- * The exact SMS timestamp protects against an OLD SMS
- * being applied to a NEW loan on the same calendar day.
- *
- * Example:
- *
- *   07:00 → repayment SMS received
- *   07:05 → new loan authorized
- *
- * Even if both have:
- *
- *   2026-09-23
- *
- * the 07:00 SMS must NOT be applied to the 07:05 loan.
- *
- * Therefore:
- *
- *   smsDate >= authorizedAt
- *
- * must also be true.
+ * Android SMS receipt time is NOT used for this check.
  *
  * =========================================================
  */
@@ -166,29 +120,18 @@ import type {
   ParsedBankSms,
 } from "@/lib/sms/parser";
 
+
 /* =========================================================
    CONSTANTS
 ========================================================= */
 
-/**
- * BANK COLLECTION / DESTINATION ACCOUNTS.
- *
- * These are routing identifiers from the bank SMS.
- */
 const LOAN_BANK_ACCOUNT = "082083";
 
 const SAVINGS_BANK_ACCOUNT = "2650821";
 
-/**
- * Financial calendar timezone.
- */
-const FINANCIAL_TIME_ZONE = "Africa/Nairobi";
+const FINANCIAL_TIME_ZONE =
+  "Africa/Nairobi";
 
-/**
- * Automatic SMS processing window.
- *
- * SMS messages older than this are rejected.
- */
 const SMS_LOOKBACK_HOURS = 36;
 
 const SMS_LOOKBACK_MS =
@@ -196,6 +139,7 @@ const SMS_LOOKBACK_MS =
   60 *
   60 *
   1000;
+
 
 /* =========================================================
    TYPES
@@ -217,7 +161,8 @@ type BankPaymentType =
 
 type ClassifiedBankTransaction =
   ParsedBankSms & {
-    transactionType: BankPaymentType;
+    transactionType:
+      BankPaymentType;
   };
 
 type ResolvedMember = {
@@ -250,7 +195,8 @@ export type ProcessIncomingTransactionResult =
         id: string;
         accountNumber: string;
       };
-      savingsTransaction: SavingsTransaction;
+      savingsTransaction:
+        SavingsTransaction;
     }
   | {
       status: "processed";
@@ -260,6 +206,7 @@ export type ProcessIncomingTransactionResult =
       loan: ResolvedLoan;
       repayment: LoanRepayment;
     };
+
 
 /* =========================================================
    CALENDAR DATE HELPERS
@@ -273,10 +220,13 @@ function isLeapYear(
 ): boolean {
   return (
     year % 4 === 0 &&
-    (year % 100 !== 0 ||
-      year % 400 === 0)
+    (
+      year % 100 !== 0 ||
+      year % 400 === 0
+    )
   );
 }
+
 
 /**
  * Return the number of days in a calendar month.
@@ -302,18 +252,9 @@ function daysInMonth(
   }
 }
 
+
 /**
- * Validate canonical GEO-SHUA financial calendar date.
- *
- * Valid:
- *
- *   2026-09-11
- *
- * Invalid:
- *
- *   2026-9-11
- *   11-09-2026
- *   2026-02-30
+ * Validate canonical GEO-SHUA financial date.
  */
 function isValidCalendarDate(
   value: unknown,
@@ -333,9 +274,14 @@ function isValidCalendarDate(
     return false;
   }
 
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
+  const year =
+    Number(match[1]);
+
+  const month =
+    Number(match[2]);
+
+  const day =
+    Number(match[3]);
 
   if (
     !Number.isInteger(year) ||
@@ -364,12 +310,11 @@ function isValidCalendarDate(
   );
 }
 
+
 /**
- * Convert a JavaScript Date into a Kenyan calendar date.
+ * Convert an exact Date into a Kenyan financial date.
  *
- * IMPORTANT:
- *
- * Do NOT use:
+ * Never use:
  *
  *   date.toISOString().slice(0, 10)
  *
@@ -399,9 +344,7 @@ function dateToNairobiCalendarDate(
         month: "2-digit",
         day: "2-digit",
       },
-    ).formatToParts(
-      value,
-    );
+    ).formatToParts(value);
 
   const year =
     parts.find(
@@ -447,18 +390,11 @@ function dateToNairobiCalendarDate(
   return calendarDate;
 }
 
+
 /**
- * Normalize any supported financial-date representation.
+ * Normalize a supported financial-date value.
  *
- * Supported:
- *
- *   YYYY-MM-DD
- *   ISO date string
- *   ISO timestamp string
- *   Date
- *   numeric timestamp
- *
- * Returned value is always:
+ * Output:
  *
  *   YYYY-MM-DD
  */
@@ -471,17 +407,12 @@ function toCalendarDate(
     const clean =
       value.trim();
 
-    if (
-      clean.length === 0
-    ) {
+    if (!clean) {
       throw new Error(
         "Financial date cannot be empty.",
       );
     }
 
-    /**
-     * Preferred representation.
-     */
     if (
       isValidCalendarDate(
         clean,
@@ -490,11 +421,6 @@ function toCalendarDate(
       return clean;
     }
 
-    /**
-     * Legacy ISO/timestamp string.
-     *
-     * Convert the instant using Kenya timezone.
-     */
     const parsed =
       new Date(clean);
 
@@ -555,11 +481,9 @@ function toCalendarDate(
   );
 }
 
+
 /**
  * Normalize a potentially legacy database financial date.
- *
- * MongoDB legacy documents may contain a BSON Date even
- * when the current TypeScript domain type is string.
  */
 function normalizeFinancialDate(
   value: unknown,
@@ -586,26 +510,23 @@ function normalizeFinancialDate(
   }
 }
 
+
 /* =========================================================
-   SMS TIMESTAMP HELPERS
+   EXACT TIMESTAMP HELPERS
 ========================================================= */
 
 /**
- * Convert an SMS/system timestamp into milliseconds.
+ * Normalize an exact timestamp.
  *
- * Supported:
+ * Supports:
  *
- *   Date
- *   numeric milliseconds
- *   numeric seconds
- *   ISO timestamp strings
- *   numeric timestamp strings
- *
- * This helper is intentionally separate from financial-date
- * normalization because SMS replay protection requires the
- * exact instant rather than only a YYYY-MM-DD date.
+ * - Date
+ * - milliseconds
+ * - seconds
+ * - numeric timestamp string
+ * - ISO timestamp string
  */
-function toSmsTimestamp(
+function toTimestamp(
   value: unknown,
 ): number {
   if (
@@ -615,15 +536,13 @@ function toSmsTimestamp(
       value.getTime();
 
     if (
-      Number.isFinite(
-        timestamp,
-      )
+      Number.isFinite(timestamp)
     ) {
       return timestamp;
     }
 
     throw new Error(
-      "SMS timestamp is invalid.",
+      "Timestamp is invalid.",
     );
   }
 
@@ -634,24 +553,14 @@ function toSmsTimestamp(
       !Number.isFinite(value)
     ) {
       throw new Error(
-        "SMS timestamp is invalid.",
+        "Timestamp is invalid.",
       );
     }
 
-    /**
-     * Android timestamps are normally milliseconds.
-     *
-     * Ten-digit Unix timestamps are interpreted as
-     * seconds for legacy compatibility.
-     */
-    if (
-      Math.abs(value) <
+    return Math.abs(value) <
       100_000_000_000
-    ) {
-      return value * 1000;
-    }
-
-    return value;
+      ? value * 1000
+      : value;
   }
 
   if (
@@ -660,17 +569,12 @@ function toSmsTimestamp(
     const clean =
       value.trim();
 
-    if (
-      clean.length === 0
-    ) {
+    if (!clean) {
       throw new Error(
-        "SMS timestamp is empty.",
+        "Timestamp is empty.",
       );
     }
 
-    /**
-     * Numeric timestamp supplied as a string.
-     */
     if (
       /^\d+$/.test(clean)
     ) {
@@ -678,23 +582,17 @@ function toSmsTimestamp(
         Number(clean);
 
       if (
-        !Number.isFinite(
-          numeric,
-        )
+        !Number.isFinite(numeric)
       ) {
         throw new Error(
-          "SMS timestamp is invalid.",
+          "Timestamp is invalid.",
         );
       }
 
-      if (
-        Math.abs(numeric) <
+      return Math.abs(numeric) <
         100_000_000_000
-      ) {
-        return numeric * 1000;
-      }
-
-      return numeric;
+        ? numeric * 1000
+        : numeric;
     }
 
     const parsed =
@@ -706,7 +604,7 @@ function toSmsTimestamp(
       )
     ) {
       throw new Error(
-        "SMS timestamp is invalid.",
+        "Timestamp is invalid.",
       );
     }
 
@@ -714,41 +612,54 @@ function toSmsTimestamp(
   }
 
   throw new Error(
-    "SMS timestamp is missing or unsupported.",
+    "Timestamp is missing or unsupported.",
   );
 }
 
+
 /**
- * Validate that the SMS belongs to the automatic
- * processing window.
+ * Normalize a loan/system timestamp.
  *
- * Window:
+ * Unlike financial dates, this remains
+ * an exact instant.
+ */
+function normalizeSystemTimestamp(
+  value: unknown,
+  fieldName: string,
+): number {
+  try {
+    return toTimestamp(value);
+  } catch {
+    throw new Error(
+      `${fieldName} is invalid. Expected a valid Date, ISO timestamp, or numeric timestamp.`,
+    );
+  }
+}
+
+
+/**
+ * Validate the automatic SMS processing window.
  *
- *   now - 36 hours
- *   through now
+ * IMPORTANT:
  *
- * Returns the normalized SMS timestamp so the same exact
- * timestamp can be reused by downstream loan replay
- * protection.
+ * This uses the Android SMS receipt timestamp.
+ *
+ * It does NOT determine financial ownership.
+ *
+ * The bank transaction timestamp is handled separately
+ * through transactionAt.
  */
 function validateSmsWindow(
   smsDate: unknown,
 ): number {
   const smsTimestamp =
-    toSmsTimestamp(
-      smsDate,
-    );
+    toTimestamp(smsDate);
 
   const now =
     Date.now();
 
-  const oldestAllowed =
-    now -
-    SMS_LOOKBACK_MS;
-
   if (
-    smsTimestamp >
-    now
+    smsTimestamp > now
   ) {
     throw new Error(
       "SMS timestamp is in the future and cannot be automatically processed.",
@@ -757,7 +668,7 @@ function validateSmsWindow(
 
   if (
     smsTimestamp <
-    oldestAllowed
+    now - SMS_LOOKBACK_MS
   ) {
     throw new Error(
       `SMS is outside the automatic ${SMS_LOOKBACK_HOURS}-hour processing window.`,
@@ -767,62 +678,60 @@ function validateSmsWindow(
   return smsTimestamp;
 }
 
+
 /**
- * Normalize a loan/system timestamp.
+ * Convert the parser's exact bank transaction timestamp
+ * into a validated Date.
  *
- * This is deliberately kept separate from
- * normalizeFinancialDate().
+ * This timestamp represents when the bank transaction
+ * actually happened.
  *
- * authorizedAt is an exact system event timestamp and must
- * remain an instant, not a YYYY-MM-DD financial date.
+ * It is NOT the Android SMS receipt timestamp.
  */
-function normalizeSystemTimestamp(
+function normalizeTransactionTimestamp(
   value: unknown,
-  fieldName: string,
-): number {
-  try {
-    return toSmsTimestamp(
-      value,
-    );
-  } catch {
+): Date {
+  const timestamp =
+    toTimestamp(value);
+
+  const date =
+    new Date(timestamp);
+
+  if (
+    Number.isNaN(
+      date.getTime(),
+    )
+  ) {
     throw new Error(
-      `${fieldName} is invalid. Expected a valid Date, ISO timestamp, or numeric timestamp.`,
+      "Bank transaction timestamp is invalid.",
     );
   }
+
+  return date;
 }
 
+
 /* =========================================================
-   BANK DESTINATION CLASSIFICATION
+   BANK DESTINATION
 ========================================================= */
 
-/**
- * Determine whether the bank destination represents:
- *
- *   2650821 → savings
- *   082083  → loan
- *
- * Unknown accounts are never guessed.
- */
 function classifyBankAccount(
   destinationAccountNumber: string,
 ): BankPaymentType {
-  const clean =
+  const account =
     destinationAccountNumber
       .trim()
-      .replace(
-        /\s+/g,
-        "",
-      );
+      .replace(/\s+/g, "");
 
   if (
-    clean ===
+    account ===
     LOAN_BANK_ACCOUNT
   ) {
     return "loan";
   }
 
   if (
-    clean ===
+    account ===
     SAVINGS_BANK_ACCOUNT
   ) {
     return "savings";
@@ -831,9 +740,6 @@ function classifyBankAccount(
   return "unknown";
 }
 
-/* =========================================================
-   CLASSIFY TRANSACTION
-========================================================= */
 
 function classifyTransaction(
   parsed: ParsedBankSms,
@@ -847,8 +753,9 @@ function classifyTransaction(
   };
 }
 
+
 /* =========================================================
-   NAME NORMALIZATION
+   NAME HELPERS
 ========================================================= */
 
 function normalizeName(
@@ -868,6 +775,7 @@ function normalizeName(
     .toUpperCase();
 }
 
+
 function namesEqual(
   left: string,
   right: string,
@@ -878,9 +786,6 @@ function namesEqual(
   );
 }
 
-/* =========================================================
-   MEMBER NAME
-========================================================= */
 
 function getMemberName(
   member: {
@@ -901,31 +806,25 @@ function getMemberName(
         (
           value,
         ): value is string =>
-          typeof value ===
-            "string" &&
-          value.trim().length >
-            0,
+          typeof value === "string" &&
+          value.trim().length > 0,
       )
       .join(" ")
       .trim();
 
-  if (
-    composed.length > 0
-  ) {
+  if (composed) {
     return composed;
   }
 
   if (
-    typeof member.name ===
-      "string" &&
+    typeof member.name === "string" &&
     member.name.trim()
   ) {
     return member.name.trim();
   }
 
   if (
-    typeof member.fullName ===
-      "string" &&
+    typeof member.fullName === "string" &&
     member.fullName.trim()
   ) {
     return member.fullName.trim();
@@ -934,21 +833,20 @@ function getMemberName(
   return "";
 }
 
+
 /* =========================================================
-   RESOLVE MEMBER
+   MEMBER RESOLUTION
 ========================================================= */
 
 async function resolveMemberBySmsName(
   senderName: string,
 ): Promise<ResolvedMember> {
-  const cleanName =
+  const normalizedSender =
     normalizeName(
       senderName,
     );
 
-  if (
-    cleanName.length === 0
-  ) {
+  if (!normalizedSender) {
     throw new Error(
       "Bank SMS sender name is required.",
     );
@@ -957,7 +855,7 @@ async function resolveMemberBySmsName(
   const tokens =
     Array.from(
       new Set(
-        cleanName
+        normalizedSender
           .split(" ")
           .map(
             (token) =>
@@ -967,13 +865,13 @@ async function resolveMemberBySmsName(
       ),
     );
 
-  if (
-    tokens.length === 0
-  ) {
-    throw new Error(
-      "Bank SMS sender name is required.",
+  const searchTerms =
+    Array.from(
+      new Set([
+        senderName,
+        ...tokens,
+      ]),
     );
-  }
 
   type Candidate =
     Awaited<
@@ -986,17 +884,8 @@ async function resolveMemberBySmsName(
       Candidate
     >();
 
-  const searchTerms =
-    Array.from(
-      new Set([
-        senderName,
-        ...tokens,
-      ]),
-    );
-
   for (
-    const searchTerm of
-      searchTerms
+    const searchTerm of searchTerms
   ) {
     const result =
       await getMembers({
@@ -1011,21 +900,16 @@ async function resolveMemberBySmsName(
         result.members || []
     ) {
       const memberId =
-        typeof candidate._id ===
-          "string"
+        typeof candidate._id === "string"
           ? candidate._id.trim()
           : "";
 
-      if (
-        memberId.length === 0
-      ) {
-        continue;
+      if (memberId) {
+        candidates.set(
+          memberId,
+          candidate,
+        );
       }
-
-      candidates.set(
-        memberId,
-        candidate,
-      );
     }
   }
 
@@ -1048,8 +932,7 @@ async function resolveMemberBySmsName(
           );
 
         return (
-          candidateName.length >
-            0 &&
+          candidateName.length > 0 &&
           namesEqual(
             candidateName,
             senderName,
@@ -1084,29 +967,23 @@ async function resolveMemberBySmsName(
   }
 
   const memberId =
-    typeof member._id ===
-      "string"
+    typeof member._id === "string"
       ? member._id.trim()
       : "";
 
-  if (
-    memberId.length === 0
-  ) {
+  if (!memberId) {
     throw new Error(
       `Resolved member "${senderName}" has no valid member ID.`,
     );
   }
 
-  const memberStatus =
-    typeof member.status ===
-      "string"
-      ? member.status
-          .trim()
-          .toLowerCase()
+  const status =
+    typeof member.status === "string"
+      ? member.status.trim().toLowerCase()
       : "";
 
   if (
-    memberStatus !== "active"
+    status !== "active"
   ) {
     throw new Error(
       `Member "${senderName}" is not active and cannot receive automatic financial processing.`,
@@ -1118,9 +995,7 @@ async function resolveMemberBySmsName(
       member,
     );
 
-  if (
-    canonicalName.length === 0
-  ) {
+  if (!canonicalName) {
     throw new Error(
       `Resolved member "${senderName}" has no valid registered name.`,
     );
@@ -1132,8 +1007,9 @@ async function resolveMemberBySmsName(
   };
 }
 
+
 /* =========================================================
-   RESOLVE SAVINGS ACCOUNT
+   SAVINGS ACCOUNT RESOLUTION
 ========================================================= */
 
 async function resolveSavingsAccount(
@@ -1174,7 +1050,7 @@ async function resolveSavingsAccount(
 
   if (
     typeof account.id !== "string" ||
-    account.id.trim().length === 0
+    !account.id.trim()
   ) {
     throw new Error(
       `Savings account "${account.accountNumber}" has no valid account ID.`,
@@ -1188,51 +1064,39 @@ async function resolveSavingsAccount(
   };
 }
 
+
 /* =========================================================
-   RESOLVE ACTIVE LOAN
+   LOAN RESOLUTION
 ========================================================= */
 
 /**
- * Resolve exactly one active loan for the incoming SMS.
+ * Resolve exactly one historically eligible loan.
  *
- * There are TWO separate chronological checks.
+ * IMPORTANT:
  *
- * ---------------------------------------------------------
- * 1. FINANCIAL CALENDAR CHECK
- * ---------------------------------------------------------
+ * We intentionally DO NOT restrict this query to:
  *
- *   transactionDate >= loan.disbursementDate
+ *   status: "active"
  *
- * This protects the accounting timeline.
+ * because an SMS may be processed after the loan that
+ * originally received the bank transaction has already
+ * become completed.
  *
- * ---------------------------------------------------------
- * 2. EXACT EVENT-TIME CHECK
- * ---------------------------------------------------------
+ * Historical eligibility is determined using:
  *
- *   smsDate >= loan.authorizedAt
+ *   transactionAt >= authorizedAt
  *
- * This protects against an older SMS being applied to a
- * newly authorized loan on the same calendar day.
+ * and:
  *
- * Example:
+ *   transactionDate >= disbursementDate
  *
- *   07:00 → old repayment SMS
- *   07:05 → new loan authorized
- *
- * Both may have:
- *
- *   2026-09-23
- *
- * But:
- *
- *   07:00 < 07:05
- *
- * Therefore the old SMS is rejected.
+ * If more than one historical loan is eligible, the system
+ * refuses to guess.
  */
 async function resolveLoanForTransaction(
   member: ResolvedMember,
   transactionDate: string,
-  smsTimestamp: number,
+  transactionAt: Date,
 ): Promise<ResolvedLoan> {
   if (
     !isValidCalendarDate(
@@ -1245,23 +1109,44 @@ async function resolveLoanForTransaction(
   }
 
   if (
-    !Number.isFinite(
-      smsTimestamp,
+    !(transactionAt instanceof Date) ||
+    Number.isNaN(
+      transactionAt.getTime(),
     )
   ) {
     throw new Error(
-      "SMS timestamp is invalid.",
+      "Bank transaction timestamp is invalid.",
     );
   }
 
+  const transactionTimestamp =
+    transactionAt.getTime();
+
+  if (
+    !Number.isFinite(
+      transactionTimestamp,
+    )
+  ) {
+    throw new Error(
+      "Bank transaction timestamp is invalid.",
+    );
+  }
+
+  /**
+   * IMPORTANT:
+   *
+   * No status filter here.
+   *
+   * We need historical loans, including completed loans,
+   * because Android may replay an older SMS after the loan
+   * has already been completed.
+   */
   const result =
     await getLoans({
       page: 1,
       limit: 100,
       memberId:
         member.id,
-      status:
-        "active",
     });
 
   const loans =
@@ -1271,15 +1156,103 @@ async function resolveLoanForTransaction(
     loans.length === 0
   ) {
     throw new Error(
-      `No active GEO-SHUA loan could be found for member "${member.name}".`,
+      `No historical GEO-SHUA loan could be found for member "${member.name}".`,
     );
   }
 
+  const eligibleLoans =
+    loans.filter(
+      (loan) => {
+        /* -------------------------------------------------
+           AUTHORIZATION TIMESTAMP
+        ------------------------------------------------- */
+
+        if (
+          loan.authorizedAt ===
+            undefined ||
+          loan.authorizedAt ===
+            null
+        ) {
+          return false;
+        }
+
+        let authorizedTimestamp: number;
+
+        try {
+          authorizedTimestamp =
+            normalizeSystemTimestamp(
+              loan.authorizedAt,
+              `Loan "${loan.loanNumber}" authorization timestamp`,
+            );
+        } catch {
+          return false;
+        }
+
+        /**
+         * Critical historical protection.
+         *
+         * The actual BANK TRANSACTION must have happened
+         * after the loan was authorized.
+         *
+         * Android SMS receipt time is deliberately NOT used.
+         */
+        if (
+          transactionTimestamp <
+          authorizedTimestamp
+        ) {
+          return false;
+        }
+
+        /* -------------------------------------------------
+           DISBURSEMENT DATE
+        ------------------------------------------------- */
+
+        let disbursementDate: string;
+
+        try {
+          disbursementDate =
+            normalizeFinancialDate(
+              loan.disbursementDate,
+              `Loan "${loan.loanNumber}" disbursement date`,
+            );
+        } catch {
+          return false;
+        }
+
+        /**
+         * Financial calendar protection.
+         */
+        if (
+          transactionDate <
+          disbursementDate
+        ) {
+          return false;
+        }
+
+        return true;
+      },
+    );
+
   if (
-    loans.length > 1
+    eligibleLoans.length === 0
+  ) {
+    throw new Error(
+      "SMS_REPAYMENT_NO_HISTORICALLY_ELIGIBLE_LOAN",
+    );
+  }
+
+  /**
+   * Never guess when multiple loans satisfy the basic
+   * historical chronology.
+   *
+   * A future enhancement may use an explicit bank loan
+   * identifier if the bank message contains one.
+   */
+  if (
+    eligibleLoans.length > 1
   ) {
     const loanNumbers =
-      loans
+      eligibleLoans
         .map(
           (loan) =>
             loan.loanNumber,
@@ -1288,138 +1261,43 @@ async function resolveLoanForTransaction(
           (
             value,
           ): value is string =>
-            typeof value ===
-              "string" &&
-            value.trim().length >
-              0,
+            typeof value === "string" &&
+            value.trim().length > 0,
         )
         .join(", ");
 
     throw new Error(
-      `Member "${member.name}" has multiple active loans${
-        loanNumbers.length > 0
-          ? ` (${loanNumbers})`
+      `SMS_REPAYMENT_AMBIGUOUS_LOAN${
+        loanNumbers
+          ? `:${loanNumbers}`
           : ""
-      }. Automatic SMS repayment allocation is blocked.`,
+      }`,
     );
   }
 
   const loan =
-    loans[0];
+    eligibleLoans[0];
 
   if (!loan) {
     throw new Error(
-      `Unable to resolve the active loan for member "${member.name}".`,
-    );
-  }
-
-  /* =======================================================
-     FINANCIAL DATE VALIDATION
-  ======================================================= */
-
-  const disbursementDate =
-    normalizeFinancialDate(
-      loan.disbursementDate,
-      `Active loan "${loan.loanNumber}" disbursement date`,
-    );
-
-  /**
-   * Same-day repayment is valid.
-   *
-   * Only an earlier financial calendar date is invalid.
-   */
-  if (
-    transactionDate <
-    disbursementDate
-  ) {
-    throw new Error(
-      "SMS_REPAYMENT_BEFORE_DISBURSEMENT",
-    );
-  }
-
-  /* =======================================================
-     EXACT SMS / LOAN TIMESTAMP VALIDATION
-  ======================================================= */
-
-  /**
-   * authorizedAt is the exact system timestamp at which
-   * the current loan was authorized.
-   *
-   * The actual loan document currently contains values such
-   * as:
-   *
-   *   authorizedAt: ISODate(...)
-   *
-   * This must remain an exact timestamp.
-   *
-   * DO NOT convert it to YYYY-MM-DD.
-   */
-  if (
-    loan.authorizedAt ===
-      undefined ||
-    loan.authorizedAt ===
-      null
-  ) {
-    /**
-     * Fail closed.
-     *
-     * Without an exact loan authorization timestamp we
-     * cannot safely determine whether an older SMS belongs
-     * to this newly active loan.
-     */
-    throw new Error(
-      `Active loan "${loan.loanNumber}" has no valid authorization timestamp. Automatic SMS repayment processing is blocked.`,
-    );
-  }
-
-  const authorizedTimestamp =
-    normalizeSystemTimestamp(
-      loan.authorizedAt,
-      `Active loan "${loan.loanNumber}" authorization timestamp`,
-    );
-
-  /**
-   * Critical replay/new-loan protection.
-   *
-   * The SMS must have arrived at or after the loan was
-   * authorized.
-   *
-   * Example:
-   *
-   *   SMS       07:00
-   *   Loan      07:05
-   *
-   * Result:
-   *
-   *   07:00 < 07:05
-   *
-   * Therefore the SMS cannot repay this loan.
-   */
-  if (
-    smsTimestamp <
-    authorizedTimestamp
-  ) {
-    throw new Error(
-      "SMS_REPAYMENT_RECEIVED_BEFORE_LOAN_AUTHORIZATION",
+      "Unable to resolve historically eligible loan.",
     );
   }
 
   return loan;
 }
 
+
 /* =========================================================
    SMS IDENTITY
 ========================================================= */
 
 /**
- * Build the SMS-level idempotency identifier.
+ * Build the deterministic SMS identity used by savings
+ * processing.
  *
- * The external bank reference remains the authoritative
- * transaction identity inside the financial services.
- *
- * The SMS identity additionally includes the received
- * timestamp and bank destination to distinguish separate
- * inbox messages when necessary.
+ * The external bank reference remains the financial
+ * transaction identity.
  */
 function createSmsId(
   transaction: ParsedBankSms,
@@ -1432,8 +1310,9 @@ function createSmsId(
   ].join(":");
 }
 
+
 /* =========================================================
-   PROCESS SAVINGS
+   SAVINGS PROCESSING
 ========================================================= */
 
 async function processSavingsTransaction(
@@ -1441,13 +1320,15 @@ async function processSavingsTransaction(
   classified: ClassifiedBankTransaction,
   member: ResolvedMember,
   transactionDate: string,
+  transactionAt: Date,
   options: ProcessIncomingTransactionOptions,
 ): Promise<{
   savingsAccount: {
     id: string;
     accountNumber: string;
   };
-  savingsTransaction: SavingsTransaction;
+  savingsTransaction:
+    SavingsTransaction;
 }> {
   const savingsAccount =
     await resolveSavingsAccount(
@@ -1479,16 +1360,14 @@ async function processSavingsTransaction(
           transaction,
         ),
 
-      /**
-       * BANK destination account.
-       *
-       * NOT the GEO-SHUA savings account ID.
-       */
       sourceReference:
         classified.destinationAccountNumber,
 
       /**
-       * Canonical financial date.
+       * Savings service currently uses transactionAt
+       * for the financial transaction date.
+       *
+       * Preserve the existing contract here.
        */
       transactionAt:
         transactionDate,
@@ -1511,8 +1390,9 @@ async function processSavingsTransaction(
   };
 }
 
+
 /* =========================================================
-   PROCESS LOAN
+   LOAN PROCESSING
 ========================================================= */
 
 async function processLoanTransaction(
@@ -1520,28 +1400,39 @@ async function processLoanTransaction(
   classified: ClassifiedBankTransaction,
   member: ResolvedMember,
   transactionDate: string,
-  smsTimestamp: number,
+  transactionAt: Date,
   options: ProcessIncomingTransactionOptions,
 ): Promise<{
   loan: ResolvedLoan;
   repayment: LoanRepayment;
 }> {
+  /**
+   * Resolve the loan using the ACTUAL BANK TRANSACTION
+   * timestamp, not Android SMS receipt time.
+   */
   const loan =
     await resolveLoanForTransaction(
       member,
       transactionDate,
-      smsTimestamp,
+      transactionAt,
     );
 
   if (
     typeof loan.id !== "string" ||
-    loan.id.trim().length === 0
+    !loan.id.trim()
   ) {
     throw new Error(
       `Resolved loan "${loan.loanNumber}" has no valid loan ID.`,
     );
   }
 
+  /**
+   * Financial persistence remains authoritative in
+   * createLoanRepayment().
+   *
+   * transactionAt is deliberately persisted so that the
+   * original bank event can be reconstructed later.
+   */
   const repayment =
     await createLoanRepayment({
       loanId:
@@ -1556,10 +1447,9 @@ async function processLoanTransaction(
       transactionReference:
         classified.reference,
 
-      /**
-       * Canonical financial date.
-       */
       transactionDate,
+
+      transactionAt,
 
       source:
         "sms" as TransactionSource,
@@ -1585,6 +1475,7 @@ async function processLoanTransaction(
   };
 }
 
+
 /* =========================================================
    MAIN PROCESSOR
 ========================================================= */
@@ -1593,14 +1484,13 @@ export async function processIncomingTransaction(
   parsedTransaction: ParsedBankSms,
   options: ProcessIncomingTransactionOptions = {},
 ): Promise<ProcessIncomingTransactionResult> {
-  /* =======================================================
+  /* -------------------------------------------------------
      BASIC VALIDATION
-  ======================================================= */
+  ------------------------------------------------------- */
 
   if (
     !parsedTransaction ||
-    typeof parsedTransaction !==
-      "object"
+    typeof parsedTransaction !== "object"
   ) {
     throw new Error(
       "Parsed bank transaction is required.",
@@ -1610,9 +1500,7 @@ export async function processIncomingTransaction(
   if (
     typeof parsedTransaction.reference !==
       "string" ||
-    parsedTransaction.reference
-      .trim()
-      .length === 0
+    !parsedTransaction.reference.trim()
   ) {
     throw new Error(
       "Parsed bank transaction reference is required.",
@@ -1633,9 +1521,7 @@ export async function processIncomingTransaction(
   if (
     typeof parsedTransaction.senderName !==
       "string" ||
-    parsedTransaction.senderName
-      .trim()
-      .length === 0
+    !parsedTransaction.senderName.trim()
   ) {
     throw new Error(
       "Parsed bank transaction sender name is required.",
@@ -1645,8 +1531,7 @@ export async function processIncomingTransaction(
   if (
     typeof parsedTransaction.destinationAccountNumber !==
       "string" ||
-    parsedTransaction.destinationAccountNumber
-      .trim().length === 0
+    !parsedTransaction.destinationAccountNumber.trim()
   ) {
     throw new Error(
       "Parsed bank transaction bank destination account number is required.",
@@ -1655,56 +1540,83 @@ export async function processIncomingTransaction(
 
   if (
     parsedTransaction.status !==
-    "confirmed"
+      "confirmed"
   ) {
     throw new Error(
       "Only confirmed bank transactions may enter financial processing.",
     );
   }
 
-  /* =======================================================
-     36-HOUR SMS WINDOW
-  ======================================================= */
+  /* -------------------------------------------------------
+     SMS TIMESTAMP
+  ------------------------------------------------------- */
 
   /**
-   * Validate the actual SMS timestamp.
+   * This timestamp is ONLY for the 36-hour automatic
+   * processing window.
    *
-   * This is intentionally separate from transactionDate.
-   *
-   * transactionDate
-   *     = financial date of the payment.
-   *
-   * smsDate
-   *     = timestamp of the SMS received by Android.
-   *
-   * We retain the normalized timestamp for loan replay
-   * protection later.
+   * It must not be used to determine loan ownership.
    */
   const smsTimestamp =
     validateSmsWindow(
       parsedTransaction.smsDate,
     );
 
-  /* =======================================================
-     NORMALIZE TRANSACTION DATE
-  ======================================================= */
+  /**
+   * Keep the variable explicitly referenced so the purpose
+   * remains clear during future maintenance.
+   */
+  void smsTimestamp;
+
+  /* -------------------------------------------------------
+     EXACT BANK TRANSACTION TIMESTAMP
+  ------------------------------------------------------- */
 
   /**
-   * Normalize the parser/external date ONCE.
+   * This is the critical timestamp.
    *
-   * From this point onward transactionDate is always:
-   *
-   *   YYYY-MM-DD
+   * It comes from the bank-reported date/time inside the
+   * SMS and represents when the financial transaction
+   * actually occurred.
    */
+  const transactionAt =
+    normalizeTransactionTimestamp(
+      parsedTransaction.transactionDate,
+    );
+
+  /* -------------------------------------------------------
+     FINANCIAL DATE
+  ------------------------------------------------------- */
+
   const transactionDate =
     normalizeFinancialDate(
       parsedTransaction.transactionDate,
       "Parsed bank transaction date",
     );
 
-  /* =======================================================
-     CLASSIFY
-  ======================================================= */
+  /**
+   * Defensive consistency check.
+   *
+   * The calendar date derived from the exact timestamp must
+   * agree with the normalized financial date.
+   */
+  const transactionDateFromTimestamp =
+    dateToNairobiCalendarDate(
+      transactionAt,
+    );
+
+  if (
+    transactionDateFromTimestamp !==
+    transactionDate
+  ) {
+    throw new Error(
+      "Parsed bank transaction date and transaction timestamp resolve to different Nairobi calendar dates.",
+    );
+  }
+
+  /* -------------------------------------------------------
+     DESTINATION CLASSIFICATION
+  ------------------------------------------------------- */
 
   const classified =
     classifyTransaction(
@@ -1713,29 +1625,29 @@ export async function processIncomingTransaction(
 
   if (
     classified.transactionType ===
-    "unknown"
+      "unknown"
   ) {
     throw new Error(
       `Bank destination account "${classified.destinationAccountNumber}" is not configured as a GEO-SHUA loan or savings collection destination.`,
     );
   }
 
-  /* =======================================================
-     RESOLVE MEMBER
-  ======================================================= */
+  /* -------------------------------------------------------
+     MEMBER
+  ------------------------------------------------------- */
 
   const member =
     await resolveMemberBySmsName(
       classified.senderName,
     );
 
-  /* =======================================================
+  /* -------------------------------------------------------
      SAVINGS
-  ======================================================= */
+  ------------------------------------------------------- */
 
   if (
     classified.transactionType ===
-    "savings"
+      "savings"
   ) {
     const {
       savingsAccount,
@@ -1746,6 +1658,7 @@ export async function processIncomingTransaction(
         classified,
         member,
         transactionDate,
+        transactionAt,
         options,
       );
 
@@ -1767,13 +1680,13 @@ export async function processIncomingTransaction(
     };
   }
 
-  /* =======================================================
+  /* -------------------------------------------------------
      LOAN
-  ======================================================= */
+  ------------------------------------------------------- */
 
   if (
     classified.transactionType ===
-    "loan"
+      "loan"
   ) {
     const {
       loan,
@@ -1784,7 +1697,7 @@ export async function processIncomingTransaction(
         classified,
         member,
         transactionDate,
-        smsTimestamp,
+        transactionAt,
         options,
       );
 
@@ -1806,14 +1719,15 @@ export async function processIncomingTransaction(
     };
   }
 
-  /* =======================================================
+  /* -------------------------------------------------------
      DEFENSIVE FALLBACK
-  ======================================================= */
+  ------------------------------------------------------- */
 
   throw new Error(
     `Bank destination account "${classified.destinationAccountNumber}" could not be routed.`,
   );
 }
+
 
 /* =========================================================
    RAW SMS COMPATIBILITY
@@ -1825,7 +1739,7 @@ export async function processBankSms(
 ): Promise<ProcessIncomingTransactionResult> {
   if (
     typeof rawMessage !== "string" ||
-    rawMessage.trim().length === 0
+    !rawMessage.trim()
   ) {
     throw new Error(
       "Raw bank SMS message is required.",
@@ -1848,15 +1762,6 @@ export async function processBankSms(
       date: smsTimestamp,
     });
 
-  /**
-   * The raw-SMS compatibility path has no separate
-   * Android inbox timestamp, so the parser timestamp is
-   * used.
-   *
-   * This keeps manually supplied/raw SMS compatible with
-   * the same 36-hour validation and loan timestamp
-   * protection contract.
-   */
   return processIncomingTransaction(
     parsed,
     options,

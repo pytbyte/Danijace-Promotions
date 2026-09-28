@@ -51,6 +51,20 @@ import java.util.List;
  *
  * Financial processing remains on the GEO-SHUA server.
  *
+ * IMPORTANT:
+ *
+ * The 36-hour window is a processing/reconciliation window.
+ *
+ * It is NOT a reason to destroy an unprocessed SMS.
+ *
+ * Therefore:
+ *
+ *   processed = 1 + older than retention
+ *       → safe to delete
+ *
+ *   processed = 0
+ *       → NEVER delete merely because it is old
+ *
  * =========================================================
  */
 public final class SmsQueueStore {
@@ -418,6 +432,13 @@ public final class SmsQueueStore {
      * Results are returned oldest first so that delayed
      * bank messages are submitted to the backend in
      * chronological order.
+     *
+     * IMPORTANT:
+     *
+     * This time window controls which pending messages are
+     * automatically selected for processing.
+     *
+     * It does NOT delete anything outside the window.
      */
     @NonNull
     public List<SmsMessage> getPendingMessages(
@@ -629,6 +650,10 @@ public final class SmsQueueStore {
      *   - successfully processed the SMS, OR
      *   - confirmed it is already a duplicate, OR
      *   - returned another terminal result.
+     *
+     * The SMS remains in the local database after this call.
+     * It is removed later by deleteOlderThan() once it is
+     * outside the retention period.
      */
     public boolean markProcessed(
             @NonNull String id
@@ -705,6 +730,17 @@ public final class SmsQueueStore {
                         }
                 );
 
+        if (updated > 0) {
+            Log.d(
+                    TAG,
+                    "SMS marked processed by identity"
+                            + ": "
+                            + address
+                            + " @ "
+                            + smsDate
+            );
+        }
+
         return updated > 0;
     }
 
@@ -713,11 +749,27 @@ public final class SmsQueueStore {
     ===================================================== */
 
     /**
-     * Delete SMS older than the supplied timestamp.
+     * Delete processed SMS older than the supplied
+     * timestamp.
      *
-     * Strictly older than the cutoff is deleted.
+     * IMPORTANT:
      *
-     * An SMS exactly on the cutoff remains.
+     * NEVER delete an unprocessed SMS here.
+     *
+     * An unprocessed SMS may represent a legitimate
+     * financial event that has not yet reached the backend.
+     *
+     * The 36-hour window is used for automatic processing
+     * and inbox reconciliation. It is NOT a destructive
+     * retention rule for pending financial events.
+     *
+     * Therefore:
+     *
+     *   processed = 1 AND sms_date < cutoff
+     *       → delete
+     *
+     *   processed = 0
+     *       → preserve
      */
     public int deleteOlderThan(
             long cutoff
@@ -728,8 +780,11 @@ public final class SmsQueueStore {
         int deleted =
                 db.delete(
                         TABLE_SMS,
-                        COLUMN_SMS_DATE + " < ?",
+                        COLUMN_PROCESSED + " = ?"
+                                + " AND "
+                                + COLUMN_SMS_DATE + " < ?",
                         new String[]{
+                                "1",
                                 String.valueOf(cutoff)
                         }
                 );
@@ -737,7 +792,8 @@ public final class SmsQueueStore {
         if (deleted > 0) {
             Log.d(
                     TAG,
-                    "Deleted old SMS rows: " + deleted
+                    "Deleted old processed SMS rows: "
+                            + deleted
             );
         }
 
