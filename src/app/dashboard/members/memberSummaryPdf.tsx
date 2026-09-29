@@ -4006,7 +4006,7 @@ function MemberAccountStatement({
                 />
 
                 <LoanRow
-                  label="Loan Start Date"
+                  label="First installment"
                   value={formatDate(
                     loan.firstDueDate,
                   )}
