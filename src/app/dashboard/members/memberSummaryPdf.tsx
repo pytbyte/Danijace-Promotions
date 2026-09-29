@@ -188,6 +188,8 @@ type LoanData = {
   outstandingBalance: number;
 
   firstDueDate: string;
+  
+  disbursmentDate: string;
 
   endDate: string;
 
