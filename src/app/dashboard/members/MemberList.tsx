@@ -433,11 +433,9 @@ function ProfileImage({
     );
 
   const initialImageUrl =
-    member.profileImage
-      ? getProfileImageUrl(
-          member.membershipNumber,
-        )
-      : null;
+  getProfileImageUrl(
+    member.membershipNumber,
+  );
 
   const [preview, setPreview] =
     useState<
