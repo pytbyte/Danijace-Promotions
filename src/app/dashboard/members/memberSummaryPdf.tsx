@@ -4004,6 +4004,14 @@ function MemberAccountStatement({
                   )}
                   emphasize
                 />
+                
+                <LoanRow
+                  label="Loan Start Date"
+                  value={formatDate(
+                    loan.disbursementDate,
+                  )}
+                  last
+                />
 
                 <LoanRow
                   label="Loan End Date"
