@@ -189,7 +189,7 @@ type LoanData = {
 
   firstDueDate: string;
   
-  disbursmentDate: string;
+  disbursementDate: string;
 
   endDate: string;
 
