@@ -19,6 +19,7 @@ import {
   LogOut,
   Menu,
   ShieldCheck,
+  Trash2,
   Users,
   Wallet,
   X,
@@ -47,6 +48,13 @@ type AndroidGoogleUser = {
   picture?: string;
 };
 
+type AuthorizedUser = {
+  id: string;
+  email: string;
+  createdAt?: string;
+  protected?: boolean;
+};
+
 type LoanProfitPanelProps = {
   loans: Loan[];
   loading: boolean;
@@ -59,6 +67,21 @@ type LoanProfitPanelProps = {
   onRateChange: (value: string) => void;
   onRetry: () => void;
 };
+
+/* =========================================================
+   CONSTANTS
+========================================================= */
+
+/**
+ * This account exists as a permanent recovery account.
+ *
+ * It is intentionally:
+ * - never displayed in the authorized-user list
+ * - never given a delete button
+ * - protected again by the DELETE API
+ */
+const PROTECTED_AUTHORIZED_EMAIL =
+  "heretolearn1@gmail.com";
 
 /* =========================================================
    NAVIGATION
@@ -155,7 +178,8 @@ function LoanProfitPanel({
   onRetry,
 }: LoanProfitPanelProps) {
   const result = useMemo(() => {
-    const interestRate = Number(rate);
+    const interestRate =
+      Number(rate);
 
     if (
       !Number.isFinite(
@@ -284,6 +308,7 @@ function LoanProfitPanel({
                 border-t-yellow-400
               "
             />
+
             <span className="text-[11px] text-white/35">
               Loading loans...
             </span>
@@ -542,7 +567,8 @@ export default function TopBar() {
     status: sessionStatus,
   } = useSession();
 
-  const router = useRouter();
+  const router =
+    useRouter();
 
   const pathname =
     usePathname();
@@ -574,6 +600,25 @@ export default function TopBar() {
     authorizedUsersOpen,
     setAuthorizedUsersOpen,
   ] = useState(false);
+
+  const [
+    authorizedUsers,
+    setAuthorizedUsers,
+  ] = useState<
+    AuthorizedUser[]
+  >([]);
+
+  const [
+    authorizedUsersLoading,
+    setAuthorizedUsersLoading,
+  ] = useState(false);
+
+  const [
+    removingAuthorizedEmail,
+    setRemovingAuthorizedEmail,
+  ] = useState<string | null>(
+    null,
+  );
 
   const [
     authorizedEmail,
@@ -724,9 +769,6 @@ export default function TopBar() {
   ======================================================= */
 
   useEffect(() => {
-    /*
-     * Do not check while NextAuth is still resolving.
-     */
     if (
       sessionStatus ===
       "loading"
@@ -734,11 +776,6 @@ export default function TopBar() {
       return;
     }
 
-    /*
-     * The authorization endpoint uses auth()
-     * on the server, so we need a real NextAuth
-     * authenticated session before checking.
-     */
     if (
       sessionStatus !==
         "authenticated" ||
@@ -855,9 +892,6 @@ export default function TopBar() {
 
           /*
            * Fail closed.
-           *
-           * If authorization cannot be
-           * verified, do NOT allow access.
            */
           setIsAuthorized(
             false,
@@ -886,12 +920,6 @@ export default function TopBar() {
   const handleCloseUnauthorizedApp =
     async () => {
       try {
-        /*
-         * Capacitor App plugin.
-         *
-         * On Android this attempts to close
-         * the native application.
-         */
         const capacitor =
           (
             window as Window & {
@@ -924,18 +952,381 @@ export default function TopBar() {
         );
       }
 
-      /*
-       * Browser fallback.
-       *
-       * Most browsers will refuse to close
-       * a tab that was not opened by script.
-       */
       try {
         window.close();
       } catch (error) {
         console.error(
           "Unable to close browser window:",
           error,
+        );
+      }
+    };
+
+  /* =======================================================
+     LOAD AUTHORIZED USERS
+  ======================================================= */
+
+  const loadAuthorizedUsers =
+    async () => {
+      try {
+        setAuthorizedUsersLoading(
+          true,
+        );
+
+        setAuthorizedEmailError(
+          "",
+        );
+
+        const response =
+          await fetch(
+            "/api/access/emails",
+            {
+              method: "GET",
+              headers: {
+                Accept:
+                  "application/json",
+              },
+              cache: "no-store",
+            },
+          );
+
+        const result =
+          await response
+            .json()
+            .catch(
+              () => null,
+            );
+
+        if (
+          !response.ok
+        ) {
+          throw new Error(
+            result?.error ||
+              result?.message ||
+              `Failed to load authorized users. HTTP ${response.status}`,
+          );
+        }
+
+        const emails =
+          Array.isArray(
+            result?.data?.emails,
+          )
+            ? result.data
+                .emails
+            : [];
+
+        /*
+         * IMPORTANT:
+         *
+         * Never display the permanent recovery
+         * account in the UI.
+         *
+         * It remains in MongoDB and remains
+         * protected by the API.
+         */
+        const visibleUsers =
+          emails.filter(
+            (
+              item: AuthorizedUser,
+            ) =>
+              item.email
+                ?.trim()
+                .toLowerCase() !==
+              PROTECTED_AUTHORIZED_EMAIL,
+          );
+
+        setAuthorizedUsers(
+          visibleUsers,
+        );
+      } catch (error) {
+        console.error(
+          "Unable to load authorized users:",
+          error,
+        );
+
+        setAuthorizedUsers(
+          [],
+        );
+
+        setAuthorizedEmailError(
+          error instanceof
+            Error
+            ? error.message
+            : "Unable to load authorized users.",
+        );
+      } finally {
+        setAuthorizedUsersLoading(
+          false,
+        );
+      }
+    };
+
+  /* =======================================================
+     LOAD AUTHORIZED USERS WHEN PANEL OPENS
+  ======================================================= */
+
+  useEffect(() => {
+    if (
+      !authorizedUsersOpen ||
+      !isAuthorized
+    ) {
+      return;
+    }
+
+    void loadAuthorizedUsers();
+  }, [
+    authorizedUsersOpen,
+    isAuthorized,
+  ]);
+
+  /* =======================================================
+     ADD AUTHORIZED EMAIL
+  ======================================================= */
+
+  const addAuthorizedEmail =
+    async () => {
+      const normalizedEmail =
+        authorizedEmail
+          .trim()
+          .toLowerCase();
+
+      setAuthorizedEmailMessage(
+        "",
+      );
+
+      setAuthorizedEmailError(
+        "",
+      );
+
+      if (!normalizedEmail) {
+        setAuthorizedEmailError(
+          "Enter an email address.",
+        );
+
+        return;
+      }
+
+      const emailRegex =
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      if (
+        !emailRegex.test(
+          normalizedEmail,
+        )
+      ) {
+        setAuthorizedEmailError(
+          "Enter a valid email address.",
+        );
+
+        return;
+      }
+
+      try {
+        setAuthorizedEmailLoading(
+          true,
+        );
+
+        const response =
+          await fetch(
+            "/api/access/emails",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Accept:
+                  "application/json",
+              },
+              body: JSON.stringify({
+                email:
+                  normalizedEmail,
+              }),
+            },
+          );
+
+        const result =
+          await response
+            .json()
+            .catch(
+              () => null,
+            );
+
+        if (
+          !response.ok
+        ) {
+          throw new Error(
+            result?.error ||
+              result?.message ||
+              "Failed to add authorized email.",
+          );
+        }
+
+        setAuthorizedEmail(
+          "",
+        );
+
+        setAuthorizedEmailMessage(
+          "Email added successfully.",
+        );
+
+        /*
+         * Refresh the visible list immediately
+         * so the newly-added email appears without
+         * closing and reopening the panel.
+         */
+        await loadAuthorizedUsers();
+      } catch (error) {
+        console.error(
+          "Unable to add authorized email:",
+          error,
+        );
+
+        setAuthorizedEmailError(
+          error instanceof
+            Error
+            ? error.message
+            : "Failed to add authorized email.",
+        );
+      } finally {
+        setAuthorizedEmailLoading(
+          false,
+        );
+      }
+    };
+
+  /* =======================================================
+     REMOVE AUTHORIZED EMAIL
+  ======================================================= */
+
+  const removeAuthorizedEmail =
+    async (
+      targetEmail: string,
+    ) => {
+      const normalizedEmail =
+        targetEmail
+          .trim()
+          .toLowerCase();
+
+      /*
+       * Defense in depth.
+       *
+       * Even though the protected account is
+       * filtered from the UI, never allow this
+       * function to target it.
+       */
+      if (
+        normalizedEmail ===
+        PROTECTED_AUTHORIZED_EMAIL
+      ) {
+        setAuthorizedEmailError(
+          "This authorized email is protected and cannot be removed.",
+        );
+
+        return;
+      }
+
+      /*
+       * Don't allow two removal requests
+       * to run simultaneously.
+       */
+      if (
+        removingAuthorizedEmail
+      ) {
+        return;
+      }
+
+      const confirmed =
+        window.confirm(
+          `Remove ${normalizedEmail} from the authorized users list?`,
+        );
+
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        setRemovingAuthorizedEmail(
+          normalizedEmail,
+        );
+
+        setAuthorizedEmailError(
+          "",
+        );
+
+        setAuthorizedEmailMessage(
+          "",
+        );
+
+        const response =
+          await fetch(
+            "/api/access/emails",
+            {
+              method: "DELETE",
+              headers: {
+                "Content-Type":
+                  "application/json",
+                Accept:
+                  "application/json",
+              },
+              body: JSON.stringify({
+                email:
+                  normalizedEmail,
+              }),
+            },
+          );
+
+        const result =
+          await response
+            .json()
+            .catch(
+              () => null,
+            );
+
+        if (
+          !response.ok
+        ) {
+          throw new Error(
+            result?.error ||
+              result?.message ||
+              "Failed to remove authorized email.",
+          );
+        }
+
+        /*
+         * Remove it immediately from the
+         * visible list.
+         */
+        setAuthorizedUsers(
+          (current) =>
+            current.filter(
+              (
+                item,
+              ) =>
+                item.email
+                  .trim()
+                  .toLowerCase() !==
+                normalizedEmail,
+            ),
+        );
+
+        setAuthorizedEmailMessage(
+          `${normalizedEmail} removed successfully.`,
+        );
+      } catch (error) {
+        console.error(
+          "Unable to remove authorized email:",
+          error,
+        );
+
+        setAuthorizedEmailError(
+          error instanceof
+            Error
+            ? error.message
+            : "Failed to remove authorized email.",
+        );
+      } finally {
+        setRemovingAuthorizedEmail(
+          null,
         );
       }
     };
@@ -959,14 +1350,6 @@ export default function TopBar() {
 
         setLoansError("");
 
-        /*
-         * Existing production endpoint:
-         *
-         * GET /api/loans
-         *
-         * The endpoint accepts a maximum
-         * limit of 1000.
-         */
         const response =
           await fetch(
             "/api/loans?limit=1000",
@@ -1091,114 +1474,6 @@ export default function TopBar() {
     };
 
   /* =======================================================
-     ADD AUTHORIZED EMAIL
-  ======================================================= */
-
-  const addAuthorizedEmail =
-    async () => {
-      const normalizedEmail =
-        authorizedEmail
-          .trim()
-          .toLowerCase();
-
-      setAuthorizedEmailMessage(
-        "",
-      );
-
-      setAuthorizedEmailError(
-        "",
-      );
-
-      if (!normalizedEmail) {
-        setAuthorizedEmailError(
-          "Enter an email address.",
-        );
-
-        return;
-      }
-
-      const emailRegex =
-        /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-      if (
-        !emailRegex.test(
-          normalizedEmail,
-        )
-      ) {
-        setAuthorizedEmailError(
-          "Enter a valid email address.",
-        );
-
-        return;
-      }
-
-      try {
-        setAuthorizedEmailLoading(
-          true,
-        );
-
-        const response =
-          await fetch(
-            "/api/access/emails",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type":
-                  "application/json",
-                Accept:
-                  "application/json",
-              },
-              body: JSON.stringify({
-                email:
-                  normalizedEmail,
-              }),
-            },
-          );
-
-        const result =
-          await response
-            .json()
-            .catch(
-              () => null,
-            );
-
-        if (
-          !response.ok
-        ) {
-          throw new Error(
-            result?.error ||
-              result?.message ||
-              "Failed to add authorized email.",
-          );
-        }
-
-        setAuthorizedEmail(
-          "",
-        );
-
-        setAuthorizedEmailMessage(
-          "Email added successfully.",
-        );
-      } catch (error) {
-        console.error(
-          "Unable to add authorized email:",
-          error,
-        );
-
-        setAuthorizedEmailError(
-          error instanceof
-            Error
-            ? error.message
-            : "Failed to add authorized email.",
-        );
-      } finally {
-        setAuthorizedEmailLoading(
-          false,
-        );
-      }
-    };
-
-  /* =======================================================
      AUTHENTICATED USER
   ======================================================= */
 
@@ -1314,6 +1589,335 @@ export default function TopBar() {
         false,
       );
     };
+
+  /* =======================================================
+     AUTHORIZED USERS PANEL
+  ======================================================= */
+
+  const authorizedUsersPanel = (
+    <div className="px-1 pb-2">
+      <div
+        className="
+          rounded-xl
+          border
+          border-white/[0.08]
+          bg-white/[0.025]
+          p-3
+        "
+      >
+        {/* =================================================
+            ADD EMAIL
+        ================================================= */}
+
+        <p
+          className="
+            mb-2
+            text-[9px]
+            uppercase
+            tracking-wide
+            text-white/30
+          "
+        >
+          Add authorized email
+        </p>
+
+        <input
+          type="email"
+          value={
+            authorizedEmail
+          }
+          onChange={(
+            event,
+          ) => {
+            setAuthorizedEmail(
+              event.target.value,
+            );
+
+            setAuthorizedEmailError(
+              "",
+            );
+
+            setAuthorizedEmailMessage(
+              "",
+            );
+          }}
+          onKeyDown={(
+            event,
+          ) => {
+            if (
+              event.key ===
+              "Enter"
+            ) {
+              void addAuthorizedEmail();
+            }
+          }}
+          placeholder="user@gmail.com"
+          disabled={
+            authorizedEmailLoading
+          }
+          className="
+            w-full
+            rounded-lg
+            border
+            border-white/10
+            bg-black/30
+            px-2.5
+            py-2
+            text-xs
+            text-white
+            outline-none
+            placeholder:text-white/20
+            focus:border-yellow-500/40
+            disabled:opacity-50
+          "
+        />
+
+        {authorizedEmailError && (
+          <p className="mt-2 text-[10px] text-red-400">
+            {
+              authorizedEmailError
+            }
+          </p>
+        )}
+
+        {authorizedEmailMessage && (
+          <p className="mt-2 text-[10px] text-green-400">
+            {
+              authorizedEmailMessage
+            }
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={() =>
+            void addAuthorizedEmail()
+          }
+          disabled={
+            authorizedEmailLoading
+          }
+          className="
+            mt-2
+            w-full
+            rounded-lg
+            bg-yellow-500
+            px-3
+            py-2
+            text-[11px]
+            font-semibold
+            text-black
+            transition
+            hover:bg-yellow-400
+            disabled:cursor-not-allowed
+            disabled:opacity-50
+          "
+        >
+          {authorizedEmailLoading
+            ? "Adding..."
+            : "Add email"}
+        </button>
+
+        {/* =================================================
+            AUTHORIZED EMAIL LIST
+        ================================================= */}
+
+        <div className="mt-4 border-t border-white/[0.06] pt-3">
+          <div className="mb-2 flex items-center justify-between">
+            <p
+              className="
+                text-[9px]
+                uppercase
+                tracking-wide
+                text-white/30
+              "
+            >
+              Allowed emails
+            </p>
+
+            <button
+              type="button"
+              onClick={() =>
+                void loadAuthorizedUsers()
+              }
+              disabled={
+                authorizedUsersLoading
+              }
+              className="
+                text-[9px]
+                font-medium
+                text-white/35
+                transition
+                hover:text-white/70
+                disabled:cursor-not-allowed
+                disabled:opacity-40
+              "
+            >
+              {authorizedUsersLoading
+                ? "Loading..."
+                : "Refresh"}
+            </button>
+          </div>
+
+          {authorizedUsersLoading &&
+          authorizedUsers.length ===
+            0 ? (
+            <div
+              className="
+                rounded-lg
+                border
+                border-white/[0.06]
+                bg-white/[0.02]
+                px-3
+                py-3
+                text-center
+                text-[10px]
+                text-white/30
+              "
+            >
+              Loading allowed emails...
+            </div>
+          ) : authorizedUsers.length ===
+            0 ? (
+            <div
+              className="
+                rounded-lg
+                border
+                border-white/[0.06]
+                bg-white/[0.02]
+                px-3
+                py-3
+                text-center
+                text-[10px]
+                text-white/30
+              "
+            >
+              No other authorized users.
+            </div>
+          ) : (
+            <div
+              className="
+                max-h-48
+                space-y-1.5
+                overflow-y-auto
+                pr-1
+              "
+            >
+              {authorizedUsers.map(
+                (
+                  authorizedUser,
+                ) => {
+                  const normalizedEmail =
+                    authorizedUser.email
+                      .trim()
+                      .toLowerCase();
+
+                  /*
+                   * Extra client-side protection.
+                   *
+                   * This should normally never be reached
+                   * because loadAuthorizedUsers already
+                   * filters the recovery account.
+                   */
+                  if (
+                    normalizedEmail ===
+                    PROTECTED_AUTHORIZED_EMAIL
+                  ) {
+                    return null;
+                  }
+
+                  const removing =
+                    removingAuthorizedEmail ===
+                    normalizedEmail;
+
+                  return (
+                    <div
+                      key={
+                        authorizedUser.id ||
+                        normalizedEmail
+                      }
+                      className="
+                        flex
+                        items-center
+                        gap-2
+                        rounded-lg
+                        border
+                        border-white/[0.06]
+                        bg-white/[0.02]
+                        px-2.5
+                        py-2
+                      "
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className="
+                            truncate
+                            text-[11px]
+                            text-white/70
+                          "
+                        >
+                          {
+                            authorizedUser.email
+                          }
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void removeAuthorizedEmail(
+                            authorizedUser.email,
+                          )
+                        }
+                        disabled={
+                          removing
+                        }
+                        aria-label={`Remove ${authorizedUser.email}`}
+                        title={`Remove ${authorizedUser.email}`}
+                        className="
+                          flex
+                          h-7
+                          w-7
+                          shrink-0
+                          items-center
+                          justify-center
+                          rounded-lg
+                          text-white/25
+                          transition
+                          hover:bg-red-500/10
+                          hover:text-red-400
+                          disabled:cursor-not-allowed
+                          disabled:opacity-40
+                        "
+                      >
+                        {removing ? (
+                          <div
+                            className="
+                              h-3
+                              w-3
+                              animate-spin
+                              rounded-full
+                              border
+                              border-white/15
+                              border-t-red-400
+                            "
+                          />
+                        ) : (
+                          <Trash2
+                            size={14}
+                            strokeWidth={1.8}
+                          />
+                        )}
+                      </button>
+                    </div>
+                  );
+                },
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   /* =======================================================
      RENDER
@@ -1664,129 +2268,8 @@ export default function TopBar() {
                     />
                   </button>
 
-                  {authorizedUsersOpen && (
-                    <div className="px-1 pb-2">
-                      <div
-                        className="
-                          rounded-xl
-                          border
-                          border-white/[0.08]
-                          bg-white/[0.025]
-                          p-3
-                        "
-                      >
-                        <p
-                          className="
-                            mb-2
-                            text-[9px]
-                            uppercase
-                            tracking-wide
-                            text-white/30
-                          "
-                        >
-                          Add authorized email
-                        </p>
-
-                        <input
-                          type="email"
-                          value={
-                            authorizedEmail
-                          }
-                          onChange={(
-                            event,
-                          ) => {
-                            setAuthorizedEmail(
-                              event
-                                .target
-                                .value,
-                            );
-
-                            setAuthorizedEmailError(
-                              "",
-                            );
-
-                            setAuthorizedEmailMessage(
-                              "",
-                            );
-                          }}
-                          onKeyDown={(
-                            event,
-                          ) => {
-                            if (
-                              event.key ===
-                              "Enter"
-                            ) {
-                              void addAuthorizedEmail();
-                            }
-                          }}
-                          placeholder="user@gmail.com"
-                          disabled={
-                            authorizedEmailLoading
-                          }
-                          className="
-                            w-full
-                            rounded-lg
-                            border
-                            border-white/10
-                            bg-black/30
-                            px-2.5
-                            py-2
-                            text-xs
-                            text-white
-                            outline-none
-                            placeholder:text-white/20
-                            focus:border-yellow-500/40
-                            disabled:opacity-50
-                          "
-                        />
-
-                        {authorizedEmailError && (
-                          <p className="mt-2 text-[10px] text-red-400">
-                            {
-                              authorizedEmailError
-                            }
-                          </p>
-                        )}
-
-                        {authorizedEmailMessage && (
-                          <p className="mt-2 text-[10px] text-green-400">
-                            {
-                              authorizedEmailMessage
-                            }
-                          </p>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void addAuthorizedEmail()
-                          }
-                          disabled={
-                            authorizedEmailLoading
-                          }
-                          className="
-                            mt-2
-                            w-full
-                            rounded-lg
-                            bg-yellow-500
-                            px-3
-                            py-2
-                            text-[11px]
-                            font-semibold
-                            text-black
-                            transition
-                            hover:bg-yellow-400
-                            disabled:cursor-not-allowed
-                            disabled:opacity-50
-                          "
-                        >
-                          {authorizedEmailLoading
-                            ? "Adding..."
-                            : "Add email"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  {authorizedUsersOpen &&
+                    authorizedUsersPanel}
 
                   {/* MOBILE SIGN OUT */}
 
@@ -2251,129 +2734,8 @@ export default function TopBar() {
                     />
                   </button>
 
-                  {authorizedUsersOpen && (
-                    <div className="px-1 pb-2">
-                      <div
-                        className="
-                          rounded-xl
-                          border
-                          border-white/[0.08]
-                          bg-white/[0.025]
-                          p-3
-                        "
-                      >
-                        <p
-                          className="
-                            mb-2
-                            text-[9px]
-                            uppercase
-                            tracking-wide
-                            text-white/30
-                          "
-                        >
-                          Add authorized email
-                        </p>
-
-                        <input
-                          type="email"
-                          value={
-                            authorizedEmail
-                          }
-                          onChange={(
-                            event,
-                          ) => {
-                            setAuthorizedEmail(
-                              event
-                                .target
-                                .value,
-                            );
-
-                            setAuthorizedEmailError(
-                              "",
-                            );
-
-                            setAuthorizedEmailMessage(
-                              "",
-                            );
-                          }}
-                          onKeyDown={(
-                            event,
-                          ) => {
-                            if (
-                              event.key ===
-                              "Enter"
-                            ) {
-                              void addAuthorizedEmail();
-                            }
-                          }}
-                          placeholder="user@gmail.com"
-                          disabled={
-                            authorizedEmailLoading
-                          }
-                          className="
-                            w-full
-                            rounded-lg
-                            border
-                            border-white/10
-                            bg-black/30
-                            px-2.5
-                            py-2
-                            text-xs
-                            text-white
-                            outline-none
-                            placeholder:text-white/20
-                            focus:border-yellow-500/40
-                            disabled:opacity-50
-                          "
-                        />
-
-                        {authorizedEmailError && (
-                          <p className="mt-2 text-[10px] text-red-400">
-                            {
-                              authorizedEmailError
-                            }
-                          </p>
-                        )}
-
-                        {authorizedEmailMessage && (
-                          <p className="mt-2 text-[10px] text-green-400">
-                            {
-                              authorizedEmailMessage
-                            }
-                          </p>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void addAuthorizedEmail()
-                          }
-                          disabled={
-                            authorizedEmailLoading
-                          }
-                          className="
-                            mt-2
-                            w-full
-                            rounded-lg
-                            bg-yellow-500
-                            px-3
-                            py-2
-                            text-[11px]
-                            font-semibold
-                            text-black
-                            transition
-                            hover:bg-yellow-400
-                            disabled:cursor-not-allowed
-                            disabled:opacity-50
-                          "
-                        >
-                          {authorizedEmailLoading
-                            ? "Adding..."
-                            : "Add email"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  {authorizedUsersOpen &&
+                    authorizedUsersPanel}
 
                   {/* SIGN OUT */}
 
