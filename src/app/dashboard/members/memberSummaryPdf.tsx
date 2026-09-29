@@ -187,8 +187,6 @@ type LoanData = {
 
   outstandingBalance: number;
 
-  disbursementDate: string;
-
   firstDueDate: string;
 
   endDate: string;
@@ -2074,12 +2072,6 @@ function getLoanFromMember(
           source.outstandingBalance ??
             summaryLoan?.outstandingBalance,
         ),
-      ),
-
-    disbursementDate:
-      normalizeDate(
-        source.disbursementDate ??
-          summaryLoan?.disbursementDate,
       ),
 
     firstDueDate:
@@ -4016,7 +4008,7 @@ function MemberAccountStatement({
                 <LoanRow
                   label="Loan Start Date"
                   value={formatDate(
-                    loan.disbursementDate,
+                    loan.firstDueDate,
                   )}
                 />
 
