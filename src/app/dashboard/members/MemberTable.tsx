@@ -156,7 +156,7 @@ export default function MemberTable({
                         <img
                           src={profileImageUrl}
                           alt={fullName}
-                          className="h-9 w-9 shrink-0 rounded-xl object-cover ring-1 ring-slate-200"
+                          className="h-12 w-12 shrink-0 rounded-xl object-cover ring-1 ring-slate-200"
                           loading="lazy"
                           onError={(event) => {
                             /*
@@ -187,7 +187,7 @@ export default function MemberTable({
                           profileImageUrl
                             ? "hidden"
                             : "flex"
-                        } h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-yellow-50 text-xs font-semibold text-yellow-700 ring-1 ring-yellow-200`}
+                        } h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-yellow-50 text-sm font-semibold text-yellow-700 ring-1 ring-yellow-200`}
                       >
                         {member.firstName
                           ?.charAt(0)
