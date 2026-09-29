@@ -17,6 +17,28 @@ type MemberTableProps = {
   onDelete?: (member: Member) => void;
 };
 
+/* =========================================================
+   PROFILE IMAGE URL
+   ---------------------------------------------------------
+   Always use the member photo API as the source of truth.
+
+   member.profileImage may not be populated in the member
+   response, while the photo API resolves the image directly
+   from the membership number.
+========================================================= */
+
+function getProfileImageUrl(
+  membershipNumber?: string,
+): string | null {
+  if (!membershipNumber) {
+    return null;
+  }
+
+  return `/api/members/photos/${encodeURIComponent(
+    membershipNumber,
+  )}`;
+}
+
 export default function MemberTable({
   members,
   onView,
@@ -110,6 +132,15 @@ export default function MemberTable({
                 .filter(Boolean)
                 .join(" ");
 
+              /*
+               * Resolve the photo directly from the membership
+               * number instead of relying on member.profileImage.
+               */
+              const profileImageUrl =
+                getProfileImageUrl(
+                  member.membershipNumber,
+                );
+
               return (
                 <tr
                   key={
@@ -121,23 +152,51 @@ export default function MemberTable({
                   {/* MEMBER */}
                   <td className="min-w-0 bg-white px-4 py-4 xl:px-5">
                     <div className="flex min-w-0 items-center gap-3">
-                      {member.profileImage ? (
+                      {profileImageUrl ? (
                         <img
-                          src={member.profileImage}
+                          src={profileImageUrl}
                           alt={fullName}
                           className="h-9 w-9 shrink-0 rounded-xl object-cover ring-1 ring-slate-200"
-                        />
-                      ) : (
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-yellow-50 text-xs font-semibold text-yellow-700 ring-1 ring-yellow-200">
-                          {member.firstName
-                            ?.charAt(0)
-                            .toUpperCase()}
+                          loading="lazy"
+                          onError={(event) => {
+                            /*
+                             * If the API has no image for this member,
+                             * hide the broken image and show initials.
+                             */
+                            event.currentTarget.style.display =
+                              "none";
 
-                          {member.lastName
-                            ?.charAt(0)
-                            .toUpperCase()}
-                        </div>
-                      )}
+                            const fallback =
+                              event.currentTarget
+                                .nextElementSibling;
+
+                            if (
+                              fallback instanceof
+                              HTMLElement
+                            ) {
+                              fallback.style.display =
+                                "flex";
+                            }
+                          }}
+                        />
+                      ) : null}
+
+                      {/* INITIALS FALLBACK */}
+                      <div
+                        className={`${
+                          profileImageUrl
+                            ? "hidden"
+                            : "flex"
+                        } h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-yellow-50 text-xs font-semibold text-yellow-700 ring-1 ring-yellow-200`}
+                      >
+                        {member.firstName
+                          ?.charAt(0)
+                          .toUpperCase()}
+
+                        {member.lastName
+                          ?.charAt(0)
+                          .toUpperCase()}
+                      </div>
 
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-black">
@@ -253,7 +312,6 @@ export default function MemberTable({
    STATUS BADGE
 ========================================================= */
 
-
 function StatusBadge({
   status,
 }: {
@@ -326,4 +384,3 @@ function StatusBadge({
     </span>
   );
 }
-
