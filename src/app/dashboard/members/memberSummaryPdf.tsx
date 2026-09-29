@@ -1985,6 +1985,12 @@ function getLoanFromMember(
       source.installmentAmount,
     );
 
+  const startDate =
+    normalizeDate(
+      source.disbursementDate ??
+        summaryLoan?.disbursmentDate,
+    );
+
   const endDate =
     normalizeDate(
       source.endDate ??
