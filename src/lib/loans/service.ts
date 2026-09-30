@@ -1732,7 +1732,7 @@ const DEFAULT_SETTINGS: Omit<
     2,
 
   repaymentGraceDays:
-    7,
+    8,
 
   repaymentCycleDays:
     DEFAULT_REPAYMENT_CYCLE_DAYS,
