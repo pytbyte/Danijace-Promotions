@@ -256,7 +256,6 @@ export async function queueLoanDisbursementSms(
 /* =========================================================
    LOAN PAYMENT REMINDER
 ========================================================= */
-
 export async function queueLoanPaymentReminderSms(
   data: {
     loanId: string;
@@ -309,7 +308,9 @@ export async function queueLoanPaymentReminderSms(
     data.scheduledFor?.trim();
 
   const message =
-    `GEO-SHUA LTD \n Dear ${memberName} your weekly loan payment is due ${dueDate}. Please pay on time.`;
+    `GEO-SHUA LTD\n` +
+    `Dear ${memberName}, your weekly loan payment` +
+    `is due ${dueDate}. Please pay on time.`;
 
   return queueSms({
     type: SMS_TYPES.LOAN_PAYMENT_REMINDER,
