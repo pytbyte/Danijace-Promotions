@@ -1931,62 +1931,62 @@ export default function LoanCard({
       {/* =====================================================
           FINES
       ====================================================== */}
+      {/*
+            {totalFines > 0 && (
+              <div className="bg-white px-5 pb-4">
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
 
-      {totalFines > 0 && (
-        <div className="bg-white px-5 pb-4">
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2.5">
-                <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-black">
+                          Fines
+                        </p>
 
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-black">
-                    Fines
-                  </p>
+                        <p className="text-[11px] text-black/60">
+                          {loan.fineStatus ===
+                          "stopped"
+                            ? `Future fines stopped · ${fineRate} per ${repaymentCycle} cycle`
+                            : `${fineRate} per completed ${repaymentCycle} cycle`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <span className="shrink-0 text-sm font-semibold text-amber-700">
+                      {formatKES(
+                        totalFines,
+                      )}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {totalFines <= 0 && (
+              <div className="bg-white px-5 pb-4">
+                <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200 bg-sky-50 px-3.5 py-3">
+                  <ShieldAlert className="h-4 w-4 shrink-0 text-sky-600" />
 
                   <p className="text-[11px] text-black/60">
+                    Fine policy:{" "}
+                    <span className="font-semibold text-black">
+                      {fineRate}
+                    </span>{" "}
+                    per completed{" "}
+                    <span className="font-semibold text-black">
+                      {repaymentCycle}
+                    </span>{" "}
+                    repayment cycle.
+
                     {loan.fineStatus ===
-                    "stopped"
-                      ? `Future fines stopped · ${fineRate} per ${repaymentCycle} cycle`
-                      : `${fineRate} per completed ${repaymentCycle} cycle`}
+                      "stopped" &&
+                      " Future fines are stopped."}
                   </p>
                 </div>
               </div>
-
-              <span className="shrink-0 text-sm font-semibold text-amber-700">
-                {formatKES(
-                  totalFines,
-                )}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {totalFines <= 0 && (
-        <div className="bg-white px-5 pb-4">
-          <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200 bg-sky-50 px-3.5 py-3">
-            <ShieldAlert className="h-4 w-4 shrink-0 text-sky-600" />
-
-            <p className="text-[11px] text-black/60">
-              Fine policy:{" "}
-              <span className="font-semibold text-black">
-                {fineRate}
-              </span>{" "}
-              per completed{" "}
-              <span className="font-semibold text-black">
-                {repaymentCycle}
-              </span>{" "}
-              repayment cycle.
-
-              {loan.fineStatus ===
-                "stopped" &&
-                " Future fines are stopped."}
-            </p>
-          </div>
-        </div>
-      )}
-
+            )}
+      */}
       {/* =====================================================
           GUARANTOR
       ====================================================== */}
