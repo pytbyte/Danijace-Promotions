@@ -3401,6 +3401,7 @@ function normalizeLoanCalendarDate(
    ASSESSMENT PERIOD HELPERS
 ========================================================= */
 
+
 type AssessmentPeriod = {
   periodNumber: number;
   periodStart: CalendarDate;
@@ -6567,6 +6568,276 @@ async function getPeriodPaymentTotal(
 
 
 /* =========================================================
+   RECALCULATE EXISTING CYCLE FINE
+========================================================= */
+
+/**
+ * Reconciles the single fine belonging to one repayment cycle.
+ *
+ * Rules:
+ * - One fine per loan + periodNumber.
+ * - The fine is based on ALL repayments whose transactionDate
+ *   belongs to the cycle.
+ * - A later repayment can reduce an existing fine.
+ * - If the cycle is now fully paid, the existing fine becomes 0.
+ * - No second fine is ever created for the same cycle.
+ */
+async function reconcileLoanPeriodFine(
+  loanId: ObjectId,
+  periodNumber: number,
+  loan: LoanDocument,
+  period: AssessmentPeriod,
+  expectedInstallment: number,
+  paymentsDuringPeriod: number,
+  unpaidInstallment: number,
+  fineRate: number,
+  session: ClientSession,
+): Promise<number> {
+  const { fines } =
+    await getCollections();
+
+  const existingFine =
+    await fines.findOne(
+      {
+        loanId,
+        periodNumber,
+      },
+      {
+        session,
+      },
+    );
+
+  const calculatedFine =
+    unpaidInstallment > 0
+      ? money(
+          unpaidInstallment *
+            fineRate,
+        )
+      : 0;
+
+  /*
+   * No existing fine and no current shortfall:
+   * there is nothing to create.
+   */
+  if (
+    !existingFine &&
+    (
+      loan.fineStatus !== "active" ||
+      calculatedFine <= 0
+    )
+  ) {
+    return 0;
+  }
+
+  /*
+   * Existing fine:
+   *
+   * UPDATE the existing record rather than inserting another
+   * fine for the same repayment cycle.
+   *
+   * This is what allows a later repayment to correct a stale
+   * fine that was originally calculated before the repayment
+   * was recorded.
+   */
+  if (existingFine) {
+    /*
+     * If fines have subsequently been stopped, preserve the
+     * existing financial fine rather than retroactively
+     * changing it merely because the fine switch is stopped.
+     */
+    const actualAmount =
+      loan.fineStatus === "active"
+        ? calculatedFine
+        : money(
+            Number(
+              existingFine.amount ?? 0,
+            ),
+          );
+
+    await fines.updateOne(
+      {
+        _id:
+          existingFine._id,
+      },
+      {
+        $set: {
+          amount:
+            actualAmount,
+
+          fineDate:
+            period.periodEnd,
+
+          fineRate,
+
+          periodStart:
+            period.periodStart,
+
+          periodEnd:
+            period.periodEnd,
+
+          expectedInstallment,
+
+          paymentsDuringPeriod,
+
+          installmentShortfall:
+            unpaidInstallment,
+
+          /*
+           * Compatibility field.
+           * It now represents the actual unpaid installment
+           * that the fine is based on.
+           */
+          assessedCoreBalance:
+            unpaidInstallment,
+        },
+      },
+      {
+        session,
+      },
+    );
+
+    return actualAmount;
+  }
+
+  /*
+   * No existing fine.
+   *
+   * Only create one when the cycle currently has a shortfall
+   * and fines are active.
+   */
+  if (
+    loan.fineStatus !== "active" ||
+    calculatedFine <= 0
+  ) {
+    return 0;
+  }
+
+  const fineDocument:
+    LoanFineDocument = {
+    _id:
+      new ObjectId(),
+
+    loanId,
+
+    loanNumber:
+      loan.loanNumber,
+
+    memberId:
+      loan.memberId,
+
+    amount:
+      calculatedFine,
+
+    fineDate:
+      period.periodEnd,
+
+    fineRate,
+
+    periodNumber,
+
+    periodStart:
+      period.periodStart,
+
+    periodEnd:
+      period.periodEnd,
+
+    expectedInstallment,
+
+    paymentsDuringPeriod,
+
+    installmentShortfall:
+      unpaidInstallment,
+
+    assessedCoreBalance:
+      unpaidInstallment,
+
+    source:
+      "system" as FineSource,
+
+    createdAt:
+      new Date(),
+  };
+
+  try {
+    await fines.insertOne(
+      fineDocument,
+      {
+        session,
+      },
+    );
+
+    await writeAudit(
+      loanId,
+      loan.loanNumber,
+      "fine_recorded",
+      SYSTEM_ACTOR,
+      {
+        periodNumber,
+
+        periodStart:
+          period.periodStart,
+
+        periodEnd:
+          period.periodEnd,
+
+        amount:
+          calculatedFine,
+
+        fineRate,
+
+        expectedInstallment,
+
+        amountPaidDuringPeriod:
+          paymentsDuringPeriod,
+
+        unpaidInstallment,
+
+        assessedCoreBalance:
+          unpaidInstallment,
+      },
+      session,
+    );
+
+    return calculatedFine;
+  } catch (error) {
+    /*
+     * Another transaction may have created the fine
+     * concurrently. Re-read it instead of creating another.
+     */
+    if (
+      !isDuplicateKeyError(
+        error,
+      )
+    ) {
+      throw error;
+    }
+
+    const concurrentFine =
+      await fines.findOne(
+        {
+          loanId,
+          periodNumber,
+        },
+        {
+          session,
+        },
+      );
+
+    if (!concurrentFine) {
+      throw error;
+    }
+
+    return money(
+      Number(
+        concurrentFine.amount ?? 0,
+      ),
+    );
+  }
+}
+
+
+
+/* =========================================================
    ASSESS LOAN PERIOD
 ========================================================= */
 
@@ -6579,7 +6850,6 @@ async function assessLoanPeriod(
   const {
     loans,
     assessments,
-    fines,
   } = await getCollections();
 
   const loan =
@@ -6604,23 +6874,6 @@ async function assessLoanPeriod(
   ) {
     throw new Error(
       "Cancelled or completed loans cannot be assessed.",
-    );
-  }
-
-  const existing =
-    await assessments.findOne(
-      {
-        loanId,
-        periodNumber,
-      },
-      {
-        session,
-      },
-    );
-
-  if (existing) {
-    return toAssessment(
-      existing,
     );
   }
 
@@ -6672,9 +6925,13 @@ async function assessLoanPeriod(
    * PERIOD PAYMENTS
    * =========================================================
    *
-   * Only repayments belonging to this repayment cycle
-   * are used to determine whether the member met the
-   * weekly installment.
+   * IMPORTANT:
+   *
+   * Always read the repayment ledger again.
+   *
+   * This means that if a repayment was recorded after the
+   * original assessment, the completed cycle is recalculated
+   * using that repayment.
    */
   const paymentsDuringPeriod =
     await getPeriodPaymentTotal(
@@ -6687,18 +6944,6 @@ async function assessLoanPeriod(
    * =========================================================
    * EXPECTED INSTALLMENT
    * =========================================================
-   *
-   * Never expect more than the remaining core balance.
-   *
-   * Example:
-   *
-   * Remaining loan = 3,000
-   * Weekly installment = 5,000
-   *
-   * Expected installment = 3,000
-   *
-   * There should be no 5,000 obligation when only
-   * 3,000 remains on the core loan.
    */
   const expectedInstallment =
     calculateLoanAmountDue(
@@ -6713,10 +6958,7 @@ async function assessLoanPeriod(
    * UNPAID WEEKLY INSTALLMENT
    * =========================================================
    *
-   * The fine applies ONLY to the unpaid portion of the
-   * expected installment for this repayment cycle.
-   *
-   * It does NOT apply to the entire loan balance.
+   * Fine applies ONLY to the unpaid portion of this cycle.
    */
   const unpaidInstallment =
     calculateUnpaidInstallment(
@@ -6729,9 +6971,7 @@ async function assessLoanPeriod(
    * END-OF-PERIOD CORE BALANCE
    * =========================================================
    *
-   * Kept for reporting/reconciliation.
-   *
-   * This is NOT the fine base anymore.
+   * Existing fines are not included here.
    */
   const amountPaidAsOfPeriodEnd =
     await getLoanPaidTotalAsOf(
@@ -6754,17 +6994,6 @@ async function assessLoanPeriod(
    * =========================================================
    * WEEKLY DEFAULT
    * =========================================================
-   *
-   * A cycle is defaulted only when the member failed to
-   * meet the contractual installment for that cycle.
-   *
-   * Example:
-   *
-   * Expected = 5,000
-   * Paid     = 3,000
-   * Unpaid   = 2,000
-   *
-   * defaulted = true
    */
   const defaulted =
     unpaidInstallment > 0;
@@ -6776,172 +7005,45 @@ async function assessLoanPeriod(
 
   /*
    * =========================================================
-   * FINE CALCULATION
+   * FINE / EXISTING FINE RECONCILIATION
    * =========================================================
    *
-   * IMPORTANT:
+   * This is the important change.
    *
-   * Fine = unpaid installment × fine rate
+   * reconcileLoanPeriodFine() will:
    *
-   * NOT:
+   *   - find the existing fine for this cycle
+   *   - re-read the current repayment total
+   *   - recalculate the shortfall
+   *   - recalculate the fine
+   *   - UPDATE the existing fine
    *
-   * Fine = entire loan outstanding × fine rate
+   * OR:
+   *
+   *   - create the single fine if none exists
+   *
+   * It never creates a second fine for the same cycle.
    */
-  const calculatedFine =
-    defaulted
-      ? money(
-          unpaidInstallment *
-            fineRate,
-        )
-      : 0;
-
-  let actualFineAmount =
-    0;
-
-  /*
-   * Only active fine status permits a new fine.
-   */
-  if (
-    loan.fineStatus === "active" &&
-    calculatedFine > 0
-  ) {
-    const fineDocument:
-      LoanFineDocument = {
-      _id:
-        new ObjectId(),
-
+  const actualFineAmount =
+    await reconcileLoanPeriodFine(
       loanId,
-
-      loanNumber:
-        loan.loanNumber,
-
-      memberId:
-        loan.memberId,
-
-      amount:
-        calculatedFine,
-
-      fineDate:
-        period.periodEnd,
-
-      fineRate,
-
       periodNumber,
-
-      periodStart:
-        period.periodStart,
-
-      periodEnd:
-        period.periodEnd,
-
-      /*
-       * NEW WEEKLY-INSTALLMENT FIELDS
-       */
+      loan,
+      period,
       expectedInstallment,
-
-      
-        paymentsDuringPeriod,
-
-      installmentShortfall:
-  unpaidInstallment,
-
-      /*
-       * Retained for compatibility.
-       *
-       * This now represents the unpaid installment
-       * that the fine was actually assessed against.
-       */
-      assessedCoreBalance:
-        unpaidInstallment,
-
-      source:
-        "system" as FineSource,
-
-      createdAt:
-        new Date(),
-    };
-
-    try {
-      await fines.insertOne(
-        fineDocument,
-        {
-          session,
-        },
-      );
-
-      actualFineAmount =
-        calculatedFine;
-
-      await writeAudit(
-        loanId,
-        loan.loanNumber,
-        "fine_recorded",
-        SYSTEM_ACTOR,
-        {
-          periodNumber,
-
-          periodStart:
-            period.periodStart,
-
-          periodEnd:
-            period.periodEnd,
-
-          amount:
-            calculatedFine,
-
-          fineRate,
-
-          expectedInstallment,
-
-          amountPaidDuringPeriod:
-            paymentsDuringPeriod,
-
-          unpaidInstallment,
-
-          assessedCoreBalance:
-            unpaidInstallment,
-        },
-        session,
-      );
-    } catch (error) {
-      /*
-       * Another concurrent transaction may have created
-       * the fine for this repayment cycle.
-       *
-       * The unique index on:
-       * { loanId, periodNumber }
-       * protects against duplicate fines.
-       */
-      if (
-        !isDuplicateKeyError(
-          error,
-        )
-      ) {
-        throw error;
-      }
-
-      const concurrentFine =
-        await fines.findOne(
-          {
-            loanId,
-
-            periodNumber,
-          },
-          {
-            session,
-          },
-        );
-
-      actualFineAmount =
-        concurrentFine?.amount ||
-        0;
-    }
-  }
+      paymentsDuringPeriod,
+      unpaidInstallment,
+      fineRate,
+      session,
+    );
 
   /*
    * =========================================================
-   * STORE ASSESSMENT
+   * BUILD CURRENT ASSESSMENT
    * =========================================================
+   *
+   * This object represents the CURRENT state of the cycle,
+   * not necessarily the state when it was first assessed.
    */
   const assessmentDocument:
     LoanAssessmentDocument = {
@@ -6976,7 +7078,7 @@ async function assessLoanPeriod(
     paymentsDuringPeriod,
 
     installmentShortfall:
-  unpaidInstallment,
+      unpaidInstallment,
 
     balanceBeforeFine,
 
@@ -6998,44 +7100,115 @@ async function assessLoanPeriod(
       new Date(),
   };
 
-  try {
-    await assessments.insertOne(
-      assessmentDocument,
+  /*
+   * =========================================================
+   * UPSERT ASSESSMENT
+   * =========================================================
+   *
+   * IMPORTANT:
+   *
+   * We no longer use insertOne().
+   *
+   * If the assessment already exists, update it.
+   *
+   * Therefore:
+   *
+   *     loanId + periodNumber
+   *
+   * continues to represent ONE assessment for ONE cycle.
+   */
+  await assessments.updateOne(
+    {
+      loanId,
+      periodNumber,
+    },
+    {
+      $set: {
+        loanNumber:
+          assessmentDocument.loanNumber,
+
+        memberId:
+          assessmentDocument.memberId,
+
+        memberNumber:
+          assessmentDocument.memberNumber,
+
+        periodStart:
+          assessmentDocument.periodStart,
+
+        periodEnd:
+          assessmentDocument.periodEnd,
+
+        assessmentDate:
+          assessmentDocument.assessmentDate,
+
+        openingCoreBalance:
+          assessmentDocument.openingCoreBalance,
+
+        expectedInstallment:
+          assessmentDocument.expectedInstallment,
+
+        paymentsDuringPeriod:
+          assessmentDocument.paymentsDuringPeriod,
+
+        installmentShortfall:
+          assessmentDocument.installmentShortfall,
+
+        balanceBeforeFine:
+          assessmentDocument.balanceBeforeFine,
+
+        paymentMade:
+          assessmentDocument.paymentMade,
+
+        defaulted:
+          assessmentDocument.defaulted,
+
+        fineRate:
+          assessmentDocument.fineRate,
+
+        fineAmount:
+          assessmentDocument.fineAmount,
+
+        status:
+          assessmentDocument.status,
+      },
+
+      $setOnInsert: {
+        _id:
+          assessmentDocument._id,
+
+        createdAt:
+          assessmentDocument.createdAt,
+      },
+    },
+    {
+      session,
+      upsert: true,
+    },
+  );
+
+  /*
+   * =========================================================
+   * LOAD SAVED ASSESSMENT
+   * =========================================================
+   *
+   * Return the actual MongoDB record.
+   */
+  const savedAssessment =
+    await assessments.findOne(
+      {
+        loanId,
+        periodNumber,
+      },
       {
         session,
       },
     );
-  } catch (error) {
-    /*
-     * Handle concurrent assessment creation.
-     */
-    if (
-      isDuplicateKeyError(
-        error,
-      )
-    ) {
-      const concurrent =
-        await assessments.findOne(
-          {
-            loanId,
 
-            periodNumber,
-          },
-          {
-            session,
-          },
-        );
-
-      if (!concurrent) {
-        throw error;
-      }
-
-      return toAssessment(
-        concurrent,
-      );
-    }
-
-    throw error;
+  if (!savedAssessment) {
+    throw new Error(
+      "Loan assessment could not be saved.",
+    );
   }
 
   /*
@@ -7080,7 +7253,9 @@ async function assessLoanPeriod(
   );
 
   /*
-   * Record a separate default audit event.
+   * =========================================================
+   * DEFAULT AUDIT
+   * =========================================================
    */
   if (defaulted) {
     await writeAudit(
@@ -7110,7 +7285,7 @@ async function assessLoanPeriod(
   }
 
   return toAssessment(
-    assessmentDocument,
+    savedAssessment,
   );
 }
 
@@ -7144,8 +7319,12 @@ async function accrueLoanFinesInSession(
 
   const loan =
     await loans.findOne(
-      { _id: loanId },
-      { session },
+      {
+        _id: loanId,
+      },
+      {
+        session,
+      },
     );
 
   if (!loan) {
@@ -7171,26 +7350,22 @@ async function accrueLoanFinesInSession(
     return 0;
   }
 
-  let created = 0;
+  let changed = 0;
 
   for (
     let periodNumber = 1;
     periodNumber <= latestPeriod;
     periodNumber++
   ) {
-    const existing =
-      await assessments.findOne(
-        {
-          loanId,
-          periodNumber,
-        },
-        { session },
-      );
-
-    if (existing) {
-      continue;
-    }
-
+    /*
+     * assessLoanPeriod() now handles BOTH cases:
+     *
+     * 1. no assessment exists -> create it
+     * 2. assessment exists    -> recalculate it
+     *
+     * Therefore we deliberately do NOT skip existing
+     * assessments here.
+     */
     await assessLoanPeriod(
       loanId,
       periodNumber,
@@ -7198,21 +7373,23 @@ async function accrueLoanFinesInSession(
       session,
     );
 
-    const inserted =
+    const assessment =
       await assessments.findOne(
         {
           loanId,
           periodNumber,
         },
-        { session },
+        {
+          session,
+        },
       );
 
-    if (inserted) {
-      created++;
+    if (assessment) {
+      changed++;
     }
   }
 
-  return created;
+  return changed;
 }
 
 /**
