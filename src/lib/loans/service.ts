@@ -2384,22 +2384,8 @@ function calculateCoreOutstanding(
 function calculateFinalOutstanding(
   principal: number,
   interestAmount: number,
-  totalFines: number,
-  totalWaivedFines: number,
   amountPaid: number,
 ): number {
-  const effectiveFines =
-    money(
-      Math.max(
-        0,
-        totalFines -
-          Math.min(
-            totalFines,
-            totalWaivedFines,
-          ),
-      ),
-    );
-
   return money(
     Math.max(
       0,
@@ -8344,6 +8330,10 @@ async function resolveLoanForRepayment(
 /* =========================================================
    RECORD REPAYMENT
 ========================================================= */
+/* =========================================================
+   RECORD REPAYMENT
+========================================================= */
+
 export async function createLoanRepayment(
   input: CreateLoanRepaymentInput,
 ): Promise<LoanRepayment> {
@@ -8555,8 +8545,8 @@ export async function createLoanRepayment(
 
      These values are populated inside the transaction.
 
-     Notifications are sent ONLY after the transaction
-     successfully commits.
+     Notifications and the overpaid API call are sent ONLY
+     after the transaction successfully commits.
   ======================================================= */
 
   let loanPaymentRecipient =
@@ -8570,6 +8560,19 @@ export async function createLoanRepayment(
 
   let loanWasCleared =
     false;
+
+  /*
+   * Amount received above the loan's remaining core
+   * balance.
+   *
+   * This is NOT applied to the loan.
+   *
+   * It will be persisted separately in the `overpaid`
+   * collection through the overpaid API after the
+   * transaction commits.
+   */
+  let overpaidAmount =
+    0;
 
   /* =======================================================
      DATABASE TRANSACTION
@@ -8856,6 +8859,22 @@ export async function createLoanRepayment(
             memberNumber:
               loan.memberNumber,
 
+            /*
+             * IMPORTANT:
+             *
+             * This remains the FULL amount received from
+             * the bank.
+             *
+             * Example:
+             *
+             * Bank payment = 10,500
+             * Loan balance = 8,400
+             *
+             * repayment.amount = 10,500
+             *
+             * Only 8,400 is applied to the loan ledger.
+             * 2,100 becomes overpaidAmount.
+             */
             amount,
 
             transactionReference:
@@ -8962,24 +8981,28 @@ export async function createLoanRepayment(
             );
 
           /* =================================================
-             CURRENT OUTSTANDING BEFORE THIS PAYMENT
+             CURRENT CORE OUTSTANDING BEFORE THIS PAYMENT
 
              IMPORTANT:
 
              amountPaidBefore intentionally excludes the
              repayment inserted above.
 
-             Therefore this represents the actual amount that
-             was outstanding immediately before this payment,
-             after any completed-cycle fines were assessed.
+             The loan's clearance balance is:
+
+               principal
+               + interest
+               - amountPaid
+
+             Fines are intentionally NOT included.
+
+             Fines remain a separate ledger.
           ================================================= */
 
           const currentOutstandingAfterAccrual =
             calculateFinalOutstanding(
               loan.principal,
               loan.interestAmount,
-              totalFinesAfterAccrual,
-              totalWaivedFinesAfterAccrual,
               amountPaidBefore,
             );
 
@@ -8993,34 +9016,54 @@ export async function createLoanRepayment(
           }
 
           /* =================================================
-             OVERPAYMENT PROTECTION
+             OVERPAYMENT CALCULATION
+
+             Apply only the amount required to clear the
+             remaining core loan balance.
+
+             Anything above that amount becomes overpaid.
+
+             Fines are intentionally NOT included.
           ================================================= */
 
-          if (
-            amount >
-            currentOutstandingAfterAccrual
-          ) {
-            throw new Error(
-              `Repayment exceeds the outstanding balance of KSh ${currentOutstandingAfterAccrual.toLocaleString()}.`,
+          const amountAppliedToLoan =
+            money(
+              Math.min(
+                amount,
+                currentOutstandingAfterAccrual,
+              ),
             );
-          }
+
+          overpaidAmount =
+            money(
+              Math.max(
+                0,
+                amount -
+                  currentOutstandingAfterAccrual,
+              ),
+            );
 
           /* =================================================
              NEW FINANCIAL STATE
+
+             IMPORTANT:
+
+             Only amountAppliedToLoan is added to the loan's
+             amountPaid.
+
+             The excess remains outside the loan balance.
           ================================================= */
 
           const newAmountPaid =
             money(
               amountPaidBefore +
-                amount,
+                amountAppliedToLoan,
             );
 
           const newOutstanding =
             calculateFinalOutstanding(
               loan.principal,
               loan.interestAmount,
-              totalFinesAfterAccrual,
-              totalWaivedFinesAfterAccrual,
               newAmountPaid,
             );
 
@@ -9161,8 +9204,24 @@ export async function createLoanRepayment(
               repaymentId:
                 repayment.id,
 
+              /*
+               * Actual amount received from the bank.
+               */
               amount:
                 repayment.amount,
+
+              /*
+               * Amount actually applied against the loan.
+               */
+              amountAppliedToLoan,
+
+              /*
+               * Amount received above the core loan balance.
+               *
+               * This will later be saved to the `overpaid`
+               * collection.
+               */
+              overpaidAmount,
 
               transactionReference:
                 repayment.transactionReference,
@@ -9237,6 +9296,13 @@ export async function createLoanRepayment(
 
                 finalOutstandingBalance:
                   newOutstanding,
+
+                /*
+                 * If the payment cleared the loan and had
+                 * excess money, retain that information in
+                 * the completion audit as well.
+                 */
+                overpaidAmount,
               },
               session,
             );
@@ -9268,11 +9334,195 @@ export async function createLoanRepayment(
        From this point onward the financial transaction is
        permanent.
 
-       Notification failure MUST NOT roll back the payment.
+       Notification/API failure MUST NOT roll back the
+       payment.
+
+       IMPORTANT:
+       overpaidAmount was calculated inside the transaction
+       and is now safe to send to the separate overpaid API.
     ===================================================== */
 
     const repayment =
       transactionResult.repayment;
+
+    /* =====================================================
+       SAVE OVERPAID AMOUNT
+
+       IMPORTANT:
+
+       This call happens AFTER the MongoDB transaction has
+       successfully committed.
+
+       Therefore a failure here cannot roll back the loan
+       repayment.
+
+       Example:
+
+         Payment received       = 10,500
+         Loan outstanding       = 8,400
+         Applied to loan        = 8,400
+         Overpaid                = 2,100
+
+       The `overpaid` API receives only the 2,100 excess.
+    ===================================================== */
+
+    if (
+      overpaidAmount > 0
+    ) {
+      try {
+        const configuredBaseUrl =
+          process.env.NEXTAUTH_URL ??
+          process.env.APP_URL ??
+          (process.env.VERCEL_URL
+            ? `https://${process.env.VERCEL_URL}`
+            : undefined);
+
+        if (!configuredBaseUrl) {
+          throw new Error(
+            "Unable to determine application URL for the overpaid API.",
+          );
+        }
+
+        const overpaidApiUrl =
+          new URL(
+            "/api/overpaid",
+            configuredBaseUrl,
+          ).toString();
+
+        const overpaidResponse =
+          await fetch(
+            overpaidApiUrl,
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body: JSON.stringify({
+                loanId:
+                  repayment.loanId,
+
+                loanNumber:
+                  repayment.loanNumber,
+
+                memberId:
+                  repayment.memberId,
+
+                memberNumber:
+                  repayment.memberNumber,
+
+                repaymentId:
+                  repayment.id,
+
+                /*
+                 * Full bank payment.
+                 */
+                paymentAmount:
+                  repayment.amount,
+
+                /*
+                 * ONLY the amount above the
+                 * loan's core outstanding balance.
+                 */
+                amount:
+                  overpaidAmount,
+
+                transactionReference:
+                  repayment.transactionReference,
+
+                transactionDate:
+                  repayment.transactionDate,
+
+                ...(repayment.transactionAt
+                  ? {
+                      transactionAt:
+                        repayment.transactionAt,
+                    }
+                  : {}),
+
+                source:
+                  repayment.source,
+              }),
+            },
+          );
+
+        if (
+          !overpaidResponse.ok
+        ) {
+          const responseText =
+            await overpaidResponse
+              .text()
+              .catch(
+                () => "",
+              );
+
+          throw new Error(
+            `Overpaid API returned HTTP ${overpaidResponse.status}${
+              responseText
+                ? `: ${responseText}`
+                : ""
+            }`,
+          );
+        }
+
+        console.log(
+          "Overpaid amount saved successfully.",
+          {
+            repaymentId:
+              repayment.id,
+
+            loanId:
+              repayment.loanId,
+
+            memberId:
+              repayment.memberId,
+
+            transactionReference:
+              repayment.transactionReference,
+
+            paymentAmount:
+              repayment.amount,
+
+            overpaidAmount,
+          },
+        );
+      } catch (error) {
+        /*
+         * IMPORTANT:
+         *
+         * The repayment has already committed.
+         *
+         * Do NOT throw this error because doing so would
+         * make the caller believe the financial transaction
+         * failed even though MongoDB already committed it.
+         */
+        console.error(
+          "FAILED TO SAVE OVERPAID AMOUNT.",
+          {
+            repaymentId:
+              repayment.id,
+
+            loanId:
+              repayment.loanId,
+
+            memberId:
+              repayment.memberId,
+
+            transactionReference:
+              repayment.transactionReference,
+
+            paymentAmount:
+              repayment.amount,
+
+            overpaidAmount,
+
+            error,
+          },
+        );
+      }
+    }
 
     /* =====================================================
        PAYMENT RECEIVED SMS
@@ -9462,6 +9712,15 @@ export async function createLoanRepayment(
         );
       }
 
+      /*
+       * IMPORTANT:
+       *
+       * Do not call the overpaid API here.
+       *
+       * This request did not create the repayment. The
+       * original request is responsible for the post-commit
+       * overpaid API call.
+       */
       return toRepayment(
         existing,
       );
