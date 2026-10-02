@@ -2406,8 +2406,7 @@ function calculateFinalOutstanding(
       money(
         principal +
           interestAmount,
-      ) +
-        effectiveFines -
+      ) -
         amountPaid,
     ),
   );
