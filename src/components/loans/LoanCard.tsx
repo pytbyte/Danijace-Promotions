@@ -16,9 +16,7 @@ import {
   UserRound,
 } from "lucide-react";
 
-import {
-  useState,
-} from "react";
+import { useState } from "react";
 
 import type {
   Loan,
@@ -26,7 +24,7 @@ import type {
 } from "@/lib/loans/types";
 
 /* =========================================================
-   PROPS
+   TYPES
 ========================================================= */
 
 interface LoanCardProps {
@@ -41,129 +39,111 @@ interface LoanCardProps {
    FORMATTERS
 ========================================================= */
 
-function formatKES(
-  value: number,
-): string {
-  const amount =
-    Number.isFinite(value)
-      ? value
-      : 0;
+function formatKES(value: number): string {
+  const amount = Number.isFinite(value) ? value : 0;
 
-  return new Intl.NumberFormat(
-    "en-KE",
-    {
-      style: "currency",
-      currency: "KES",
-      maximumFractionDigits: 0,
-    },
-  ).format(amount);
+  return new Intl.NumberFormat("en-KE", {
+    style: "currency",
+    currency: "KES",
+    maximumFractionDigits: 0,
+  }).format(amount);
 }
 
-/**
- * Financial dates are CalendarDate values:
- *
- * YYYY-MM-DD
- *
- * Always format them through UTC so timezone conversion
- * cannot move the displayed date backwards or forwards.
- */
-function formatCalendarDate(
-  value: string,
-): string {
-  const match =
-    /^(\d{4})-(\d{2})-(\d{2})$/.exec(
-      value,
-    );
+function formatCalendarDate(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
 
   if (!match) {
     return "—";
   }
 
-  const year =
-    Number(match[1]);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
 
-  const month =
-    Number(match[2]);
+  const date = new Date(
+    Date.UTC(year, month - 1, day),
+  );
 
-  const day =
-    Number(match[3]);
-
-  const date =
-    new Date(
-      Date.UTC(
-        year,
-        month - 1,
-        day,
-      ),
-    );
-
-  if (
-    Number.isNaN(
-      date.getTime(),
-    )
-  ) {
+  if (Number.isNaN(date.getTime())) {
     return "—";
   }
 
-  return new Intl.DateTimeFormat(
-    "en-KE",
-    {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      timeZone: "UTC",
-    },
-  ).format(date);
+  return new Intl.DateTimeFormat("en-KE", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
 }
 
 /* =========================================================
-   GENERAL HELPERS
+   MONEY / GENERAL HELPERS
 ========================================================= */
 
-function calculateProgress(
-  loan: Loan,
-): number {
-  const paid =
-    Number.isFinite(
-      loan.amountPaid,
-    )
-      ? Math.max(
-          0,
-          loan.amountPaid,
-        )
-      : 0;
+function safeMoney(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, value)
+    : 0;
+}
 
-  const outstanding =
-    Number.isFinite(
-      loan.outstandingBalance,
-    )
-      ? Math.max(
-          0,
-          loan.outstandingBalance,
-        )
-      : 0;
+function calculateProgress(loan: Loan): number {
+  const paid = safeMoney(loan.amountPaid);
+  const outstanding = safeMoney(loan.outstandingBalance);
+  const total = paid + outstanding;
 
-  const liability =
-    paid + outstanding;
-
-  if (
-    liability <= 0
-  ) {
+  if (total <= 0) {
     return 0;
   }
 
   return Math.min(
     100,
-    Math.max(
-      0,
-      (paid / liability) * 100,
-    ),
+    Math.max(0, (paid / total) * 100),
   );
 }
 
-function getStatusLabel(
-  loan: Loan,
-): string {
+function getInitials(name: string): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return "?";
+  }
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return (
+    parts[0][0] +
+    parts[parts.length - 1][0]
+  ).toUpperCase();
+}
+
+function formatFineRate(rate: number): string {
+  if (!Number.isFinite(rate) || rate < 0) {
+    return "0%";
+  }
+
+  return `${(rate * 100)
+    .toFixed(2)
+    .replace(/\.00$/, "")}%`;
+}
+
+function formatCycleDays(days: number): string {
+  if (!Number.isInteger(days) || days <= 0) {
+    return "7 days";
+  }
+
+  return `${days} ${days === 1 ? "day" : "days"}`;
+}
+
+/* =========================================================
+   LOAN STATUS
+========================================================= */
+
+function getStatusLabel(loan: Loan): string {
   switch (loan.status) {
     case "active":
       return "Active";
@@ -182,121 +162,27 @@ function getStatusLabel(
   }
 }
 
-function getStatusClasses(
-  loan: Loan,
-): string {
+function getStatusClasses(loan: Loan): string {
   switch (loan.status) {
     case "active":
-      return [
-        "bg-emerald-50",
-        "text-black",
-        "border",
-        "border-emerald-200",
-      ].join(" ");
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
 
     case "completed":
-      return [
-        "bg-blue-50",
-        "text-black",
-        "border",
-        "border-blue-200",
-      ].join(" ");
+      return "border-blue-200 bg-blue-50 text-blue-700";
 
     case "pending":
-      return [
-        "bg-amber-50",
-        "text-black",
-        "border",
-        "border-amber-200",
-      ].join(" ");
+      return "border-amber-200 bg-amber-50 text-amber-700";
 
     case "cancelled":
-      return [
-        "bg-red-50",
-        "text-black",
-        "border",
-        "border-red-200",
-      ].join(" ");
+      return "border-red-200 bg-red-50 text-red-700";
 
     default:
-      return [
-        "bg-slate-100",
-        "text-black",
-        "border",
-        "border-slate-200",
-      ].join(" ");
+      return "border-slate-200 bg-slate-100 text-slate-600";
   }
-}
-
-function getInitials(
-  name: string,
-): string {
-  const parts =
-    name
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
-
-  if (
-    parts.length === 0
-  ) {
-    return "?";
-  }
-
-  if (
-    parts.length === 1
-  ) {
-    return parts[0]
-      .slice(0, 2)
-      .toUpperCase();
-  }
-
-  return (
-    parts[0][0] +
-    parts[
-      parts.length - 1
-    ][0]
-  ).toUpperCase();
 }
 
 /* =========================================================
-   FINE HELPERS
-========================================================= */
-
-function formatFineRate(
-  rate: number,
-): string {
-  if (
-    !Number.isFinite(rate) ||
-    rate < 0
-  ) {
-    return "0%";
-  }
-
-  return `${(rate * 100)
-    .toFixed(2)
-    .replace(/\.00$/, "")}%`;
-}
-
-function formatCycleDays(
-  days: number,
-): string {
-  if (
-    !Number.isInteger(days) ||
-    days <= 0
-  ) {
-    return "7 days";
-  }
-
-  return `${days} ${
-    days === 1
-      ? "day"
-      : "days"
-  }`;
-}
-
-/* =========================================================
-   WEEKLY BREAKDOWN HELPERS
+   PERIOD STATUS
 ========================================================= */
 
 function getPeriodStatusLabel(
@@ -325,57 +211,523 @@ function getPeriodStatusClasses(
 ): string {
   switch (period.status) {
     case "paid":
-      return [
-        "bg-emerald-50",
-        "text-emerald-700",
-        "border-emerald-200",
-      ].join(" ");
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
 
     case "partial":
-      return [
-        "bg-amber-50",
-        "text-amber-700",
-        "border-amber-200",
-      ].join(" ");
+      return "border-amber-200 bg-amber-50 text-amber-700";
 
     case "current":
-      return [
-        "bg-sky-50",
-        "text-sky-700",
-        "border-sky-200",
-      ].join(" ");
+      return "border-sky-200 bg-sky-50 text-sky-700";
 
     case "unpaid":
-      return [
-        "bg-red-50",
-        "text-red-700",
-        "border-red-200",
-      ].join(" ");
+      return "border-red-200 bg-red-50 text-red-700";
 
     default:
-      return [
-        "bg-slate-50",
-        "text-slate-700",
-        "border-slate-200",
-      ].join(" ");
+      return "border-slate-200 bg-slate-50 text-slate-600";
   }
 }
 
-function getPeriodFine(
-  period: WeeklyRepaymentBreakdownPeriod,
-): number {
-  return Number.isFinite(
-    period.fine,
-  )
-    ? Math.max(
-        0,
-        period.fine,
-      )
-    : 0;
+/* =========================================================
+   SMALL UI COMPONENTS
+========================================================= */
+
+function Metric({
+  label,
+  value,
+  valueClassName = "text-black",
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-black/40">
+        {label}
+      </p>
+
+      <p
+        className={`mt-1 truncate text-sm font-semibold ${valueClassName}`}
+      >
+        {value}
+      </p>
+    </div>
+  );
 }
 
 /* =========================================================
-   COMPONENT
+   REPAYMENT PERIOD
+========================================================= */
+
+function RepaymentPeriod({
+  period,
+}: {
+  period: WeeklyRepaymentBreakdownPeriod;
+}) {
+  /*
+   * HISTORICAL FACTS
+   *
+   * These values describe what happened during the
+   * original installment period.
+   */
+  const installment = safeMoney(period.installment);
+
+  const paidDuringPeriod = safeMoney(
+    period.paidDuringPeriod,
+  );
+
+  const historicalShortfall = safeMoney(
+    period.historicalShortfall,
+  );
+
+  /*
+   * CURRENT ALLOCATION STATE
+   *
+   * `allocated` and `balance` come from the backend.
+   *
+   * IMPORTANT:
+   * - Do not reconstruct balance as installment - allocated.
+   * - Later repayments may change allocation state.
+   */
+  const allocated = safeMoney(period.allocated);
+
+  const balance = safeMoney(period.balance);
+
+  /*
+   * FINE
+   *
+   * This is the authoritative fine for THIS installment.
+   *
+   * Never calculate it in the UI.
+   */
+  const fine = safeMoney(period.fine);
+
+  const allocationPercent =
+    installment > 0
+      ? Math.min(
+          100,
+          Math.max(
+            0,
+            (allocated / installment) * 100,
+          ),
+        )
+      : 0;
+
+  const isCurrent = period.status === "current";
+  const isPaid = balance <= 0;
+
+  return (
+    <div
+      className={`
+        relative
+        overflow-hidden
+        rounded-2xl
+        border
+        ${
+          isCurrent
+            ? "border-sky-200 bg-sky-50/40"
+            : "border-slate-200 bg-white"
+        }
+      `}
+    >
+      {isCurrent && (
+        <div className="absolute inset-y-0 left-0 w-1 bg-sky-500" />
+      )}
+
+      {/* =====================================================
+          PERIOD HEADER
+      ====================================================== */}
+
+      <div className="flex items-start justify-between gap-3 px-4 pb-3 pt-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold text-black">
+              Installment {period.periodNumber}
+            </span>
+
+            <span
+              className={`
+                rounded-full
+                border
+                px-2
+                py-0.5
+                text-[9px]
+                font-semibold
+                ${getPeriodStatusClasses(period)}
+              `}
+            >
+              {getPeriodStatusLabel(period)}
+            </span>
+          </div>
+
+          <p className="mt-1 text-[10px] text-black/40">
+            {formatCalendarDate(period.periodStart)}
+            {" — "}
+            {formatCalendarDate(period.periodEnd)}
+          </p>
+        </div>
+
+        <div className="shrink-0 text-right">
+          <p
+            className={`
+              text-sm
+              font-bold
+              ${
+                balance > 0
+                  ? "text-red-600"
+                  : "text-emerald-600"
+              }
+            `}
+          >
+            {formatKES(balance)}
+          </p>
+
+          <p className="mt-0.5 text-[9px] text-black/35">
+            current balance
+          </p>
+        </div>
+      </div>
+
+      {/* =====================================================
+          CURRENT ALLOCATION PROGRESS
+      ====================================================== */}
+
+      <div className="px-4">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-[9px] font-medium text-black/45">
+            Current allocation
+          </span>
+
+          <span className="text-[9px] font-semibold text-black/55">
+            {formatKES(allocated)} / {formatKES(installment)}
+          </span>
+        </div>
+
+        <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+          <div
+            className={`
+              h-full
+              rounded-full
+              transition-all
+              ${
+                isPaid
+                  ? "bg-emerald-500"
+                  : "bg-sky-500"
+              }
+            `}
+            style={{
+              width: `${allocationPercent}%`,
+            }}
+          />
+        </div>
+      </div>
+
+      {/* =====================================================
+          INSTALLMENT FINANCIAL STATEMENT
+      ====================================================== */}
+
+      <div className="mx-4 mb-4 mt-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/80">
+        {/* Historical facts */}
+
+        <div className="grid grid-cols-3 divide-x divide-slate-200">
+          <div className="px-2.5 py-2.5">
+            <p className="text-[8px] uppercase tracking-[0.06em] text-black/35">
+              Expected
+            </p>
+
+            <p className="mt-1 text-[10px] font-semibold text-black">
+              {formatKES(installment)}
+            </p>
+          </div>
+
+          <div className="px-2.5 py-2.5">
+            <p className="text-[8px] uppercase tracking-[0.06em] text-black/35">
+              Paid then
+            </p>
+
+            <p className="mt-1 text-[10px] font-semibold text-sky-700">
+              {formatKES(paidDuringPeriod)}
+            </p>
+          </div>
+
+          <div className="px-2.5 py-2.5">
+            <p className="text-[8px] uppercase tracking-[0.06em] text-black/35">
+              Period debt
+            </p>
+
+            <p
+              className={`
+                mt-1
+                text-[10px]
+                font-semibold
+                ${
+                  historicalShortfall > 0
+                    ? "text-red-600"
+                    : "text-emerald-600"
+                }
+              `}
+            >
+              {formatKES(historicalShortfall)}
+            </p>
+          </div>
+        </div>
+
+        {/* Current state */}
+
+        <div className="border-t border-slate-200">
+          <div className="grid grid-cols-3 divide-x divide-slate-200">
+            <div className="px-2.5 py-2.5">
+              <p className="text-[8px] uppercase tracking-[0.06em] text-black/35">
+                Allocated
+              </p>
+
+              <p className="mt-1 text-[10px] font-semibold text-sky-700">
+                {formatKES(allocated)}
+              </p>
+            </div>
+
+            <div className="px-2.5 py-2.5">
+              <p className="text-[8px] uppercase tracking-[0.06em] text-black/35">
+                Balance
+              </p>
+
+              <p
+                className={`
+                  mt-1
+                  text-[10px]
+                  font-semibold
+                  ${
+                    balance > 0
+                      ? "text-red-600"
+                      : "text-emerald-600"
+                  }
+                `}
+              >
+                {formatKES(balance)}
+              </p>
+            </div>
+
+            {/* =================================================
+                FINE FOR THIS SPECIFIC INSTALLMENT
+            ================================================== */}
+
+            <div
+              className={`
+                px-2.5
+                py-2.5
+                ${
+                  fine > 0
+                    ? "bg-amber-50/80"
+                    : "bg-white/30"
+                }
+              `}
+            >
+              <div className="flex items-center gap-1">
+                <ShieldAlert
+                  className={`
+                    h-3 w-3
+                    ${
+                      fine > 0
+                        ? "text-amber-600"
+                        : "text-black/25"
+                    }
+                  `}
+                />
+
+                <p
+                  className={`
+                    text-[8px]
+                    uppercase
+                    tracking-[0.06em]
+                    ${
+                      fine > 0
+                        ? "text-amber-700/70"
+                        : "text-black/35"
+                    }
+                  `}
+                >
+                  Fine
+                </p>
+              </div>
+
+              <p
+                className={`
+                  mt-1
+                  text-[10px]
+                  font-bold
+                  ${
+                    fine > 0
+                      ? "text-amber-700"
+                      : "text-black/40"
+                  }
+                `}
+              >
+                {formatKES(fine)}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   PAYMENT ALLOCATION
+========================================================= */
+
+function PaymentAllocation({
+  allocation,
+}: {
+  allocation: {
+    allocationNumber: number;
+    paymentSequence: number;
+    paymentAmount: number;
+    amountApplied: number;
+    remainingPayment: number;
+    beforeRemaining: number;
+    afterRemaining: number;
+    carriedForward?: boolean;
+    paymentDate: string;
+    periodNumber: number;
+    periodStart: string;
+    periodEnd: string;
+  };
+}) {
+  const paymentAmount = safeMoney(
+    allocation.paymentAmount,
+  );
+
+  const amountApplied = safeMoney(
+    allocation.amountApplied,
+  );
+
+  const beforeRemaining = safeMoney(
+    allocation.beforeRemaining,
+  );
+
+  const afterRemaining = safeMoney(
+    allocation.afterRemaining,
+  );
+
+  const remainingPayment = safeMoney(
+    allocation.remainingPayment,
+  );
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white">
+      {/* Payment header */}
+
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[9px] font-bold text-black/60">
+            {allocation.paymentSequence}
+          </div>
+
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold text-black">
+              Payment {allocation.paymentSequence}
+            </p>
+
+            <p className="mt-0.5 text-[9px] text-black/40">
+              {formatCalendarDate(
+                allocation.paymentDate,
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="shrink-0 text-right">
+          <p className="text-xs font-bold text-sky-700">
+            {formatKES(paymentAmount)}
+          </p>
+
+          <p className="mt-0.5 text-[8px] uppercase tracking-wide text-black/35">
+            payment
+          </p>
+        </div>
+      </div>
+
+      {/* Allocation details */}
+
+      <div className="border-t border-slate-200 px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[8px] uppercase tracking-wide text-black/35">
+              Applied to
+            </p>
+
+            <p className="mt-0.5 text-[11px] font-semibold text-black">
+              Installment {allocation.periodNumber}
+            </p>
+          </div>
+
+          <p className="text-xs font-bold text-sky-700">
+            +{formatKES(amountApplied)}
+          </p>
+        </div>
+
+        <p className="mt-1 text-[9px] text-black/40">
+          {formatCalendarDate(
+            allocation.periodStart,
+          )}
+          {" — "}
+          {formatCalendarDate(
+            allocation.periodEnd,
+          )}
+        </p>
+
+        <div className="mt-3 grid grid-cols-3 gap-1.5">
+          <div className="rounded-lg bg-slate-50 px-2 py-1.5">
+            <p className="text-[8px] text-black/35">
+              Before
+            </p>
+
+            <p className="mt-0.5 text-[9px] font-semibold">
+              {formatKES(beforeRemaining)}
+            </p>
+          </div>
+
+          <div className="rounded-lg bg-sky-50 px-2 py-1.5 text-center">
+            <p className="text-[8px] text-sky-700/50">
+              Applied
+            </p>
+
+            <p className="mt-0.5 text-[9px] font-bold text-sky-700">
+              {formatKES(amountApplied)}
+            </p>
+          </div>
+
+          <div className="rounded-lg bg-red-50 px-2 py-1.5 text-right">
+            <p className="text-[8px] text-red-600/40">
+              After
+            </p>
+
+            <p className="mt-0.5 text-[9px] font-semibold text-red-600">
+              {formatKES(afterRemaining)}
+            </p>
+          </div>
+        </div>
+
+        {allocation.carriedForward &&
+          remainingPayment > 0 && (
+            <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-2">
+              <span className="text-[9px] font-medium text-sky-700">
+                Carried forward
+              </span>
+
+              <span className="text-[9px] font-bold text-sky-700">
+                {formatKES(remainingPayment)}
+              </span>
+            </div>
+          )}
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   MAIN COMPONENT
 ========================================================= */
 
 export default function LoanCard({
@@ -390,10 +742,8 @@ export default function LoanCard({
     setIsDeleteModalOpen,
   ] = useState(false);
 
-  const [
-    isDeleting,
-    setIsDeleting,
-  ] = useState(false);
+  const [isDeleting, setIsDeleting] =
+    useState(false);
 
   const [
     isWeeklyBreakdownOpen,
@@ -406,41 +756,37 @@ export default function LoanCard({
   ] = useState(false);
 
   /* =======================================================
-     BASIC LOAN VALUES
+     LOAN VALUES
   ======================================================= */
 
-  const progress =
-    calculateProgress(loan);
+  const progress = calculateProgress(loan);
 
-  const outstanding =
-    Number.isFinite(
-      loan.outstandingBalance,
-    )
-      ? Math.max(
-          0,
-          loan.outstandingBalance,
-        )
-      : 0;
+  const outstanding = safeMoney(
+    loan.outstandingBalance,
+  );
 
-  const amountPaid =
-    Number.isFinite(
-      loan.amountPaid,
-    )
-      ? Math.max(
-          0,
-          loan.amountPaid,
-        )
-      : 0;
+  const amountPaid = safeMoney(
+    loan.amountPaid,
+  );
 
-  const fineRate =
-    formatFineRate(
-      loan.fineRate,
-    );
+  const interestAmount = safeMoney(
+    loan.interestAmount,
+  );
 
-  const repaymentCycle =
-    formatCycleDays(
-      loan.repaymentCycleDays,
-    );
+  const principal = safeMoney(
+    loan.principal,
+  );
+
+  const totalDue =
+    principal + interestAmount;
+
+  const fineRate = formatFineRate(
+    loan.fineRate,
+  );
+
+  const repaymentCycle = formatCycleDays(
+    loan.repaymentCycleDays,
+  );
 
   const isRepayable =
     loan.status === "active" &&
@@ -450,14 +796,7 @@ export default function LoanCard({
     loan.status === "completed";
 
   /* =======================================================
-     WEEKLY REPAYMENT DATA
-     
-     IMPORTANT FINANCIAL RULE:
-     
-     Weekly repayment balance contains ONLY unpaid
-     contractual installment amounts.
-     
-     Fines are completely separate.
+     WEEKLY BREAKDOWN
   ======================================================= */
 
   const weeklyBreakdown =
@@ -476,16 +815,10 @@ export default function LoanCard({
       : 0;
 
   const allocations =
-    weeklyBreakdown?.allocations ??
-    [];
+    weeklyBreakdown?.allocations ?? [];
 
   const surpluses =
-    weeklyBreakdown?.surpluses ??
-    [];
-
-  /* =======================================================
-     INSTALLMENT AMOUNT
-  ======================================================= */
+    weeklyBreakdown?.surpluses ?? [];
 
   const installmentAmount =
     weeklyBreakdown &&
@@ -496,32 +829,7 @@ export default function LoanCard({
           0,
           weeklyBreakdown.installmentAmount,
         )
-      : Number.isFinite(
-            loan.installmentAmount,
-          )
-        ? Math.max(
-            0,
-            loan.installmentAmount,
-          )
-        : 0;
-
-  /* =======================================================
-     CORE WEEKLY BALANCE
-     
-     NEVER includes fines.
-     
-     The service provides:
-     
-       completedBalance
-       currentBalance
-       totalBalance
-     
-     The displayed calculation is:
-     
-       completedBalance + currentBalance
-     
-     No fine is added.
-  ======================================================= */
+      : safeMoney(loan.installmentAmount);
 
   const completedBalance =
     weeklyBreakdown &&
@@ -545,67 +853,37 @@ export default function LoanCard({
         )
       : 0;
 
-  const calculatedWeeklyBalance =
-    Math.max(
-      0,
-      completedBalance +
-        currentBalance,
-    );
-
+  /*
+   * Weekly repayment balance is ONLY unpaid
+   * contractual installment debt.
+   *
+   * Fines are completely separate.
+   */
   const displayWeeklyBalance =
     weeklyBreakdown
-      ? calculatedWeeklyBalance
+      ? Math.max(
+          0,
+          completedBalance +
+            currentBalance,
+        )
       : persistedWeeklyBalance;
 
-  /* =======================================================
-     TOTAL FINES
-     
-     Fines are calculated from the individual displayed
-     repayment periods.
-     
-     This guarantees:
-     
-       Total fines
-         = sum(period.fine)
-     
-     and therefore the number displayed here actually
-     reconciles with the period-level fines shown below.
-     
-     loan.totalFines is only used when there is no breakdown.
-  ======================================================= */
+  /*
+   * Authoritative aggregate fine.
+   */
+  const totalFines = safeMoney(
+    loan.totalFines,
+  );
 
-  const calculatedPeriodFines =
-    weeklyBreakdown
-      ? weeklyBreakdown.periods.reduce(
-          (
-            total,
-            period,
-          ) =>
-            total +
-            getPeriodFine(
-              period,
-            ),
-          0,
-        )
-      : 0;
-
-  const loanTotalFines =
-    Number.isFinite(
-      loan.totalFines,
-    )
-      ? Math.max(
-          0,
-          loan.totalFines,
-        )
-      : 0;
-
-  const totalFines =
-    weeklyBreakdown
-      ? Math.max(
-          0,
-          calculatedPeriodFines,
-        )
-      : loanTotalFines;
+  const futureCredit =
+    surpluses.reduce(
+      (total, surplus) =>
+        total +
+        safeMoney(
+          surplus.unusedCredit,
+        ),
+      0,
+    );
 
   /* =======================================================
      DELETE
@@ -619,32 +897,26 @@ export default function LoanCard({
     setIsDeleting(true);
 
     try {
-      const response =
-        await fetch(
-          `/api/loans/${encodeURIComponent(
-            loan.id,
-          )}`,
-          {
-            method: "DELETE",
-            headers: {
-              Accept:
-                "application/json",
-            },
-            cache: "no-store",
+      const response = await fetch(
+        `/api/loans/${encodeURIComponent(
+          loan.id,
+        )}`,
+        {
+          method: "DELETE",
+          headers: {
+            Accept: "application/json",
           },
-        );
+          cache: "no-store",
+        },
+      );
 
       let result: {
         success?: boolean;
-        data?: {
-          message?: string;
-        };
         error?: string;
       } | null = null;
 
       try {
-        result =
-          await response.json();
+        result = await response.json();
       } catch {
         result = null;
       }
@@ -663,9 +935,7 @@ export default function LoanCard({
         );
       }
 
-      setIsDeleteModalOpen(
-        false,
-      );
+      setIsDeleteModalOpen(false);
 
       onDelete();
     } catch (error) {
@@ -685,135 +955,60 @@ export default function LoanCard({
   }
 
   return (
-    <article
-      className="
-        w-full
-        overflow-hidden
-        rounded-[28px]
-        border
-        border-white/10
-        bg-white
-        text-black
-        shadow-[0_10px_35px_rgba(0,0,0,0.25)]
-        transition
-      "
-    >
+    <article className="w-full overflow-hidden rounded-[30px] border border-slate-200 bg-white text-black shadow-[0_18px_55px_rgba(15,23,42,0.10)]">
       {/* =====================================================
           HEADER
       ====================================================== */}
 
-      <div
-        className="
-          border-b
-          border-slate-200
-          bg-white
-          px-5
-          pb-4
-          pt-5
-        "
-      >
-        <div className="flex items-start justify-between gap-3">
+      <header className="border-b border-slate-200 px-5 pb-4 pt-5">
+        <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
-            <div
-              className="
-                flex
-                h-11
-                w-11
-                shrink-0
-                items-center
-                justify-center
-                rounded-2xl
-                border
-                border-sky-200
-                bg-sky-50
-                text-sm
-                font-bold
-                text-sky-700
-              "
-            >
-              {getInitials(
-                loan.memberName,
-              )}
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-50 text-sm font-bold text-sky-700 ring-1 ring-sky-100">
+              {getInitials(loan.memberName)}
             </div>
 
             <div className="min-w-0">
-              <p
-                className="
-                  truncate
-                  text-sm
-                  font-semibold
-                  text-black
-                "
-              >
-                {loan.memberName}
-              </p>
+              <div className="flex min-w-0 items-center gap-2">
+                <h2 className="truncate text-sm font-bold text-black">
+                  {loan.memberName}
+                </h2>
 
-              <p
-                className="
-                  mt-0.5
-                  truncate
-                  text-xs
-                  text-black/50
-                "
-              >
+                <span
+                  className={`
+                    shrink-0
+                    rounded-full
+                    border
+                    px-2
+                    py-0.5
+                    text-[9px]
+                    font-semibold
+                    ${getStatusClasses(loan)}
+                  `}
+                >
+                  {getStatusLabel(loan)}
+                </span>
+              </div>
+
+              <p className="mt-1 truncate text-[10px] text-black/40">
                 {loan.memberNumber}
               </p>
             </div>
           </div>
 
-          <span
-            className={`
-              shrink-0
-              rounded-full
-              px-2.5
-              py-1
-              text-[11px]
-              font-semibold
-              ${getStatusClasses(loan)}
-            `}
-          >
-            {getStatusLabel(loan)}
-          </span>
-        </div>
-
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p
-              className="
-                text-[11px]
-                font-medium
-                uppercase
-                tracking-[0.12em]
-                text-black/50
-              "
-            >
+          <div className="shrink-0 text-right">
+            <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-black/35">
               {loan.loanNumber}
             </p>
 
-            <p
-              className="
-                mt-1
-                text-sm
-                font-semibold
-                capitalize
-                text-black
-              "
-            >
+            <p className="mt-1 text-xs font-semibold capitalize text-black">
               {loan.type} loan
             </p>
           </div>
+        </div>
 
-          <div
-            className="
-              flex
-              shrink-0
-              items-center
-              gap-1.5
-              text-xs
-              text-black/60
-            "
-          >
-            <CreditCard className="h-3.5 w-3.5 text-sky-600" />
+        <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+          <div className="flex items-center gap-1.5 text-[10px] text-black/45">
+            <CreditCard className="h-3.5 w-3.5 text-sky-500" />
 
             <span>
               {Number.isFinite(
@@ -824,107 +1019,49 @@ export default function LoanCard({
               interest
             </span>
           </div>
+
+          <span className="text-[10px] text-black/40">
+            {repaymentCycle} cycle
+          </span>
         </div>
-      </div>
+      </header>
 
       {/* =====================================================
-          OUTSTANDING BALANCE
+          PRIMARY BALANCE
       ====================================================== */}
 
-      <div className="bg-white px-5 py-5">
-        <div
-          className="
-            rounded-[22px]
-            border
-            border-slate-200
-            bg-slate-50
-            p-4
-          "
-        >
+      <section className="px-5 pb-4 pt-5">
+        <div className="rounded-[24px] bg-slate-950 p-5 text-white shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p
-                className="
-                  text-xs
-                  font-medium
-                  text-black/60
-                "
-              >
-                Outstanding balance
+              <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-white/45">
+                Outstanding
               </p>
 
-              <p
-                className="
-                  mt-1
-                  text-[28px]
-                  font-bold
-                  tracking-tight
-                  text-black
-                "
-              >
-                {formatKES(
-                  outstanding,
-                )}
+              <p className="mt-2 text-[30px] font-bold tracking-tight">
+                {formatKES(outstanding)}
               </p>
             </div>
 
-            <div
-              className="
-                flex
-                h-10
-                w-10
-                shrink-0
-                items-center
-                justify-center
-                rounded-xl
-                border
-                border-sky-200
-                bg-sky-50
-                text-sky-700
-              "
-            >
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-white">
               <Banknote className="h-5 w-5" />
             </div>
           </div>
 
-          <div className="mt-4">
-            <div
-              className="
-                mb-1.5
-                flex
-                items-center
-                justify-between
-                text-[11px]
-              "
-            >
-              <span className="text-black/60">
+          <div className="mt-5">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[10px] text-white/45">
                 Repayment progress
               </span>
 
-              <span className="font-semibold text-sky-700">
-                {Math.round(
-                  progress,
-                )}
-                %
+              <span className="text-[10px] font-bold text-white">
+                {Math.round(progress)}%
               </span>
             </div>
 
-            <div
-              className="
-                h-1.5
-                overflow-hidden
-                rounded-full
-                bg-slate-200
-              "
-            >
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
               <div
-                className="
-                  h-full
-                  rounded-full
-                  bg-sky-500
-                  transition-all
-                  duration-500
-                "
+                className="h-full rounded-full bg-sky-400 transition-all duration-500"
                 style={{
                   width: `${progress}%`,
                 }}
@@ -932,1127 +1069,436 @@ export default function LoanCard({
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
       {/* =====================================================
-          WEEKLY INSTALLMENT BALANCE
-          
-          IMPORTANT:
-          Fines are NOT included here.
+          WEEKLY BALANCE
       ====================================================== */}
 
-      <div className="bg-white px-5 pb-5">
-        <div
-          className="
-            overflow-hidden
-            rounded-[22px]
-            border
-            border-red-200
-            bg-red-50
-          "
-        >
-          <div className="p-4">
+      <section className="px-5 pb-5">
+        <div className="overflow-hidden rounded-[24px] border border-red-100 bg-white">
+          <div className="px-5 pb-4 pt-5">
             <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-red-600/70">
-                  Weekly installment balance
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-red-500/70">
+                  Weekly repayment
                 </p>
 
-                <p className="mt-1 text-[26px] font-bold tracking-tight text-red-600">
+                <p className="mt-1 text-[25px] font-bold tracking-tight text-red-600">
                   {formatKES(
                     displayWeeklyBalance,
                   )}
                 </p>
 
-                <p className="mt-1 text-[11px] text-red-600/70">
-                  Current installment + unpaid previous weeks
+                <p className="mt-1 text-[10px] text-black/40">
+                  Current unpaid contractual balance
                 </p>
               </div>
 
-              <div
-                className="
-                  flex
-                  h-10
-                  w-10
-                  shrink-0
-                  items-center
-                  justify-center
-                  rounded-xl
-                  border
-                  border-red-200
-                  bg-white
-                  text-red-600
-                "
-              >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600">
                 <Banknote className="h-5 w-5" />
               </div>
             </div>
+
+            {weeklyBreakdown && (
+              <div className="mt-5 grid grid-cols-3 border-t border-slate-100 pt-4">
+                <Metric
+                  label="Previous"
+                  value={formatKES(
+                    completedBalance,
+                  )}
+                  valueClassName="text-red-600"
+                />
+
+                <Metric
+                  label="Current"
+                  value={formatKES(
+                    currentBalance,
+                  )}
+                  valueClassName="text-red-600"
+                />
+
+                <Metric
+                  label="Total fines"
+                  value={formatKES(
+                    totalFines,
+                  )}
+                  valueClassName={
+                    totalFines > 0
+                      ? "text-amber-600"
+                      : "text-black/40"
+                  }
+                />
+              </div>
+            )}
           </div>
 
           {weeklyBreakdown ? (
-            <button
-              type="button"
-              onClick={() =>
-                setIsWeeklyBreakdownOpen(
-                  (current) => !current,
-                )
-              }
-              aria-expanded={
-                isWeeklyBreakdownOpen
-              }
-              aria-controls={`weekly-repayment-breakdown-${loan.id}`}
-              className="
-                flex
-                w-full
-                items-center
-                justify-between
-                gap-3
-                border-t
-                border-red-200
-                bg-white/70
-                px-4
-                py-3
-                text-left
-                transition
-                hover:bg-white
-                active:bg-white
-              "
-            >
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-black">
-                  Repayment breakdown
-                </p>
+            <>
+              {/* =================================================
+                  BREAKDOWN TOGGLE
+              ================================================== */}
 
-                <p className="mt-0.5 text-[11px] text-black/50">
-                  {isWeeklyBreakdownOpen
-                    ? "Hide payment and installment details"
-                    : "Show payment and installment details"}
-                </p>
-              </div>
-
-              <div
+              <button
+                type="button"
+                onClick={() =>
+                  setIsWeeklyBreakdownOpen(
+                    (value) => !value,
+                  )
+                }
+                aria-expanded={
+                  isWeeklyBreakdownOpen
+                }
                 className="
                   flex
-                  h-8
-                  w-8
-                  shrink-0
+                  w-full
                   items-center
-                  justify-center
-                  rounded-xl
-                  border
-                  border-slate-200
-                  bg-white
-                  text-black/60
-                "
-              >
-                {isWeeklyBreakdownOpen ? (
-                  <ChevronUp className="h-4 w-4" />
-                ) : (
-                  <ChevronDown className="h-4 w-4" />
-                )}
-              </div>
-            </button>
-          ) : (
-            <div
-              className="
-                border-t
-                border-red-200
-                bg-white/60
-                px-4
-                py-3
-              "
-            >
-              <p className="text-[11px] text-black/50">
-                Repayment breakdown is not available.
-              </p>
-            </div>
-          )}
-
-          {weeklyBreakdown &&
-            isWeeklyBreakdownOpen && (
-              <div
-                id={`weekly-repayment-breakdown-${loan.id}`}
-                className="
+                  justify-between
                   border-t
-                  border-red-200
-                  bg-white
-                  px-4
-                  pb-4
-                  pt-4
+                  border-slate-200
+                  bg-slate-50/70
+                  px-5
+                  py-3.5
+                  text-left
+                  transition
+                  hover:bg-slate-50
                 "
               >
-                {/* =================================================
-                    SUMMARY
-                ================================================== */}
-
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                    <p className="text-[10px] text-black/50">
-                      Installment
-                    </p>
-
-                    <p className="mt-1 text-xs font-semibold text-black">
-                      {formatKES(
-                        installmentAmount,
-                      )}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                    <p className="text-[10px] text-black/50">
-                      Previous
-                    </p>
-
-                    <p className="mt-1 text-xs font-semibold text-red-600">
-                      {formatKES(
-                        completedBalance,
-                      )}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                    <p className="text-[10px] text-black/50">
-                      Current
-                    </p>
-
-                    <p className="mt-1 text-xs font-semibold text-red-600">
-                      {formatKES(
-                        currentBalance,
-                      )}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
-                    <p className="text-[10px] text-amber-700/70">
-                      Total fines
-                    </p>
-
-                    <p className="mt-1 text-xs font-bold text-amber-700">
-                      {formatKES(
-                        totalFines,
-                      )}
-                    </p>
-                  </div>
-                </div>
-
-                {/* =================================================
-                    CORE BALANCE RECONCILIATION
-                ================================================== */}
-
-                <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[10px] font-medium text-red-600/70">
-                      Weekly installment balance
-                    </span>
-
-                    <span className="text-sm font-bold text-red-600">
-                      {formatKES(
-                        displayWeeklyBalance,
-                      )}
-                    </span>
-                  </div>
-
-                  <p className="mt-1 text-[9px] text-red-600/60">
-                    {formatKES(
-                      completedBalance,
-                    )}{" "}
-                    previous +{" "}
-                    {formatKES(
-                      currentBalance,
-                    )}{" "}
-                    current
+                <div>
+                  <p className="text-xs font-semibold text-black">
+                    Repayment schedule
                   </p>
 
-                  <p className="mt-1 text-[9px] font-medium text-red-600/60">
-                    Fines are completely excluded from
-                    this balance.
+                  <p className="mt-0.5 text-[9px] text-black/40">
+                    {weeklyBreakdown.periods.length}{" "}
+                    periods ·{" "}
+                    {allocations.length}{" "}
+                    allocations
                   </p>
                 </div>
 
-                {/* =================================================
-                    PERIODS
-                ================================================== */}
-
-                <div className="mt-5 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold text-black">
-                      Repayment periods
-                    </p>
-
-                    <p className="mt-0.5 text-[10px] text-black/45">
-                      {formatCycleDays(
-                        weeklyBreakdown.cycleDays,
-                      )}{" "}
-                      cycle
-                    </p>
-                  </div>
-
-                  <span className="text-[10px] text-black/45">
-                    {
-                      weeklyBreakdown.periods
-                        .length
-                    }{" "}
-                    periods
-                  </span>
-                </div>
-
-                <div className="mt-2 space-y-2">
-                  {weeklyBreakdown.periods.map(
-                    (period) => {
-                      const installment =
-                        Math.max(
-                          0,
-                          Number.isFinite(
-                            period.installment,
-                          )
-                            ? period.installment
-                            : 0,
-                        );
-
-                      /*
-                       * Never allow an allocation displayed
-                       * against an installment to exceed that
-                       * installment.
-                       */
-                      const allocated =
-                        Math.min(
-                          installment,
-                          Math.max(
-                            0,
-                            Number.isFinite(
-                              period.allocated,
-                            )
-                              ? period.allocated
-                              : 0,
-                          ),
-                        );
-
-                      /*
-                       * Recalculate the visible period
-                       * balance from:
-                       *
-                       * installment - allocated
-                       *
-                       * This guarantees the displayed
-                       * period numbers add up.
-                       */
-                      const balance =
-                        Math.max(
-                          0,
-                          installment -
-                            allocated,
-                        );
-
-                      const fine =
-                        getPeriodFine(
-                          period,
-                        );
-
-                      const allocationPercent =
-                        installment > 0
-                          ? Math.min(
-                              100,
-                              Math.max(
-                                0,
-                                (allocated /
-                                  installment) *
-                                  100,
-                              ),
-                            )
-                          : 0;
-
-                      const isCurrent =
-                        period.status ===
-                        "current";
-
-                      const isPaid =
-                        balance <= 0;
-
-                      return (
-                        <div
-                          key={
-                            period.periodNumber
-                          }
-                          className={`
-                            rounded-2xl
-                            border
-                            px-3.5
-                            py-3
-                            ${
-                              isCurrent
-                                ? "border-red-200 bg-red-50/50"
-                                : "border-slate-200 bg-white"
-                            }
-                          `}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <p className="text-xs font-semibold text-black">
-                                  Installment{" "}
-                                  {
-                                    period.periodNumber
-                                  }
-                                </p>
-
-                                <span
-                                  className={`
-                                    rounded-full
-                                    border
-                                    px-2
-                                    py-0.5
-                                    text-[9px]
-                                    font-semibold
-                                    ${getPeriodStatusClasses(
-                                      period,
-                                    )}
-                                  `}
-                                >
-                                  {getPeriodStatusLabel(
-                                    period,
-                                  )}
-                                </span>
-                              </div>
-
-                              <p className="mt-1 text-[10px] text-black/45">
-                                {formatCalendarDate(
-                                  period.periodStart,
-                                )}{" "}
-                                –{" "}
-                                {formatCalendarDate(
-                                  period.periodEnd,
-                                )}
-                              </p>
-                            </div>
-
-                            <div className="shrink-0 text-right">
-                              <p
-                                className={`
-                                  text-xs
-                                  font-bold
-                                  ${
-                                    balance > 0
-                                      ? "text-red-600"
-                                      : "text-emerald-600"
-                                  }
-                                `}
-                              >
-                                {formatKES(
-                                  balance,
-                                )}
-                              </p>
-
-                              <p className="mt-0.5 text-[9px] text-black/40">
-                                remaining
-                              </p>
-                            </div>
-                          </div>
-
-                          {/* =================================================
-                              PAYMENT PROGRESS
-                          ================================================== */}
-
-                          <div className="mt-3">
-                            <div className="mb-1 flex items-center justify-between text-[9px]">
-                              <span className="text-black/45">
-                                Paid toward installment
-                              </span>
-
-                              <span className="font-medium text-black/60">
-                                {formatKES(
-                                  allocated,
-                                )}{" "}
-                                /{" "}
-                                {formatKES(
-                                  installment,
-                                )}
-                              </span>
-                            </div>
-
-                            <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
-                              <div
-                                className={`
-                                  h-full
-                                  rounded-full
-                                  transition-all
-                                  ${
-                                    isPaid
-                                      ? "bg-emerald-500"
-                                      : "bg-amber-400"
-                                  }
-                                `}
-                                style={{
-                                  width: `${allocationPercent}%`,
-                                }}
-                              />
-                            </div>
-                          </div>
-
-                          {/* =================================================
-                              PERIOD CALCULATION
-                          ================================================== */}
-
-                          <div className="mt-2.5 space-y-1 text-[9px]">
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="text-black/40">
-                                Installment
-                              </span>
-
-                              <span className="font-medium text-black/60">
-                                {formatKES(
-                                  installment,
-                                )}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="text-black/40">
-                                Allocated
-                              </span>
-
-                              <span className="font-medium text-sky-700">
-                                {formatKES(
-                                  allocated,
-                                )}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center justify-between gap-3 border-t border-slate-200 pt-1.5">
-                              <span className="font-medium text-black/50">
-                                Remaining
-                              </span>
-
-                              <span
-                                className={`
-                                  font-semibold
-                                  ${
-                                    balance > 0
-                                      ? "text-red-600"
-                                      : "text-emerald-600"
-                                  }
-                                `}
-                              >
-                                {formatKES(
-                                  balance,
-                                )}
-                              </span>
-                            </div>
-
-                            {/* =================================================
-                                PERIOD FINE
-                                
-                                Separate from installment calculation.
-                            ================================================== */}
-
-                            <div className="flex items-center justify-between gap-3 border-t border-slate-200 pt-1.5">
-                              <span className="flex items-center gap-1 text-black/40">
-                                <ShieldAlert className="h-3 w-3 text-amber-600" />
-                                Fine
-                              </span>
-
-                              <span
-                                className={`
-                                  font-semibold
-                                  ${
-                                    fine > 0
-                                      ? "text-amber-700"
-                                      : "text-black/40"
-                                  }
-                                `}
-                              >
-                                {formatKES(
-                                  fine,
-                                )}
-                              </span>
-                            </div>
-                          </div>
-
-                          {fine > 0 && (
-                            <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-                              <div className="flex items-start gap-2">
-                                <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
-
-                                <div className="min-w-0">
-                                  <p className="text-[9px] font-semibold text-amber-700">
-                                    Fine assessed
-                                  </p>
-
-                                  <p className="mt-0.5 text-[9px] leading-4 text-amber-700/70">
-                                    This fine is separate
-                                    from the installment
-                                    balance.
-                                  </p>
-                                </div>
-
-                                <span className="ml-auto shrink-0 text-[10px] font-bold text-amber-700">
-                                  {formatKES(
-                                    fine,
-                                  )}
-                                </span>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    },
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-black/50">
+                  {isWeeklyBreakdownOpen ? (
+                    <ChevronUp className="h-4 w-4" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" />
                   )}
                 </div>
+              </button>
 
-                {/* =================================================
-                    TOTAL FINES
-                ================================================== */}
+              {isWeeklyBreakdownOpen && (
+                <div className="border-t border-slate-200 bg-white px-4 py-4">
+                  {/* =============================================
+                      INSTALLMENT SCHEDULE
+                  ============================================== */}
 
-                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-2.5">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-amber-200 bg-white text-amber-600">
-                        <ShieldAlert className="h-4 w-4" />
-                      </div>
-
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold text-amber-800">
-                          Total fines
+                  <div>
+                    <div className="mb-3 flex items-end justify-between gap-3 px-1">
+                      <div>
+                        <p className="text-xs font-bold text-black">
+                          Installments
                         </p>
 
-                        <p className="mt-0.5 text-[10px] leading-4 text-amber-700/70">
-                          Sum of fines assessed across
-                          the repayment periods.
+                        <p className="mt-0.5 text-[9px] text-black/40">
+                          Period facts, current state and
+                          installment fine
                         </p>
                       </div>
+
+                      <span className="text-[9px] text-black/40">
+                        {formatKES(
+                          installmentAmount,
+                        )}{" "}
+                        / cycle
+                      </span>
                     </div>
 
-                    <p className="shrink-0 text-sm font-bold text-amber-700">
-                      {formatKES(
-                        totalFines,
+                    <div className="space-y-2.5">
+                      {weeklyBreakdown.periods.map(
+                        (period) => (
+                          <RepaymentPeriod
+                            key={
+                              period.periodNumber
+                            }
+                            period={period}
+                          />
+                        ),
                       )}
-                    </p>
+                    </div>
                   </div>
 
-                  <div className="mt-2 border-t border-amber-200/70 pt-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-[9px] text-amber-700/60">
-                        Fine policy
-                      </span>
+                  {/* =============================================
+                      FINE SUMMARY
+                  ============================================== */}
 
-                      <span className="text-[9px] font-semibold text-amber-700">
-                        {fineRate} per{" "}
-                        {repaymentCycle} cycle
-                      </span>
+                  <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white text-amber-600 ring-1 ring-amber-200">
+                          <ShieldAlert className="h-4 w-4" />
+                        </div>
+
+                        <div>
+                          <p className="text-xs font-semibold text-amber-800">
+                            Total assessed fines
+                          </p>
+
+                          <p className="mt-0.5 text-[9px] text-amber-700/60">
+                            {fineRate} per{" "}
+                            {repaymentCycle}
+                          </p>
+                        </div>
+                      </div>
+
+                      <p className="text-sm font-bold text-amber-700">
+                        {formatKES(totalFines)}
+                      </p>
                     </div>
 
                     {loan.fineStatus ===
                       "stopped" && (
-                      <p className="mt-1 text-[9px] font-medium text-amber-700/70">
-                        Future fines are stopped.
-                        Existing fines remain recorded.
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* =================================================
-                    PAYMENT ALLOCATIONS
-                ================================================== */}
-
-                {allocations.length > 0 && (
-                  <div className="mt-4">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setIsAllocationDetailsOpen(
-                          (value) => !value,
-                        )
-                      }
-                      aria-expanded={
-                        isAllocationDetailsOpen
-                      }
-                      className="
-                        flex
-                        w-full
-                        items-center
-                        justify-between
-                        gap-3
-                        rounded-2xl
-                        border
-                        border-slate-200
-                        bg-slate-50
-                        px-3.5
-                        py-3
-                        text-left
-                        transition
-                        hover:bg-slate-100
-                      "
-                    >
-                      <div>
-                        <p className="text-xs font-semibold text-black">
-                          Payment allocation details
+                      <div className="mt-3 border-t border-amber-200 pt-2.5">
+                        <p className="text-[9px] text-amber-700/70">
+                          Fine accrual is stopped.
+                          Existing assessed fines
+                          remain recorded.
                         </p>
-
-                        <p className="mt-0.5 text-[10px] text-black/45">
-                          {allocations.length}{" "}
-                          allocation
-                          {allocations.length ===
-                          1
-                            ? ""
-                            : "s"}{" "}
-                          across the repayment periods
-                        </p>
-                      </div>
-
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-black/60">
-                        {isAllocationDetailsOpen ? (
-                          <ChevronUp className="h-4 w-4" />
-                        ) : (
-                          <ChevronDown className="h-4 w-4" />
-                        )}
-                      </div>
-                    </button>
-
-                    {isAllocationDetailsOpen && (
-                      <div className="mt-2 space-y-2">
-                        {allocations.map(
-                          (allocation) => {
-                            const paymentAmount =
-                              Math.max(
-                                0,
-                                Number.isFinite(
-                                  allocation.paymentAmount,
-                                )
-                                  ? allocation.paymentAmount
-                                  : 0,
-                              );
-
-                            const amountApplied =
-                              Math.max(
-                                0,
-                                Number.isFinite(
-                                  allocation.amountApplied,
-                                )
-                                  ? allocation.amountApplied
-                                  : 0,
-                              );
-
-                            const remainingPayment =
-                              Math.max(
-                                0,
-                                Number.isFinite(
-                                  allocation.remainingPayment,
-                                )
-                                  ? allocation.remainingPayment
-                                  : 0,
-                              );
-
-                            const beforeRemaining =
-                              Math.max(
-                                0,
-                                Number.isFinite(
-                                  allocation.beforeRemaining,
-                                )
-                                  ? allocation.beforeRemaining
-                                  : 0,
-                              );
-
-                            const afterRemaining =
-                              Math.max(
-                                0,
-                                Number.isFinite(
-                                  allocation.afterRemaining,
-                                )
-                                  ? allocation.afterRemaining
-                                  : 0,
-                              );
-
-                            return (
-                              <div
-                                key={`${allocation.allocationNumber}-${allocation.paymentSequence}`}
-                                className="rounded-2xl border border-slate-200 bg-white px-3.5 py-3"
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="flex min-w-0 items-center gap-2">
-                                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[9px] font-bold text-black/60">
-                                      {
-                                        allocation.paymentSequence
-                                      }
-                                    </span>
-
-                                    <div className="min-w-0">
-                                      <p className="text-xs font-semibold text-black">
-                                        Payment{" "}
-                                        {
-                                          allocation.paymentSequence
-                                        }
-                                      </p>
-
-                                      <p className="mt-0.5 text-[10px] text-black/45">
-                                        {formatCalendarDate(
-                                          allocation.paymentDate,
-                                        )}
-                                      </p>
-                                    </div>
-                                  </div>
-
-                                  <div className="shrink-0 text-right">
-                                    <p className="text-xs font-bold text-sky-700">
-                                      {formatKES(
-                                        paymentAmount,
-                                      )}
-                                    </p>
-
-                                    <p className="mt-0.5 text-[9px] text-black/40">
-                                      payment
-                                    </p>
-                                  </div>
-                                </div>
-
-                                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <div>
-                                      <p className="text-[9px] text-black/40">
-                                        Applied to
-                                      </p>
-
-                                      <p className="mt-0.5 text-[11px] font-semibold text-black">
-                                        Installment{" "}
-                                        {
-                                          allocation.periodNumber
-                                        }
-                                      </p>
-                                    </div>
-
-                                    <div className="text-right">
-                                      <p className="text-xs font-bold text-sky-700">
-                                        +
-                                        {formatKES(
-                                          amountApplied,
-                                        )}
-                                      </p>
-
-                                      <p className="mt-0.5 text-[9px] text-black/40">
-                                        applied
-                                      </p>
-                                    </div>
-                                  </div>
-
-                                  <p className="mt-1 text-[9px] text-black/40">
-                                    {formatCalendarDate(
-                                      allocation.periodStart,
-                                    )}{" "}
-                                    –{" "}
-                                    {formatCalendarDate(
-                                      allocation.periodEnd,
-                                    )}
-                                  </p>
-                                </div>
-
-                                <div className="mt-2 grid grid-cols-3 items-center gap-2">
-                                  <div className="rounded-xl bg-slate-50 px-2.5 py-2">
-                                    <p className="text-[8px] text-black/40">
-                                      Before
-                                    </p>
-
-                                    <p className="mt-0.5 text-[10px] font-semibold text-black">
-                                      {formatKES(
-                                        beforeRemaining,
-                                      )}
-                                    </p>
-                                  </div>
-
-                                  <div className="rounded-xl bg-sky-50 px-2.5 py-2 text-center">
-                                    <p className="text-[8px] text-sky-700/60">
-                                      Applied
-                                    </p>
-
-                                    <p className="mt-0.5 text-[10px] font-bold text-sky-700">
-                                      -
-                                      {formatKES(
-                                        amountApplied,
-                                      )}
-                                    </p>
-                                  </div>
-
-                                  <div className="rounded-xl bg-red-50 px-2.5 py-2 text-right">
-                                    <p className="text-[8px] text-red-600/40">
-                                      After
-                                    </p>
-
-                                    <p className="mt-0.5 text-[10px] font-semibold text-red-600">
-                                      {formatKES(
-                                        afterRemaining,
-                                      )}
-                                    </p>
-                                  </div>
-                                </div>
-
-                                {allocation.carriedForward &&
-                                  remainingPayment >
-                                    0 && (
-                                    <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
-                                      <p className="text-[9px] font-semibold text-sky-700">
-                                        Payment continues to next installment
-                                      </p>
-
-                                      <p className="mt-0.5 text-[9px] leading-4 text-sky-700/70">
-                                        {formatKES(
-                                          remainingPayment,
-                                        )}{" "}
-                                        remained after this
-                                        allocation and was
-                                        carried forward.
-                                      </p>
-                                    </div>
-                                  )}
-                              </div>
-                            );
-                          },
-                        )}
                       </div>
                     )}
                   </div>
-                )}
 
-                {/* =================================================
-                    FUTURE CREDIT
-                ================================================== */}
+                  {/* =============================================
+                      PAYMENT ALLOCATIONS
+                  ============================================== */}
 
-                {surpluses.length > 0 && (
-                  <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3.5 py-3">
-                    <div className="flex items-start gap-2.5">
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-xs font-semibold text-emerald-800">
-                            Future credit
+                  {allocations.length > 0 && (
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setIsAllocationDetailsOpen(
+                            (value) => !value,
+                          )
+                        }
+                        aria-expanded={
+                          isAllocationDetailsOpen
+                        }
+                        className="
+                          flex
+                          w-full
+                          items-center
+                          justify-between
+                          rounded-2xl
+                          border
+                          border-slate-200
+                          bg-slate-50
+                          px-4
+                          py-3
+                          text-left
+                          transition
+                          hover:bg-slate-100
+                        "
+                      >
+                        <div>
+                          <p className="text-xs font-semibold text-black">
+                            Payment history
                           </p>
 
-                          <p className="text-xs font-bold text-emerald-700">
-                            {formatKES(
-                              surpluses.reduce(
-                                (
-                                  total,
-                                  surplus,
-                                ) =>
-                                  total +
-                                  Math.max(
-                                    0,
-                                    Number.isFinite(
-                                      surplus.unusedCredit,
-                                    )
-                                      ? surplus.unusedCredit
-                                      : 0,
-                                  ),
-                                0,
-                              ),
-                            )}
+                          <p className="mt-0.5 text-[9px] text-black/40">
+                            {
+                              allocations.length
+                            }{" "}
+                            payment allocation
+                            {allocations.length ===
+                            1
+                              ? ""
+                              : "s"}
                           </p>
                         </div>
 
-                        <p className="mt-1 text-[10px] leading-4 text-emerald-700/70">
-                          These payments exceeded the
-                          currently displayed installments.
-                          The unused amount is kept as future
-                          credit and does not reduce the
-                          weekly balance.
-                        </p>
+                        <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-black/50">
+                          {isAllocationDetailsOpen ? (
+                            <ChevronUp className="h-4 w-4" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4" />
+                          )}
+                        </div>
+                      </button>
 
-                        <div className="mt-2 space-y-1.5">
-                          {surpluses.map(
-                            (surplus) => (
-                              <div
-                                key={`${surplus.paymentSequence}-${surplus.paymentDate}`}
-                                className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-white/70 px-3 py-2"
-                              >
-                                <div>
-                                  <p className="text-[9px] font-medium text-black/55">
-                                    Payment{" "}
-                                    {
-                                      surplus.paymentSequence
-                                    }
-                                  </p>
-
-                                  <p className="text-[9px] text-black/40">
-                                    {formatCalendarDate(
-                                      surplus.paymentDate,
-                                    )}
-                                  </p>
-                                </div>
-
-                                <span className="text-[10px] font-semibold text-emerald-700">
-                                  +
-                                  {formatKES(
-                                    surplus.unusedCredit,
-                                  )}
-                                </span>
-                              </div>
+                      {isAllocationDetailsOpen && (
+                        <div className="mt-2 space-y-2">
+                          {allocations.map(
+                            (allocation) => (
+                              <PaymentAllocation
+                                key={`${allocation.allocationNumber}-${allocation.paymentSequence}`}
+                                allocation={
+                                  allocation
+                                }
+                              />
                             ),
                           )}
                         </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* =================================================
-                    NO PAYMENT INFORMATION
-                ================================================== */}
-
-                {allocations.length === 0 &&
-                  surpluses.length === 0 && (
-                    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-3">
-                      <p className="text-xs font-semibold text-black">
-                        No repayments allocated yet
-                      </p>
-
-                      <p className="mt-1 text-[10px] leading-4 text-black/45">
-                        The displayed balance currently comes
-                        entirely from the unpaid repayment
-                        installments.
-                      </p>
+                      )}
                     </div>
                   )}
 
-                {/* =================================================
-                    FINAL WEEKLY BALANCE
-                ================================================== */}
+                  {/* =============================================
+                      FUTURE CREDIT
+                  ============================================== */}
 
-                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-3.5 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-medium text-red-600/70">
-                        Weekly installment balance
-                      </p>
+                  {surpluses.length > 0 && (
+                    <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
 
-                      <p className="mt-1 text-[11px] font-semibold text-black">
-                        {formatKES(
-                          completedBalance,
-                        )}{" "}
-                        previous +{" "}
-                        {formatKES(
-                          currentBalance,
-                        )}{" "}
-                        current
-                      </p>
+                          <span className="text-xs font-semibold text-emerald-800">
+                            Future credit
+                          </span>
+                        </div>
+
+                        <span className="text-xs font-bold text-emerald-700">
+                          {formatKES(
+                            futureCredit,
+                          )}
+                        </span>
+                      </div>
+
+                      <div className="mt-2 space-y-1.5">
+                        {surpluses.map(
+                          (surplus) => (
+                            <div
+                              key={`${surplus.paymentSequence}-${surplus.paymentDate}`}
+                              className="flex items-center justify-between rounded-lg bg-white/70 px-3 py-2"
+                            >
+                              <span className="text-[9px] text-black/45">
+                                Payment{" "}
+                                {
+                                  surplus.paymentSequence
+                                }
+                                {" · "}
+                                {formatCalendarDate(
+                                  surplus.paymentDate,
+                                )}
+                              </span>
+
+                              <span className="text-[9px] font-bold text-emerald-700">
+                                +
+                                {formatKES(
+                                  safeMoney(
+                                    surplus.unusedCredit,
+                                  ),
+                                )}
+                              </span>
+                            </div>
+                          ),
+                        )}
+                      </div>
                     </div>
+                  )}
 
-                    <p className="shrink-0 text-base font-bold text-red-600">
-                      {formatKES(
-                        displayWeeklyBalance,
-                      )}
-                    </p>
-                  </div>
+                  {/* =============================================
+                      NO REPAYMENTS
+                  ============================================== */}
 
-                  <div className="mt-2 flex items-center justify-between gap-3 border-t border-red-200/70 pt-2">
-                    <span className="text-[9px] text-red-600/60">
-                      {
-                        weeklyBreakdown.periods
-                          .length
-                      }{" "}
-                      repayment periods
-                    </span>
+                  {allocations.length === 0 &&
+                    surpluses.length === 0 && (
+                      <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-center">
+                        <p className="text-xs font-semibold text-black">
+                          No repayments yet
+                        </p>
 
-                    <span className="text-[9px] font-medium text-red-600/60">
-                      {allocations.length}{" "}
-                      payment allocations
-                    </span>
-                  </div>
-
-                  <p className="mt-2 text-[9px] leading-4 text-red-600/60">
-                    Fines are separate and are not included
-                    in the weekly installment balance.
-                  </p>
+                        <p className="mt-1 text-[9px] text-black/40">
+                          No payment has been allocated
+                          to this loan.
+                        </p>
+                      </div>
+                    )}
                 </div>
-              </div>
-            )}
+              )}
+            </>
+          ) : (
+            <div className="border-t border-slate-200 px-5 py-3">
+              <p className="text-[9px] text-black/40">
+                Detailed repayment breakdown is not
+                available.
+              </p>
+            </div>
+          )}
         </div>
-      </div>
+      </section>
 
       {/* =====================================================
           FINANCIAL SUMMARY
       ====================================================== */}
 
-      <div className="mx-5 grid grid-cols-2 gap-2 bg-white">
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3.5">
-          <p className="text-[11px] text-black/50">
-            Principal
-          </p>
+      <section className="border-t border-slate-100 px-5 py-5">
+        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-slate-200 bg-slate-200">
+          <div className="bg-white px-4 py-3.5">
+            <Metric
+              label="Principal"
+              value={formatKES(principal)}
+            />
+          </div>
 
-          <p className="mt-1 text-sm font-semibold text-black">
-            {formatKES(
-              loan.principal,
-            )}
-          </p>
+          <div className="bg-white px-4 py-3.5">
+            <Metric
+              label="Amount paid"
+              value={formatKES(amountPaid)}
+              valueClassName="text-sky-700"
+            />
+          </div>
+
+          <div className="bg-white px-4 py-3.5">
+            <Metric
+              label="Interest"
+              value={formatKES(interestAmount)}
+            />
+          </div>
+
+          <div className="bg-white px-4 py-3.5">
+            <Metric
+              label="Total due"
+              value={formatKES(totalDue)}
+            />
+          </div>
         </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3.5">
-          <p className="text-[11px] text-black/50">
-            Amount paid
-          </p>
-
-          <p className="mt-1 text-sm font-semibold text-black">
-            {formatKES(
-              amountPaid,
-            )}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3.5">
-          <p className="text-[11px] text-black/50">
-            Interest
-          </p>
-
-          <p className="mt-1 text-sm font-semibold text-black">
-            {formatKES(
-              loan.interestAmount,
-            )}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3.5">
-          <p className="text-[11px] text-black/50">
-            Total due
-          </p>
-
-          <p className="mt-1 text-sm font-semibold text-black">
-            {formatKES(
-              loan.principal +
-                loan.interestAmount,
-            )}
-          </p>
-        </div>
-      </div>
+      </section>
 
       {/* =====================================================
           DATES
       ====================================================== */}
 
-      <div className="bg-white px-5 py-5">
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex min-w-0 items-start gap-2.5">
-              <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+      <section className="px-5 pb-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-3">
+            <div className="flex items-start gap-2">
+              <CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-600" />
 
               <div className="min-w-0">
-                <p className="text-[11px] text-black/50">
+                <p className="text-[9px] uppercase tracking-wide text-black/35">
                   Disbursed
                 </p>
 
-                <p className="mt-0.5 truncate text-xs font-medium text-black">
+                <p className="mt-1 truncate text-[10px] font-semibold text-black">
                   {formatCalendarDate(
                     loan.disbursementDate,
                   )}
                 </p>
               </div>
             </div>
+          </div>
 
-            <div className="flex min-w-0 items-start gap-2.5">
-              <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-3">
+            <div className="flex items-start gap-2">
+              <Clock3 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-600" />
 
               <div className="min-w-0">
-                <p className="text-[11px] text-black/50">
+                <p className="text-[9px] uppercase tracking-wide text-black/35">
                   End date
                 </p>
 
-                <p className="mt-0.5 truncate text-xs font-medium text-black">
+                <p className="mt-1 truncate text-[10px] font-semibold text-black">
                   {formatCalendarDate(
                     loan.endDate,
                   )}
@@ -2061,42 +1507,42 @@ export default function LoanCard({
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
       {/* =====================================================
           GUARANTOR
       ====================================================== */}
 
-      <div className="border-t border-slate-200 bg-white px-5 py-4">
+      <section className="border-t border-slate-100 px-5 py-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-200 bg-sky-50 text-sky-700">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-700 ring-1 ring-sky-100">
             <UserRound className="h-4 w-4" />
           </div>
 
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] text-black/50">
+            <p className="text-[9px] uppercase tracking-wide text-black/35">
               Guarantor
             </p>
 
-            <p className="truncate text-xs font-semibold text-black">
+            <p className="mt-0.5 truncate text-xs font-semibold text-black">
               {loan.guarantor?.name ||
                 "Not provided"}
             </p>
           </div>
 
           {loan.guarantor?.phone && (
-            <span className="shrink-0 text-[11px] text-black/60">
+            <span className="shrink-0 text-[10px] text-black/50">
               {loan.guarantor.phone}
             </span>
           )}
         </div>
-      </div>
+      </section>
 
       {/* =====================================================
           ACTIONS
       ====================================================== */}
 
-      <div className="grid grid-cols-2 gap-2.5 bg-white px-5 pb-5 pt-1">
+      <footer className="grid grid-cols-2 gap-2.5 border-t border-slate-100 bg-slate-50/60 px-5 pb-5 pt-4">
         <button
           type="button"
           onClick={onView}
@@ -2107,7 +1553,7 @@ export default function LoanCard({
             items-center
             justify-center
             gap-1.5
-            rounded-2xl
+            rounded-xl
             border
             border-slate-200
             bg-white
@@ -2115,6 +1561,7 @@ export default function LoanCard({
             text-sm
             font-semibold
             text-black
+            shadow-sm
             transition
             hover:bg-slate-50
             active:scale-[0.98]
@@ -2136,7 +1583,7 @@ export default function LoanCard({
             items-center
             justify-center
             gap-1.5
-            rounded-2xl
+            rounded-xl
             border
             border-amber-200
             bg-amber-50
@@ -2169,7 +1616,7 @@ export default function LoanCard({
             items-center
             justify-center
             gap-1.5
-            rounded-2xl
+            rounded-xl
             bg-sky-600
             px-3
             text-sm
@@ -2190,17 +1637,13 @@ export default function LoanCard({
             <Banknote className="h-4 w-4" />
           )}
 
-          {isCompleted
-            ? "Done"
-            : "Repay"}
+          {isCompleted ? "Done" : "Repay"}
         </button>
 
         <button
           type="button"
           onClick={() =>
-            setIsDeleteModalOpen(
-              true,
-            )
+            setIsDeleteModalOpen(true)
           }
           disabled={isDeleting}
           className="
@@ -2209,7 +1652,7 @@ export default function LoanCard({
             items-center
             justify-center
             gap-1.5
-            rounded-2xl
+            rounded-xl
             border
             border-red-200
             bg-red-50
@@ -2227,10 +1670,10 @@ export default function LoanCard({
           <Trash2 className="h-4 w-4 text-red-600" />
           Delete
         </button>
-      </div>
+      </footer>
 
       {/* =====================================================
-          DELETE CONFIRMATION MODAL
+          DELETE MODAL
       ====================================================== */}
 
       {isDeleteModalOpen && (
@@ -2256,43 +1699,40 @@ export default function LoanCard({
                 event.currentTarget &&
               !isDeleting
             ) {
-              setIsDeleteModalOpen(
-                false,
-              );
+              setIsDeleteModalOpen(false);
             }
           }}
         >
-          <div className="w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200 bg-white text-black shadow-[0_25px_80px_rgba(15,23,42,0.25)]">
-            <div className="bg-white px-6 pb-5 pt-6">
+          <div className="w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_25px_80px_rgba(15,23,42,0.25)]">
+            <div className="px-6 pb-5 pt-6">
               <div className="flex items-start gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-red-200 bg-red-50 text-red-600">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-red-600 ring-1 ring-red-100">
                   <Trash2 className="h-5 w-5" />
                 </div>
 
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0">
                   <h2
                     id={`delete-loan-title-${loan.id}`}
-                    className="text-base font-bold tracking-tight text-black"
+                    className="text-base font-bold text-black"
                   >
                     Delete loan?
                   </h2>
 
                   <p
                     id={`delete-loan-description-${loan.id}`}
-                    className="mt-1 text-sm leading-5 text-black/60"
+                    className="mt-1 text-sm leading-5 text-black/55"
                   >
-                    This action permanently
-                    removes this loan and its
-                    associated records.
+                    This permanently removes the loan
+                    and its associated records.
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="bg-white px-6">
-              <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+            <div className="px-6">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-sky-200 bg-sky-50 text-xs font-bold text-sky-700">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-xs font-bold text-sky-700 ring-1 ring-sky-100">
                     {getInitials(
                       loan.memberName,
                     )}
@@ -2303,17 +1743,17 @@ export default function LoanCard({
                       {loan.memberName}
                     </p>
 
-                    <p className="mt-0.5 truncate text-xs text-black/50">
+                    <p className="mt-0.5 truncate text-xs text-black/45">
                       {loan.loanNumber}
                     </p>
                   </div>
 
-                  <div className="shrink-0 text-right">
-                    <p className="text-[10px] font-medium uppercase tracking-[0.1em] text-black/50">
+                  <div className="text-right">
+                    <p className="text-[8px] uppercase tracking-wide text-black/40">
                       Outstanding
                     </p>
 
-                    <p className="mt-0.5 text-sm font-bold text-sky-700">
+                    <p className="mt-1 text-sm font-bold text-sky-700">
                       {formatKES(
                         outstanding,
                       )}
@@ -2323,7 +1763,7 @@ export default function LoanCard({
               </div>
             </div>
 
-            <div className="bg-white px-6 py-5">
+            <div className="px-6 py-5">
               <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3.5">
                 <div className="flex items-start gap-3">
                   <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
@@ -2333,13 +1773,11 @@ export default function LoanCard({
                       Permanent deletion
                     </p>
 
-                    <p className="mt-1 text-[11px] leading-5 text-red-600/80">
-                      The loan, repayments,
-                      fines, waivers,
-                      assessments, and
-                      audit records will be
-                      permanently deleted.
-                      This cannot be undone.
+                    <p className="mt-1 text-[10px] leading-5 text-red-600/75">
+                      The loan, repayments, fines,
+                      waivers, assessments and audit
+                      records will be permanently
+                      deleted.
                     </p>
                   </div>
                 </div>
@@ -2350,9 +1788,7 @@ export default function LoanCard({
               <button
                 type="button"
                 onClick={() =>
-                  setIsDeleteModalOpen(
-                    false,
-                  )
+                  setIsDeleteModalOpen(false)
                 }
                 disabled={isDeleting}
                 className="
@@ -2360,7 +1796,7 @@ export default function LoanCard({
                   h-11
                   items-center
                   justify-center
-                  rounded-2xl
+                  rounded-xl
                   border
                   border-slate-200
                   bg-white
@@ -2370,7 +1806,6 @@ export default function LoanCard({
                   text-black
                   transition
                   hover:bg-slate-50
-                  active:scale-[0.98]
                   disabled:cursor-not-allowed
                   disabled:opacity-40
                 "
@@ -2380,19 +1815,15 @@ export default function LoanCard({
 
               <button
                 type="button"
-                onClick={
-                  handleDelete
-                }
-                disabled={
-                  isDeleting
-                }
+                onClick={handleDelete}
+                disabled={isDeleting}
                 className="
                   inline-flex
                   h-11
                   items-center
                   justify-center
                   gap-2
-                  rounded-2xl
+                  rounded-xl
                   bg-red-600
                   px-5
                   text-sm
@@ -2402,7 +1833,6 @@ export default function LoanCard({
                   shadow-red-500/20
                   transition
                   hover:bg-red-700
-                  active:scale-[0.98]
                   disabled:cursor-not-allowed
                   disabled:opacity-60
                 "
