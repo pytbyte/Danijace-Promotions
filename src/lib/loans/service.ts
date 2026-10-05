@@ -8328,9 +8328,6 @@ async function resolveLoanForRepayment(
 /* =========================================================
    RECORD REPAYMENT
 ========================================================= */
-/* =========================================================
-   RECORD REPAYMENT
-========================================================= */
 
 export async function createLoanRepayment(
   input: CreateLoanRepaymentInput,

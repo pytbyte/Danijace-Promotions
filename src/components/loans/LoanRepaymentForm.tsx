@@ -363,19 +363,6 @@ export default function LoanRepaymentModal({
       return;
     }
 
-    if (
-      normalizedAmount >
-      outstanding
-    ) {
-      setError(
-        `Repayment cannot exceed the current outstanding balance of KSh ${formatMoney(
-          outstanding,
-        )}.`,
-      );
-
-      return;
-    }
-
     /* =====================================================
        TRANSACTION REFERENCE
     ===================================================== */
