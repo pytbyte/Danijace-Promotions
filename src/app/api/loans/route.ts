@@ -1,5 +1,4 @@
 import {
-  after,
   NextRequest,
   NextResponse,
 } from "next/server";
@@ -7,7 +6,6 @@ import {
 import { auth } from "@/auth";
 
 import {
-  accrueAllLoanFines,
   createLoan,
   getLoans,
 } from "@/lib/loans/service";
@@ -228,23 +226,6 @@ function parseGuarantor(
 }
 
 /* =========================================================
-   BACKGROUND FINE ACCRUAL
-========================================================= */
-
-function scheduleBackgroundFineAccrual() {
-  after(async () => {
-    try {
-      await accrueAllLoanFines();
-    } catch (error) {
-      console.error(
-        "Background loan fine accrual failed:",
-        error,
-      );
-    }
-  });
-}
-
-/* =========================================================
    GET /api/loans
 ========================================================= */
 
@@ -396,14 +377,23 @@ export async function GET(
        GET LOANS
        
        IMPORTANT:
-       Current-installment calculations belong inside the
-       loan service/query layer, not here.
+       `getLoans()` is responsible for all read-side
+       financial calculations and hydration.
 
-       This prevents:
-       - N+1 database queries
-       - server logic leaking into the client
-       - duplicated financial calculations
-       - inconsistent installment balances
+       GET /api/loans MUST remain READ-ONLY.
+
+       It must NOT:
+       - accrue fines
+       - reconcile fines
+       - insert loanFines
+       - update loanFines
+       - delete loanFines
+       - update loans.totalFines
+       - mutate repayment data
+
+       Fine assessment/reconciliation must happen through
+       an explicit write/scheduled operation, not as a side
+       effect of reading loans.
     ------------------------------------------------------- */
 
     const result =
@@ -423,12 +413,6 @@ export async function GET(
           ? { type }
           : {}),
       });
-
-    /* -------------------------------------------------------
-       BACKGROUND FINE ACCRUAL
-    ------------------------------------------------------- */
-
-    scheduleBackgroundFineAccrual();
 
     /* -------------------------------------------------------
        RESPONSE
