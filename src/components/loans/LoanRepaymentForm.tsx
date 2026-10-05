@@ -246,18 +246,33 @@ export default function LoanRepaymentModal({
     ) &&
     parsedAmount > 0;
 
-  const amountWithinBalance =
-    validAmount &&
-    parsedAmount <= outstanding;
-
+  /*
+   * The repayment amount is allowed to exceed the
+   * outstanding loan balance.
+   *
+   * The backend service is responsible for splitting:
+   *
+   *   amount received
+   *       -> amount applied to loan
+   *       -> excess transferred to savings
+   */
   const remainingAfterPayment =
-    amountWithinBalance
+    validAmount
       ? Math.max(
           0,
           outstanding -
             parsedAmount,
         )
       : outstanding;
+
+  const excessPayment =
+    validAmount
+      ? Math.max(
+          0,
+          parsedAmount -
+            outstanding,
+        )
+      : 0;
 
   /* =======================================================
      MONEY
@@ -362,6 +377,25 @@ export default function LoanRepaymentModal({
 
       return;
     }
+
+    /*
+     * IMPORTANT:
+     *
+     * There is intentionally NO check here that prevents
+     * the repayment from exceeding the loan balance.
+     *
+     * Example:
+     *
+     * Outstanding = KSh 8,400
+     * Received    = KSh 10,500
+     *
+     * The FULL KSh 10,500 is submitted to the server.
+     *
+     * The server will:
+     *
+     *   KSh 8,400 -> loan
+     *   KSh 2,100 -> savings
+     */
 
     /* =====================================================
        TRANSACTION REFERENCE
@@ -487,6 +521,17 @@ export default function LoanRepaymentModal({
         loanId:
           selectedLoan.id,
 
+        /*
+         * IMPORTANT:
+         *
+         * Always submit the FULL amount received.
+         *
+         * Do not reduce this to the loan outstanding
+         * balance in the frontend.
+         *
+         * The backend determines how much is applied
+         * to the loan and how much becomes savings.
+         */
         amount:
           normalizedAmount,
 
@@ -691,7 +736,6 @@ export default function LoanRepaymentModal({
                   id="repayment-amount"
                   type="number"
                   min="0.01"
-                  max={outstanding}
                   step="0.01"
                   inputMode="decimal"
                   value={amount}
@@ -710,9 +754,9 @@ export default function LoanRepaymentModal({
                 />
               </div>
 
-              {validAmount &&
-                amountWithinBalance && (
-                  <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+              {validAmount && (
+                <div className="mt-2 space-y-1">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
                     Balance after payment:{" "}
                     <span className="font-semibold text-slate-700 dark:text-slate-200">
                       KSh{" "}
@@ -721,7 +765,20 @@ export default function LoanRepaymentModal({
                       )}
                     </span>
                   </p>
-                )}
+
+                  {excessPayment > 0 && (
+                    <p className="text-sm text-emerald-600 dark:text-emerald-400">
+                      Excess → Savings:{" "}
+                      <span className="font-semibold">
+                        KSh{" "}
+                        {formatMoney(
+                          excessPayment,
+                        )}
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* =================================================
@@ -840,7 +897,7 @@ export default function LoanRepaymentModal({
                   setError("");
                 }}
                 disabled={loading}
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:focus:border-slate-400 dark:focus:ring-slate-700"
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:focus:border-slate-400 dark:hover:bg-slate-700"
               >
                 <option value="manual">
                   Manual
@@ -946,4 +1003,3 @@ export default function LoanRepaymentModal({
     </div>
   );
 }
-
