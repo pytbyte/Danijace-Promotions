@@ -2497,8 +2497,6 @@ async function reconcileLoan(
     calculateFinalOutstanding(
       loan.principal,
       loan.interestAmount,
-      totalFines,
-      totalWaivedFines,
       amountPaid,
     );
 
@@ -2853,8 +2851,6 @@ export async function createLoan(
               calculateFinalOutstanding(
                 previous.principal,
                 previous.interestAmount,
-                fines,
-                waived,
                 paid,
               );
 
@@ -6067,8 +6063,6 @@ export async function updateLoan(
           calculateFinalOutstanding(
             newPrincipal,
             newInterestAmount,
-            totalFines,
-            totalWaivedFines,
             amountPaid,
           );
 
@@ -7477,8 +7471,6 @@ export async function accrueLoanFines(
           calculateFinalOutstanding(
             loan.principal,
             loan.interestAmount,
-            fines,
-            waived,
             paid,
           );
 
@@ -10159,8 +10151,6 @@ export async function createLoanWaiver(
             calculateFinalOutstanding(
               loan.principal,
               loan.interestAmount,
-              totalFines,
-              newTotalWaived,
               amountPaid,
             );
 
