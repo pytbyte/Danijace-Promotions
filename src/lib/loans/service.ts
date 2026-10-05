@@ -3781,9 +3781,6 @@ function calculateWeeklyRepaymentBalance(
       asOfDate,
     );
 
-  /*
-   * A contractual loan schedule cannot end before it begins.
-   */
   if (
     loanEndDate <
     disbursementDate
@@ -3816,8 +3813,29 @@ function calculateWeeklyRepaymentBalance(
       ? cycleDaysRaw
       : 7;
 
+  /*
+   * Fine rate is stored on the loan as a percentage.
+   *
+   * Example:
+   *
+   *   fineRate = 10
+   *
+   * means:
+   *
+   *   10% of the unpaid installment shortfall.
+   */
+  const fineRate =
+    money(
+      Math.max(
+        0,
+        Number(
+          loan.fineRate ?? 0,
+        ),
+      ),
+    );
+
   /* =========================================================
-     LOAN OUTSTANDING BALANCE
+     LOAN STATE
   ========================================================= */
 
   const loanOutstandingBalance =
@@ -3838,14 +3856,13 @@ function calculateWeeklyRepaymentBalance(
   ========================================================= */
 
   /*
-   * Determine exactly how many contractual periods belong
-   * to this loan.
+   * A contractual period may start only before loan.endDate.
    *
-   * A period whose start is on or after loan.endDate does
-   * not belong to the contractual schedule.
+   * Therefore:
    *
-   * This avoids calling getAssessmentPeriod() for an
-   * invalid post-contract period.
+   *   periodStart < loanEndDate
+   *
+   * No period beginning on or after loan.endDate exists.
    */
   let maximumContractualPeriod =
     0;
@@ -3869,8 +3886,8 @@ function calculateWeeklyRepaymentBalance(
   }
 
   /*
-   * No contractual period exists when the end date equals
-   * the disbursement date.
+   * No contractual installment exists when the loan starts
+   * and ends on the same calendar date.
    */
   if (
     maximumContractualPeriod <=
@@ -3913,8 +3930,8 @@ function calculateWeeklyRepaymentBalance(
     );
 
   /*
-   * Never allow completed periods to extend beyond the
-   * contractual schedule.
+   * Never allow completed periods beyond the contractual
+   * schedule.
    */
   const latestCompletedPeriod =
     Math.min(
@@ -3926,14 +3943,8 @@ function calculateWeeklyRepaymentBalance(
     );
 
   /*
-   * Before the contractual end:
-   *
-   *     current = latest completed + 1
-   *
-   * After the contractual end:
-   *
-   *     the final contractual period remains the reference
-   *     period; no N + 1 period is manufactured.
+   * There can never be a current period after the final
+   * contractual period.
    */
   const currentPeriodNumber =
     Math.min(
@@ -4013,11 +4024,14 @@ function calculateWeeklyRepaymentBalance(
           }
 
           /*
-           * Payments are allowed after loan.endDate because
-           * they may settle an unpaid contractual balance.
+           * Payments before disbursement are invalid.
            *
-           * Only payments before disbursement or after the
-           * calculation date are excluded.
+           * Payments after asOfDate are ignored.
+           *
+           * Payments after loan.endDate remain valid because
+           * they can settle an existing contractual balance.
+           *
+           * They can NEVER create a new period.
            */
           if (
             transactionDate <
@@ -4070,7 +4084,7 @@ function calculateWeeklyRepaymentBalance(
       );
 
   /* =========================================================
-     PERIOD MODEL
+     CONTRACTUAL PERIOD MODEL
   ========================================================= */
 
   type InstallmentPeriod = {
@@ -4087,10 +4101,7 @@ function calculateWeeklyRepaymentBalance(
     [];
 
   /*
-   * Build only contractual periods.
-   *
-   * The final period can be shorter than the normal cycle
-   * because its end is bounded by loan.endDate.
+   * Build ONLY contractual periods.
    */
   for (
     let periodNumber = 1;
@@ -4098,6 +4109,20 @@ function calculateWeeklyRepaymentBalance(
     currentPeriodNumber;
     periodNumber++
   ) {
+    const expectedPeriodStart =
+      addCalendarDays(
+        disbursementDate,
+        (periodNumber - 1) *
+          cycleDays,
+      );
+
+    if (
+      expectedPeriodStart >=
+      loanEndDate
+    ) {
+      break;
+    }
+
     const period =
       getAssessmentPeriod(
         loan,
@@ -4115,14 +4140,20 @@ function calculateWeeklyRepaymentBalance(
     }
 
     /*
-     * Never allow a period to extend beyond the contractual
-     * loan end date.
+     * Never allow the period to finish after loan.endDate.
      */
     const boundedPeriodEnd =
       period.periodEnd >
       loanEndDate
         ? loanEndDate
         : period.periodEnd;
+
+    if (
+      boundedPeriodEnd <=
+      period.periodStart
+    ) {
+      continue;
+    }
 
     const assessment =
       assessments.find(
@@ -4133,26 +4164,26 @@ function calculateWeeklyRepaymentBalance(
           periodNumber,
       );
 
-    /*
-     * Historical periods use the persisted assessment
-     * installment when available.
-     *
-     * Current/future periods use the current loan
-     * installment amount.
-     */
-    const periodInstallment =
+    const rawPeriodInstallment =
       periodNumber <=
       latestCompletedPeriod
-        ? money(
-            Math.max(
-              0,
-              Number(
-                assessment?.expectedInstallment ??
-                  installmentAmount,
-              ),
-            ),
+        ? Number(
+            assessment?.expectedInstallment ??
+              installmentAmount,
           )
         : installmentAmount;
+
+    const periodInstallment =
+      money(
+        Math.max(
+          0,
+          Number.isFinite(
+            rawPeriodInstallment,
+          )
+            ? rawPeriodInstallment
+            : installmentAmount,
+        ),
+      );
 
     if (
       periodInstallment <=
@@ -4199,7 +4230,8 @@ function calculateWeeklyRepaymentBalance(
     0;
 
   /*
-   * Allocate payments oldest contractual installment first.
+   * Allocate repayments against completed contractual
+   * installments from oldest to newest.
    */
   for (
     const repayment of
@@ -4228,7 +4260,7 @@ function calculateWeeklyRepaymentBalance(
         ];
 
       /*
-       * Do not allocate into a current/future period here.
+       * Do not allocate into the current/future period.
        */
       if (
         period.periodNumber >
@@ -4237,9 +4269,6 @@ function calculateWeeklyRepaymentBalance(
         break;
       }
 
-      /*
-       * Skip already-paid periods.
-       */
       if (
         period.remainingBalance <=
         0
@@ -4341,8 +4370,8 @@ function calculateWeeklyRepaymentBalance(
     }
 
     /*
-     * Any remaining amount becomes future contractual
-     * credit.
+     * Anything left after all completed contractual periods
+     * becomes credit.
      */
     if (
       remainingPayment > 0
@@ -4404,7 +4433,7 @@ function calculateWeeklyRepaymentBalance(
     );
 
   /* =========================================================
-     TOTAL FUTURE CREDIT
+     FUTURE CREDIT
   ========================================================= */
 
   const totalFutureCredit =
@@ -4418,9 +4447,12 @@ function calculateWeeklyRepaymentBalance(
           ) =>
             money(
               total +
-                Number(
-                  surplus.unusedCredit ??
-                    0,
+                Math.max(
+                  0,
+                  Number(
+                    surplus.unusedCredit ??
+                      0,
+                  ),
                 ),
             ),
           0,
@@ -4429,96 +4461,55 @@ function calculateWeeklyRepaymentBalance(
     );
 
   /* =========================================================
-     CONTRACTUAL FUTURE INSTALLMENT LIMIT
+     CURRENT CONTRACTUAL INSTALLMENT
   ========================================================= */
 
-  const remainingContractualPeriods =
-    Math.max(
-      0,
-      maximumContractualPeriod -
-        latestCompletedPeriod,
-    );
-
-  /* =========================================================
-     CURRENT INSTALLMENT BALANCE
-  ========================================================= */
-
-  let remainingFutureCredit =
-    totalFutureCredit;
-
-  let futureInstallmentsCovered =
-    0;
+  const hasCurrentContractualPeriod =
+    latestCompletedPeriod <
+      maximumContractualPeriod &&
+    currentPeriodNumber >= 1 &&
+    currentPeriodNumber <=
+      maximumContractualPeriod;
 
   let currentInstallmentBalance =
     0;
 
-  const hasCurrentContractualPeriod =
-    latestCompletedPeriod <
-    maximumContractualPeriod;
-
   if (
-    loanIsOver ||
-    !hasCurrentContractualPeriod
+    !loanIsOver &&
+    hasCurrentContractualPeriod
   ) {
     /*
-     * No contractual installment remains.
+     * Only the current contractual installment is displayed.
      *
-     * Never manufacture an installment beyond loan.endDate.
+     * No future installment is manufactured.
      */
     currentInstallmentBalance =
+      money(
+        Math.max(
+          0,
+          installmentAmount -
+            totalFutureCredit,
+        ),
+      );
+  }
+
+  if (
+    !hasCurrentContractualPeriod
+  ) {
+    currentInstallmentBalance =
       0;
-  } else {
-    /*
-     * Future credit can cover the current installment and
-     * subsequent contractual installments, but never beyond
-     * the contractual schedule.
-     */
-    while (
-      futureInstallmentsCovered <
-        remainingContractualPeriods &&
-      remainingFutureCredit >=
-        installmentAmount &&
-      installmentAmount > 0
-    ) {
-      remainingFutureCredit =
-        money(
-          Math.max(
-            0,
-            remainingFutureCredit -
-              installmentAmount,
-          ),
-        );
-
-      futureInstallmentsCovered++;
-    }
-
-    if (
-      futureInstallmentsCovered <
-      remainingContractualPeriods
-    ) {
-      currentInstallmentBalance =
-        money(
-          Math.max(
-            0,
-            installmentAmount -
-              remainingFutureCredit,
-          ),
-        );
-    } else {
-      currentInstallmentBalance =
-        0;
-    }
   }
 
   /* =========================================================
-     WEEKLY REPAYMENT BALANCE
+     WEEKLY INSTALLMENT BALANCE
   ========================================================= */
 
   /*
-   * Fines are intentionally excluded.
+   * IMPORTANT:
    *
-   * weeklyRepaymentBalance represents the contractual
-   * installment balance only.
+   * This is ONLY the unpaid contractual installment amount.
+   *
+   * Fines are NOT included.
    */
   const weeklyRepaymentBalance =
     money(
@@ -4530,7 +4521,7 @@ function calculateWeeklyRepaymentBalance(
     );
 
   /* =========================================================
-     BUILD PERIOD BREAKDOWN
+     PERIOD BREAKDOWN + FINE CALCULATION
   ========================================================= */
 
   const breakdownPeriods =
@@ -4539,14 +4530,6 @@ function calculateWeeklyRepaymentBalance(
         (
           period,
         ): WeeklyRepaymentBreakdownPeriod => {
-          const actualPeriodBalance =
-            money(
-              Math.max(
-                0,
-                period.remainingBalance,
-              ),
-            );
-
           const allocated =
             money(
               Math.max(
@@ -4556,48 +4539,119 @@ function calculateWeeklyRepaymentBalance(
             );
 
           /*
-           * Assessment.fineAmount is the authoritative fine
-           * for this contractual installment period.
+           * ===================================================
+           * FINE CALCULATION
+           * ===================================================
            *
-           * Fines are displayed separately and never added to
-           * the contractual installment balance.
+           * Fine is calculated HERE from the loan's fineRate.
+           *
+           * Fine is charged only when:
+           *
+           *   1. The period has ended.
+           *   2. The period is therefore completed/due.
+           *   3. There is an unpaid shortfall.
+           *
+           * The fine is based on the amount that was actually
+           * unpaid at the end of that contractual period.
+           *
+           * IMPORTANT:
+           *
+           * The fine is NEVER added to `balance`.
            */
-          const assessment =
-            assessments.find(
-              (
-                item,
-              ) =>
-                item.periodNumber ===
-                period.periodNumber,
-            );
 
-          const fine =
+          const periodHasEnded =
+            period.periodEnd <=
+            today;
+
+          let paidByPeriodEnd =
+            0;
+
+          /*
+           * Only repayments made on or before the period end
+           * count toward the period's fine assessment.
+           *
+           * A payment made later may reduce the installment
+           * balance, but it does not erase the fact that the
+           * installment was short at its due date.
+           */
+          for (
+            const allocation of
+              allocations
+          ) {
+            if (
+              allocation.periodNumber !==
+              period.periodNumber
+            ) {
+              continue;
+            }
+
+            if (
+              allocation.paymentDate >
+              period.periodEnd
+            ) {
+              continue;
+            }
+
+            paidByPeriodEnd =
+              money(
+                paidByPeriodEnd +
+                  Math.max(
+                    0,
+                    Number(
+                      allocation.amountApplied ??
+                        0,
+                    ),
+                  ),
+              );
+          }
+
+          const installmentShortfallAtDueDate =
             money(
               Math.max(
                 0,
-                Number(
-                  assessment?.fineAmount ??
-                    0,
-                ),
+                period.periodInstallment -
+                  paidByPeriodEnd,
               ),
             );
 
-          let balance =
-            actualPeriodBalance;
-
-          let status:
-            | "paid"
-            | "partial"
-            | "current"
-            | "unpaid";
+          const fine =
+            periodHasEnded &&
+            installmentShortfallAtDueDate >
+              0 &&
+            fineRate > 0
+              ? money(
+                  (
+                    installmentShortfallAtDueDate *
+                    fineRate
+                  ) /
+                    100,
+                )
+              : 0;
 
           /*
-           * Historical/completed contractual period.
+           * ===================================================
+           * COMPLETED PERIOD
+           * ===================================================
            */
+
           if (
             period.periodNumber <=
             latestCompletedPeriod
           ) {
+            const balance =
+              money(
+                Math.max(
+                  0,
+                  period.remainingBalance,
+                ),
+              );
+
+            let status:
+              | "paid"
+              | "partial"
+              | "current"
+              | "unpaid";
+
             if (
               balance <=
               0
@@ -4637,25 +4691,30 @@ function calculateWeeklyRepaymentBalance(
           }
 
           /*
-           * Current contractual period.
-           *
-           * This branch cannot represent a period beyond the
-           * contractual end date.
+           * ===================================================
+           * CURRENT PERIOD
+           * ===================================================
            */
-          balance =
-            currentInstallmentBalance;
 
-          if (
+          const balance =
+            money(
+              Math.max(
+                0,
+                currentInstallmentBalance,
+              ),
+            );
+
+          const status:
+            | "paid"
+            | "partial"
+            | "current"
+            | "unpaid" =
             balance <=
             0
-          ) {
-            status =
-              loanIsOver
+              ? loanIsOver
                 ? "paid"
-                : "current";
-          } else {
-            status = "current";
-          }
+                : "current"
+              : "current";
 
           return {
             periodNumber:
@@ -4676,7 +4735,13 @@ function calculateWeeklyRepaymentBalance(
 
             balance,
 
-            fine,
+            /*
+             * Current periods do not receive a fine merely
+             * because they have an outstanding balance.
+             *
+             * The period must first end.
+             */
+            fine: 0,
 
             status,
           };
@@ -4696,11 +4761,8 @@ function calculateWeeklyRepaymentBalance(
   ========================================================= */
 
   /*
-   * Total fines represented by the installment breakdown.
-   *
-   * This is deliberately calculated from the individual
-   * period fines so the aggregate always reconciles with the
-   * displayed breakdown.
+   * Total fines are completely separate from the weekly
+   * installment balance.
    */
   const totalFines =
     money(
@@ -4789,39 +4851,6 @@ function calculateWeeklyRepaymentBalance(
   );
 
   /* =========================================================
-     REMINDER BREAKDOWN
-  ========================================================= */
-
-  const reminderBreakdown:
-    WeeklyRepaymentBreakdown = {
-    installmentAmount,
-
-    cycleDays,
-
-    latestCompletedPeriod,
-
-    currentPeriodNumber,
-
-    completedBalance:
-      completedInstallmentBalance,
-
-    currentBalance:
-      currentInstallmentBalance,
-
-    totalBalance:
-      weeklyRepaymentBalance,
-
-    totalFines,
-
-    periods:
-      breakdownPeriods,
-
-    allocations,
-
-    surpluses,
-  };
-
-  /* =========================================================
      PUBLIC BREAKDOWN
   ========================================================= */
 
@@ -4841,9 +4870,17 @@ function calculateWeeklyRepaymentBalance(
     currentBalance:
       currentInstallmentBalance,
 
+    /*
+     * CORE INSTALLMENT BALANCE ONLY.
+     *
+     * Fines are deliberately excluded.
+     */
     totalBalance:
       weeklyRepaymentBalance,
 
+    /*
+     * FINES ARE SEPARATE.
+     */
     totalFines,
 
     periods:
@@ -4864,7 +4901,7 @@ function calculateWeeklyRepaymentBalance(
         currentPeriodNumber,
 
         weeklyRepaymentBreakdown:
-          reminderBreakdown,
+          weeklyRepaymentBreakdown,
       },
 
       today,

@@ -59,30 +59,6 @@ function formatKES(
   ).format(amount);
 }
 
-function formatDate(
-  value: Date | string | number,
-): string {
-  const date =
-    new Date(value);
-
-  if (
-    Number.isNaN(
-      date.getTime(),
-    )
-  ) {
-    return "—";
-  }
-
-  return new Intl.DateTimeFormat(
-    "en-KE",
-    {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    },
-  ).format(date);
-}
-
 /**
  * Financial dates are CalendarDate values:
  *
@@ -141,7 +117,7 @@ function formatCalendarDate(
 }
 
 /* =========================================================
-   HELPERS
+   GENERAL HELPERS
 ========================================================= */
 
 function calculateProgress(
@@ -385,6 +361,19 @@ function getPeriodStatusClasses(
   }
 }
 
+function getPeriodFine(
+  period: WeeklyRepaymentBreakdownPeriod,
+): number {
+  return Number.isFinite(
+    period.fine,
+  )
+    ? Math.max(
+        0,
+        period.fine,
+      )
+    : 0;
+}
+
 /* =========================================================
    COMPONENT
 ========================================================= */
@@ -416,6 +405,10 @@ export default function LoanCard({
     setIsAllocationDetailsOpen,
   ] = useState(false);
 
+  /* =======================================================
+     BASIC LOAN VALUES
+  ======================================================= */
+
   const progress =
     calculateProgress(loan);
 
@@ -439,16 +432,6 @@ export default function LoanCard({
         )
       : 0;
 
-  const totalFines =
-    Number.isFinite(
-      loan.totalFines,
-    )
-      ? Math.max(
-          0,
-          loan.totalFines,
-        )
-      : 0;
-
   const fineRate =
     formatFineRate(
       loan.fineRate,
@@ -468,19 +451,19 @@ export default function LoanCard({
 
   /* =======================================================
      WEEKLY REPAYMENT DATA
-
-     These values come from the loan service.
-
-     Important:
-     - Period balances remain the real accounting values.
-     - Display fallback below is presentation-only.
-     - Fines are never included.
+     
+     IMPORTANT FINANCIAL RULE:
+     
+     Weekly repayment balance contains ONLY unpaid
+     contractual installment amounts.
+     
+     Fines are completely separate.
   ======================================================= */
 
   const weeklyBreakdown =
     loan.weeklyRepaymentBreakdown;
 
-  const weeklyRepaymentBalance =
+  const persistedWeeklyBalance =
     typeof loan.weeklyRepaymentBalance ===
       "number" &&
     Number.isFinite(
@@ -501,64 +484,9 @@ export default function LoanCard({
     [];
 
   /* =======================================================
-     ACTUAL CURRENT PERIOD
-
-     Never replace a real period balance with the next
-     installment value. The period itself must continue
-     showing its true accounting state.
-
-     Example:
-
-       Installment 1
-       Paid
-       Remaining: Ksh 0
-
-     That remains Ksh 0 even when the loan still has
-     another installment outstanding.
+     INSTALLMENT AMOUNT
   ======================================================= */
 
-  const currentPeriod =
-    weeklyBreakdown?.periods.find(
-      (period) =>
-        period.status ===
-        "current",
-    );
-
-  const currentPeriodBalance =
-    currentPeriod &&
-    Number.isFinite(
-      currentPeriod.balance,
-    )
-      ? Math.max(
-          0,
-          currentPeriod.balance,
-        )
-      : null;
-
-  /*
-   * The service's currentBalance is the actual current
-   * installment balance.
-   *
-   * Prefer the actual current period when available because
-   * it directly represents the period being displayed.
-   */
-  const actualCurrentBalance =
-    currentPeriodBalance !== null
-      ? currentPeriodBalance
-      : weeklyBreakdown
-          ? Math.max(
-              0,
-              Number(
-                weeklyBreakdown.currentBalance ??
-                  0,
-              ),
-            )
-          : 0;
-
-  /*
-   * Installment amount used for the next-installment
-   * display fallback.
-   */
   const installmentAmount =
     weeklyBreakdown &&
     Number.isFinite(
@@ -577,38 +505,24 @@ export default function LoanCard({
           )
         : 0;
 
-  /*
-   * When:
-   *
-   *   actual current balance = 0
-   *   outstanding loan balance > 0
-   *   installment amount > 0
-   *
-   * the current installment has been paid and the next
-   * installment should be displayed.
-   *
-   * This is ONLY a display fallback.
-   *
-   * It does not change period.balance, allocations,
-   * accounting, or the underlying loan data.
-   */
-  const isNextInstallmentDisplay =
-    Boolean(
-      weeklyBreakdown &&
-        actualCurrentBalance <= 0 &&
-        outstanding > 0 &&
-        installmentAmount > 0,
-    );
+  /* =======================================================
+     CORE WEEKLY BALANCE
+     
+     NEVER includes fines.
+     
+     The service provides:
+     
+       completedBalance
+       currentBalance
+       totalBalance
+     
+     The displayed calculation is:
+     
+       completedBalance + currentBalance
+     
+     No fine is added.
+  ======================================================= */
 
-  const displayCurrentBalance =
-    isNextInstallmentDisplay
-      ? installmentAmount
-      : actualCurrentBalance;
-
-  /*
-   * Previous completed unpaid installments remain part of
-   * the weekly amount.
-   */
   const completedBalance =
     weeklyBreakdown &&
     Number.isFinite(
@@ -620,28 +534,78 @@ export default function LoanCard({
         )
       : 0;
 
-  /*
-   * This is the amount shown in the card.
-   *
-   * We intentionally do NOT use weeklyBreakdown.totalBalance
-   * here because that value represents the actual accounting
-   * balance and can correctly be zero when the current period
-   * has just been paid.
-   *
-   * For display:
-   *
-   *   previous unpaid balance
-   *   +
-   *   current/next installment
-   */
+  const currentBalance =
+    weeklyBreakdown &&
+    Number.isFinite(
+      weeklyBreakdown.currentBalance,
+    )
+      ? Math.max(
+          0,
+          weeklyBreakdown.currentBalance,
+        )
+      : 0;
+
+  const calculatedWeeklyBalance =
+    Math.max(
+      0,
+      completedBalance +
+        currentBalance,
+    );
+
   const displayWeeklyBalance =
+    weeklyBreakdown
+      ? calculatedWeeklyBalance
+      : persistedWeeklyBalance;
+
+  /* =======================================================
+     TOTAL FINES
+     
+     Fines are calculated from the individual displayed
+     repayment periods.
+     
+     This guarantees:
+     
+       Total fines
+         = sum(period.fine)
+     
+     and therefore the number displayed here actually
+     reconciles with the period-level fines shown below.
+     
+     loan.totalFines is only used when there is no breakdown.
+  ======================================================= */
+
+  const calculatedPeriodFines =
+    weeklyBreakdown
+      ? weeklyBreakdown.periods.reduce(
+          (
+            total,
+            period,
+          ) =>
+            total +
+            getPeriodFine(
+              period,
+            ),
+          0,
+        )
+      : 0;
+
+  const loanTotalFines =
+    Number.isFinite(
+      loan.totalFines,
+    )
+      ? Math.max(
+          0,
+          loan.totalFines,
+        )
+      : 0;
+
+  const totalFines =
     weeklyBreakdown
       ? Math.max(
           0,
-          completedBalance +
-            displayCurrentBalance,
+          calculatedPeriodFines,
         )
-      : weeklyRepaymentBalance;
+      : loanTotalFines;
 
   /* =======================================================
      DELETE
@@ -972,6 +936,9 @@ export default function LoanCard({
 
       {/* =====================================================
           WEEKLY INSTALLMENT BALANCE
+          
+          IMPORTANT:
+          Fines are NOT included here.
       ====================================================== */}
 
       <div className="bg-white px-5 pb-5">
@@ -988,9 +955,7 @@ export default function LoanCard({
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <p className="text-xs font-medium text-red-600/70">
-                  {isNextInstallmentDisplay
-                    ? "Next installment"
-                    : "Weekly installment balance"}
+                  Weekly installment balance
                 </p>
 
                 <p className="mt-1 text-[26px] font-bold tracking-tight text-red-600">
@@ -1000,11 +965,7 @@ export default function LoanCard({
                 </p>
 
                 <p className="mt-1 text-[11px] text-red-600/70">
-                  {isNextInstallmentDisplay
-                    ? completedBalance > 0
-                      ? "Unpaid previous weeks + next installment"
-                      : "Current installment is paid · showing the next installment"
-                    : "Current installment + unpaid previous weeks"}
+                  Current installment + unpaid previous weeks
                 </p>
               </div>
 
@@ -1124,7 +1085,7 @@ export default function LoanCard({
                     SUMMARY
                 ================================================== */}
 
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
                     <p className="text-[10px] text-black/50">
                       Installment
@@ -1151,17 +1112,61 @@ export default function LoanCard({
 
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
                     <p className="text-[10px] text-black/50">
-                      {isNextInstallmentDisplay
-                        ? "Next"
-                        : "Current"}
+                      Current
                     </p>
 
                     <p className="mt-1 text-xs font-semibold text-red-600">
                       {formatKES(
-                        displayCurrentBalance,
+                        currentBalance,
                       )}
                     </p>
                   </div>
+
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                    <p className="text-[10px] text-amber-700/70">
+                      Total fines
+                    </p>
+
+                    <p className="mt-1 text-xs font-bold text-amber-700">
+                      {formatKES(
+                        totalFines,
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {/* =================================================
+                    CORE BALANCE RECONCILIATION
+                ================================================== */}
+
+                <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[10px] font-medium text-red-600/70">
+                      Weekly installment balance
+                    </span>
+
+                    <span className="text-sm font-bold text-red-600">
+                      {formatKES(
+                        displayWeeklyBalance,
+                      )}
+                    </span>
+                  </div>
+
+                  <p className="mt-1 text-[9px] text-red-600/60">
+                    {formatKES(
+                      completedBalance,
+                    )}{" "}
+                    previous +{" "}
+                    {formatKES(
+                      currentBalance,
+                    )}{" "}
+                    current
+                  </p>
+
+                  <p className="mt-1 text-[9px] font-medium text-red-600/60">
+                    Fines are completely excluded from
+                    this balance.
+                  </p>
                 </div>
 
                 {/* =================================================
@@ -1194,26 +1199,6 @@ export default function LoanCard({
                 <div className="mt-2 space-y-2">
                   {weeklyBreakdown.periods.map(
                     (period) => {
-                      const allocated =
-                        Math.max(
-                          0,
-                          Number.isFinite(
-                            period.allocated,
-                          )
-                            ? period.allocated
-                            : 0,
-                        );
-
-                      const balance =
-                        Math.max(
-                          0,
-                          Number.isFinite(
-                            period.balance,
-                          )
-                            ? period.balance
-                            : 0,
-                        );
-
                       const installment =
                         Math.max(
                           0,
@@ -1222,6 +1207,45 @@ export default function LoanCard({
                           )
                             ? period.installment
                             : 0,
+                        );
+
+                      /*
+                       * Never allow an allocation displayed
+                       * against an installment to exceed that
+                       * installment.
+                       */
+                      const allocated =
+                        Math.min(
+                          installment,
+                          Math.max(
+                            0,
+                            Number.isFinite(
+                              period.allocated,
+                            )
+                              ? period.allocated
+                              : 0,
+                          ),
+                        );
+
+                      /*
+                       * Recalculate the visible period
+                       * balance from:
+                       *
+                       * installment - allocated
+                       *
+                       * This guarantees the displayed
+                       * period numbers add up.
+                       */
+                      const balance =
+                        Math.max(
+                          0,
+                          installment -
+                            allocated,
+                        );
+
+                      const fine =
+                        getPeriodFine(
+                          period,
                         );
 
                       const allocationPercent =
@@ -1242,8 +1266,7 @@ export default function LoanCard({
                         "current";
 
                       const isPaid =
-                        period.status ===
-                        "paid";
+                        balance <= 0;
 
                       return (
                         <div
@@ -1325,6 +1348,10 @@ export default function LoanCard({
                             </div>
                           </div>
 
+                          {/* =================================================
+                              PAYMENT PROGRESS
+                          ================================================== */}
+
                           <div className="mt-3">
                             <div className="mb-1 flex items-center justify-between text-[9px]">
                               <span className="text-black/45">
@@ -1361,6 +1388,10 @@ export default function LoanCard({
                             </div>
                           </div>
 
+                          {/* =================================================
+                              PERIOD CALCULATION
+                          ================================================== */}
+
                           <div className="mt-2.5 space-y-1 text-[9px]">
                             <div className="flex items-center justify-between gap-3">
                               <span className="text-black/40">
@@ -1386,8 +1417,8 @@ export default function LoanCard({
                               </span>
                             </div>
 
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="text-black/40">
+                            <div className="flex items-center justify-between gap-3 border-t border-slate-200 pt-1.5">
+                              <span className="font-medium text-black/50">
                                 Remaining
                               </span>
 
@@ -1406,11 +1437,117 @@ export default function LoanCard({
                                 )}
                               </span>
                             </div>
+
+                            {/* =================================================
+                                PERIOD FINE
+                                
+                                Separate from installment calculation.
+                            ================================================== */}
+
+                            <div className="flex items-center justify-between gap-3 border-t border-slate-200 pt-1.5">
+                              <span className="flex items-center gap-1 text-black/40">
+                                <ShieldAlert className="h-3 w-3 text-amber-600" />
+                                Fine
+                              </span>
+
+                              <span
+                                className={`
+                                  font-semibold
+                                  ${
+                                    fine > 0
+                                      ? "text-amber-700"
+                                      : "text-black/40"
+                                  }
+                                `}
+                              >
+                                {formatKES(
+                                  fine,
+                                )}
+                              </span>
+                            </div>
                           </div>
+
+                          {fine > 0 && (
+                            <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                              <div className="flex items-start gap-2">
+                                <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+
+                                <div className="min-w-0">
+                                  <p className="text-[9px] font-semibold text-amber-700">
+                                    Fine assessed
+                                  </p>
+
+                                  <p className="mt-0.5 text-[9px] leading-4 text-amber-700/70">
+                                    This fine is separate
+                                    from the installment
+                                    balance.
+                                  </p>
+                                </div>
+
+                                <span className="ml-auto shrink-0 text-[10px] font-bold text-amber-700">
+                                  {formatKES(
+                                    fine,
+                                  )}
+                                </span>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     },
                   )}
+                </div>
+
+                {/* =================================================
+                    TOTAL FINES
+                ================================================== */}
+
+                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-2.5">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-amber-200 bg-white text-amber-600">
+                        <ShieldAlert className="h-4 w-4" />
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-amber-800">
+                          Total fines
+                        </p>
+
+                        <p className="mt-0.5 text-[10px] leading-4 text-amber-700/70">
+                          Sum of fines assessed across
+                          the repayment periods.
+                        </p>
+                      </div>
+                    </div>
+
+                    <p className="shrink-0 text-sm font-bold text-amber-700">
+                      {formatKES(
+                        totalFines,
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="mt-2 border-t border-amber-200/70 pt-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[9px] text-amber-700/60">
+                        Fine policy
+                      </span>
+
+                      <span className="text-[9px] font-semibold text-amber-700">
+                        {fineRate} per{" "}
+                        {repaymentCycle} cycle
+                      </span>
+                    </div>
+
+                    {loan.fineStatus ===
+                      "stopped" && (
+                      <p className="mt-1 text-[9px] font-medium text-amber-700/70">
+                        Future fines are stopped.
+                        Existing fines remain recorded.
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 {/* =================================================
@@ -1634,7 +1771,7 @@ export default function LoanCard({
                                   </div>
 
                                   <div className="rounded-xl bg-red-50 px-2.5 py-2 text-right">
-                                    <p className="text-[8px] text-red-600/50">
+                                    <p className="text-[8px] text-red-600/40">
                                       After
                                     </p>
 
@@ -1775,14 +1912,14 @@ export default function LoanCard({
                   )}
 
                 {/* =================================================
-                    FINAL CALCULATION
+                    FINAL WEEKLY BALANCE
                 ================================================== */}
 
                 <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-3.5 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-[10px] font-medium text-red-600/70">
-                        Weekly balance
+                        Weekly installment balance
                       </p>
 
                       <p className="mt-1 text-[11px] font-semibold text-black">
@@ -1791,11 +1928,9 @@ export default function LoanCard({
                         )}{" "}
                         previous +{" "}
                         {formatKES(
-                          displayCurrentBalance,
+                          currentBalance,
                         )}{" "}
-                        {isNextInstallmentDisplay
-                          ? "next"
-                          : "current"}
+                        current
                       </p>
                     </div>
 
@@ -1822,8 +1957,8 @@ export default function LoanCard({
                   </div>
 
                   <p className="mt-2 text-[9px] leading-4 text-red-600/60">
-                    Fines are excluded from this weekly
-                    installment balance.
+                    Fines are separate and are not included
+                    in the weekly installment balance.
                   </p>
                 </div>
               </div>
@@ -1902,7 +2037,7 @@ export default function LoanCard({
                 </p>
 
                 <p className="mt-0.5 truncate text-xs font-medium text-black">
-                  {formatDate(
+                  {formatCalendarDate(
                     loan.disbursementDate,
                   )}
                 </p>
@@ -1918,7 +2053,7 @@ export default function LoanCard({
                 </p>
 
                 <p className="mt-0.5 truncate text-xs font-medium text-black">
-                  {formatDate(
+                  {formatCalendarDate(
                     loan.endDate,
                   )}
                 </p>
@@ -1928,65 +2063,6 @@ export default function LoanCard({
         </div>
       </div>
 
-      {/* =====================================================
-          FINES
-      ====================================================== */}
-      {/*
-            {totalFines > 0 && (
-              <div className="bg-white px-5 pb-4">
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
-
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold text-black">
-                          Fines
-                        </p>
-
-                        <p className="text-[11px] text-black/60">
-                          {loan.fineStatus ===
-                          "stopped"
-                            ? `Future fines stopped · ${fineRate} per ${repaymentCycle} cycle`
-                            : `${fineRate} per completed ${repaymentCycle} cycle`}
-                        </p>
-                      </div>
-                    </div>
-
-                    <span className="shrink-0 text-sm font-semibold text-amber-700">
-                      {formatKES(
-                        totalFines,
-                      )}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {totalFines <= 0 && (
-              <div className="bg-white px-5 pb-4">
-                <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200 bg-sky-50 px-3.5 py-3">
-                  <ShieldAlert className="h-4 w-4 shrink-0 text-sky-600" />
-
-                  <p className="text-[11px] text-black/60">
-                    Fine policy:{" "}
-                    <span className="font-semibold text-black">
-                      {fineRate}
-                    </span>{" "}
-                    per completed{" "}
-                    <span className="font-semibold text-black">
-                      {repaymentCycle}
-                    </span>{" "}
-                    repayment cycle.
-
-                    {loan.fineStatus ===
-                      "stopped" &&
-                      " Future fines are stopped."}
-                  </p>
-                </div>
-              </div>
-            )}
-      */}
       {/* =====================================================
           GUARANTOR
       ====================================================== */}
