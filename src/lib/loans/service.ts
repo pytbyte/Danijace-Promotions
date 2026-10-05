@@ -4930,9 +4930,7 @@ function calculateWeeklyRepaymentBalance(
 function getLoanPaymentReminderPeriod(
   calculation: {
     currentPeriodNumber: number;
-
-    weeklyRepaymentBreakdown:
-      WeeklyRepaymentBreakdown;
+    weeklyRepaymentBreakdown: WeeklyRepaymentBreakdown;
   },
   today: CalendarDate,
 ): LoanPaymentReminderPeriod | null {
@@ -4948,12 +4946,10 @@ function getLoanPaymentReminderPeriod(
   }
 
   /*
-   * The installment is already fully paid.
+   * The current installment is already fully paid.
    * No reminder is required.
    */
-  if (
-    currentPeriod.balance <= 0
-  ) {
+  if (currentPeriod.balance <= 0) {
     return null;
   }
 
@@ -4961,33 +4957,21 @@ function getLoanPaymentReminderPeriod(
    * Reminder is sent exactly one calendar
    * day before the installment period ends.
    */
-  const reminderDate =
-    addCalendarDays(
-      currentPeriod.periodEnd,
-      -1,
-    );
+  const reminderDate = addCalendarDays(
+    currentPeriod.periodEnd,
+    -1,
+  );
 
-  if (
-    today !== reminderDate
-  ) {
+  if (today !== reminderDate) {
     return null;
   }
 
   return {
-    periodNumber:
-      currentPeriod.periodNumber,
-
-    periodStart:
-      currentPeriod.periodStart,
-
-    periodEnd:
-      currentPeriod.periodEnd,
-
-    installment:
-      currentPeriod.installment,
-
-    balance:
-      currentPeriod.balance,
+    periodNumber: currentPeriod.periodNumber,
+    periodStart: currentPeriod.periodStart,
+    periodEnd: currentPeriod.periodEnd,
+    installment: currentPeriod.installment,
+    balance: currentPeriod.balance,
   };
 }
 
