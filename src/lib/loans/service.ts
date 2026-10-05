@@ -3813,27 +3813,6 @@ function calculateWeeklyRepaymentBalance(
       ? cycleDaysRaw
       : 7;
 
-  /*
-   * Fine rate is stored on the loan as a percentage.
-   *
-   * Example:
-   *
-   *   fineRate = 10
-   *
-   * means:
-   *
-   *   10% of the unpaid installment shortfall.
-   */
-  const fineRate =
-    money(
-      Math.max(
-        0,
-        Number(
-          loan.fineRate ?? 0,
-        ),
-      ),
-    );
-
   /* =========================================================
      LOAN STATE
   ========================================================= */
@@ -4521,7 +4500,7 @@ function calculateWeeklyRepaymentBalance(
     );
 
   /* =========================================================
-     PERIOD BREAKDOWN + FINE CALCULATION
+     PERIOD BREAKDOWN
   ========================================================= */
 
   const breakdownPeriods =
@@ -4540,99 +4519,51 @@ function calculateWeeklyRepaymentBalance(
 
           /*
            * ===================================================
-           * FINE CALCULATION
+           * AUTHORITATIVE FINE
            * ===================================================
            *
-           * Fine is calculated HERE from the loan's fineRate.
+           * Fines are calculated and reconciled by the existing
+           * loan assessment/fine engine.
            *
-           * Fine is charged only when:
+           * We do NOT calculate another fine here.
            *
-           *   1. The period has ended.
-           *   2. The period is therefore completed/due.
-           *   3. There is an unpaid shortfall.
+           * The assessment already contains the authoritative
+           * fineAmount produced by that engine.
            *
-           * The fine is based on the amount that was actually
-           * unpaid at the end of that contractual period.
+           * Therefore:
            *
-           * IMPORTANT:
+           *   display fine = assessment.fineAmount
            *
-           * The fine is NEVER added to `balance`.
+           * Fines remain completely separate from the
+           * installment balance.
            */
 
-          const periodHasEnded =
-            period.periodEnd <=
-            today;
-
-          let paidByPeriodEnd =
-            0;
-
-          /*
-           * Only repayments made on or before the period end
-           * count toward the period's fine assessment.
-           *
-           * A payment made later may reduce the installment
-           * balance, but it does not erase the fact that the
-           * installment was short at its due date.
-           */
-          for (
-            const allocation of
-              allocations
-          ) {
-            if (
-              allocation.periodNumber !==
-              period.periodNumber
-            ) {
-              continue;
-            }
-
-            if (
-              allocation.paymentDate >
-              period.periodEnd
-            ) {
-              continue;
-            }
-
-            paidByPeriodEnd =
-              money(
-                paidByPeriodEnd +
-                  Math.max(
-                    0,
-                    Number(
-                      allocation.amountApplied ??
-                        0,
-                    ),
-                  ),
-              );
-          }
-
-          const installmentShortfallAtDueDate =
-            money(
-              Math.max(
-                0,
-                period.periodInstallment -
-                  paidByPeriodEnd,
-              ),
+          const assessment =
+            assessments.find(
+              (
+                item,
+              ) =>
+                item.periodNumber ===
+                period.periodNumber,
             );
 
           const fine =
-            periodHasEnded &&
-            installmentShortfallAtDueDate >
-              0 &&
-            fineRate > 0
+            period.periodNumber <=
+              latestCompletedPeriod
               ? money(
-                  (
-                    installmentShortfallAtDueDate *
-                    fineRate
-                  ) /
-                    100,
+                  Math.max(
+                    0,
+                    Number(
+                      assessment?.fineAmount ??
+                        0,
+                    ),
+                  ),
                 )
               : 0;
 
-          /*
-           * ===================================================
-           * COMPLETED PERIOD
-           * ===================================================
-           */
+          /* ===================================================
+             COMPLETED PERIOD
+          =================================================== */
 
           if (
             period.periodNumber <=
@@ -4690,11 +4621,9 @@ function calculateWeeklyRepaymentBalance(
             };
           }
 
-          /*
-           * ===================================================
-           * CURRENT PERIOD
-           * ===================================================
-           */
+          /* ===================================================
+             CURRENT PERIOD
+          =================================================== */
 
           const balance =
             money(
@@ -4736,10 +4665,8 @@ function calculateWeeklyRepaymentBalance(
             balance,
 
             /*
-             * Current periods do not receive a fine merely
-             * because they have an outstanding balance.
-             *
-             * The period must first end.
+             * The current period has not completed yet,
+             * therefore it has no assessed fine.
              */
             fine: 0,
 
@@ -5138,7 +5065,6 @@ export async function getCompletedInstallmentBalance(
 /* =========================================================
    LIST LOANS
 ========================================================= */
-
 export async function getLoans(
   options: LoanListOptions = {},
 ): Promise<PaginatedLoans> {
@@ -5184,7 +5110,8 @@ export async function getLoans(
   }
 
   if (options.repaymentStatus) {
-    filter.repaymentStatus = options.repaymentStatus;
+    filter.repaymentStatus =
+      options.repaymentStatus;
   }
 
   if (options.memberId) {
@@ -5198,7 +5125,9 @@ export async function getLoans(
       };
     }
 
-    filter.memberId = createObjectId(options.memberId);
+    filter.memberId = createObjectId(
+      options.memberId,
+    );
   }
 
   /* =========================================================
@@ -5211,7 +5140,8 @@ export async function getLoans(
       "repayment date",
     );
 
-    filter.repaymentDate = options.repaymentDate;
+    filter.repaymentDate =
+      options.repaymentDate;
   }
 
   if (options.endDate) {
@@ -5261,7 +5191,8 @@ export async function getLoans(
      COUNT
   ========================================================= */
 
-  const total = await loans.countDocuments(filter);
+  const total =
+    await loans.countDocuments(filter);
 
   const totalPages =
     total === 0
@@ -5310,14 +5241,14 @@ export async function getLoans(
 
   /* =========================================================
      MEMBER IDS
-     
+
      The loan stores memberId.
      The member document stores:
-     
+
        _id
        membershipNumber
        phone
-     
+
      We use memberId to resolve the correct member.
   ========================================================= */
 
@@ -5331,8 +5262,8 @@ export async function getLoans(
   /* =========================================================
      LOAD MEMBERS
 
-     Only load members belonging to the loans on this page.
-     Phone number comes from the members collection.
+     Only load members belonging to the loans
+     on this page.
   ========================================================= */
 
   const memberDocuments =
@@ -5379,6 +5310,16 @@ export async function getLoans(
 
   /* =========================================================
      LOAD ASSESSMENTS
+
+     IMPORTANT:
+
+     fineAmount MUST be loaded.
+
+     calculateWeeklyRepaymentBalance() uses the
+     assessment engine's persisted fineAmount as
+     the authoritative fine value.
+
+     Fines are NOT recalculated here.
   ========================================================= */
 
   const assessmentDocuments =
@@ -5396,6 +5337,7 @@ export async function getLoans(
             periodEnd: CalendarDate;
             expectedInstallment: unknown;
             installmentShortfall: unknown;
+            fineAmount: unknown;
           }>({
             loanId: 1,
             periodNumber: 1,
@@ -5403,6 +5345,7 @@ export async function getLoans(
             periodEnd: 1,
             expectedInstallment: 1,
             installmentShortfall: 1,
+            fineAmount: 1,
           })
           .sort({
             periodNumber: 1,
@@ -5420,7 +5363,8 @@ export async function getLoans(
   >();
 
   for (const assessment of assessmentDocuments) {
-    const key = assessment.loanId.toString();
+    const key =
+      assessment.loanId.toString();
 
     const existing =
       assessmentsByLoanId.get(key);
@@ -5469,7 +5413,8 @@ export async function getLoans(
   >();
 
   for (const repayment of repaymentDocuments) {
-    const key = repayment.loanId.toString();
+    const key =
+      repayment.loanId.toString();
 
     const existing =
       repaymentsByLoanId.get(key);
@@ -5506,6 +5451,19 @@ export async function getLoans(
             loanId,
           ) ?? [];
 
+        /* =================================================
+           CALCULATE WEEKLY REPAYMENT BALANCE
+
+           This calculation:
+
+           - uses contractual periods only
+           - allocates repayments to periods
+           - calculates completed balance
+           - calculates current balance
+           - reads persisted assessment fineAmount
+           - keeps fines separate from installment balance
+        ================================================= */
+
         const result =
           calculateWeeklyRepaymentBalance(
             document,
@@ -5516,18 +5474,18 @@ export async function getLoans(
 
         /* =================================================
            RESOLVE MEMBER
-           
+
            Loan:
              memberId
              memberNumber
-           
+
            Member:
              _id
              membershipNumber
              phone
-           
-           We use memberId because it is the
-           direct database relationship.
+
+           memberId is the direct database
+           relationship.
         ================================================= */
 
         const member =
@@ -5635,7 +5593,7 @@ export async function getLoans(
 
         /* =================================================
            RESPONSE-ONLY FINANCIAL VALUES
-           
+
            Nothing here is persisted to MongoDB.
         ================================================= */
 
@@ -5647,6 +5605,10 @@ export async function getLoans(
 
         loan.weeklyRepaymentBreakdown =
           result.weeklyRepaymentBreakdown;
+
+        /* =================================================
+           DEBUG LOG
+        ================================================= */
 
         console.log(
           "[LOANS LIST][WEEKLY BALANCE]",
@@ -5665,6 +5627,11 @@ export async function getLoans(
 
             totalBalance:
               result.weeklyRepaymentBalance,
+
+            totalFines:
+              result
+                .weeklyRepaymentBreakdown
+                .totalFines,
 
             currentPeriod:
               result.currentPeriodNumber,
@@ -5714,14 +5681,31 @@ export async function getLoans(
 export async function getLoanById(
   id: string,
 ): Promise<Loan | null> {
+  /* =========================================================
+     VALIDATE LOAN ID
+  ========================================================= */
+
   if (
-    typeof id !== "string" ||
+    typeof id !== "string"
+  ) {
+    return null;
+  }
+
+  const normalizedId =
+    id.trim();
+
+  if (
+    !normalizedId ||
     !ObjectId.isValid(
-      id,
+      normalizedId,
     )
   ) {
     return null;
   }
+
+  /* =========================================================
+     COLLECTIONS
+  ========================================================= */
 
   const {
     loans,
@@ -5731,15 +5715,22 @@ export async function getLoanById(
   } =
     await getCollections();
 
+  /* =========================================================
+     OBJECT ID
+  ========================================================= */
+
   const objectId =
     createObjectId(
-      id,
+      normalizedId,
     );
+
+  /* =========================================================
+     LOAD LOAN
+  ========================================================= */
 
   const loan =
     await loans.findOne({
-      _id:
-        objectId,
+      _id: objectId,
     });
 
   if (!loan) {
@@ -5747,14 +5738,23 @@ export async function getLoanById(
   }
 
   /* =========================================================
-     ASSESSMENTS
+     LOAD ASSESSMENTS
+
+     IMPORTANT:
+
+     fineAmount MUST be included.
+
+     calculateWeeklyRepaymentBalance() uses the
+     persisted assessment fineAmount as the authoritative
+     fine value.
+
+     Fines are not recalculated in this read operation.
   ========================================================= */
 
   const assessmentDocuments =
     await assessments
       .find({
-        loanId:
-          objectId,
+        loanId: objectId,
       })
       .project<{
         periodNumber: number;
@@ -5762,12 +5762,14 @@ export async function getLoanById(
         periodEnd: CalendarDate;
         expectedInstallment: unknown;
         installmentShortfall: unknown;
+        fineAmount: unknown;
       }>({
         periodNumber: 1,
         periodStart: 1,
         periodEnd: 1,
         expectedInstallment: 1,
         installmentShortfall: 1,
+        fineAmount: 1,
       })
       .sort({
         periodNumber: 1,
@@ -5775,14 +5777,13 @@ export async function getLoanById(
       .toArray();
 
   /* =========================================================
-     REPAYMENTS
+     LOAD REPAYMENTS
   ========================================================= */
 
   const repaymentDocuments =
     await repaymentCollection
       .find({
-        loanId:
-          objectId,
+        loanId: objectId,
       })
       .project<{
         amount: unknown;
@@ -5794,7 +5795,22 @@ export async function getLoanById(
       .toArray();
 
   /* =========================================================
-     CALCULATE
+     CALCULATE WEEKLY REPAYMENT BALANCE
+
+     This calculation provides:
+
+       - completed installment balance
+       - current installment balance
+       - weekly repayment balance
+       - period breakdown
+       - period fines
+       - total fines
+       - repayment allocations
+       - repayment surpluses
+       - payment reminder information
+
+     Fines remain separate from the weekly installment
+     balance.
   ========================================================= */
 
   const result =
@@ -5806,23 +5822,84 @@ export async function getLoanById(
     );
 
   /* =========================================================
-     RESPONSE
+     CONVERT DATABASE DOCUMENT TO RESPONSE MODEL
   ========================================================= */
 
-  return {
-    ...toLoan(
+  const hydratedLoan =
+    toLoan(
       loan,
-    ),
+    );
 
-    completedInstallmentBalance:
-      result.completedInstallmentBalance,
+  /* =========================================================
+     RESPONSE-ONLY FINANCIAL VALUES
 
-    weeklyRepaymentBalance:
-      result.weeklyRepaymentBalance,
+     These values are calculated dynamically and are NOT
+     persisted to MongoDB by this function.
+  ========================================================= */
 
-    weeklyRepaymentBreakdown:
-      result.weeklyRepaymentBreakdown,
-  };
+  hydratedLoan.completedInstallmentBalance =
+    result.completedInstallmentBalance;
+
+  hydratedLoan.weeklyRepaymentBalance =
+    result.weeklyRepaymentBalance;
+
+  hydratedLoan.weeklyRepaymentBreakdown =
+    result.weeklyRepaymentBreakdown;
+
+  /* =========================================================
+     DEBUG LOG
+  ========================================================= */
+
+  console.log(
+    "[GET LOAN BY ID][WEEKLY BALANCE]",
+    {
+      loanId:
+        hydratedLoan.id,
+
+      loanNumber:
+        hydratedLoan.loanNumber,
+
+      memberNumber:
+        hydratedLoan.memberNumber,
+
+      completedBalance:
+        result.completedInstallmentBalance,
+
+      currentBalance:
+        result.currentInstallmentBalance,
+
+      totalBalance:
+        result.weeklyRepaymentBalance,
+
+      totalFines:
+        result
+          .weeklyRepaymentBreakdown
+          .totalFines,
+
+      currentPeriod:
+        result.currentPeriodNumber,
+
+      periodCount:
+        result
+          .weeklyRepaymentBreakdown
+          .periods
+          .length,
+
+      allocationCount:
+        result
+          .weeklyRepaymentBreakdown
+          .allocations
+          .length,
+
+      surplusCount:
+        result
+          .weeklyRepaymentBreakdown
+          .surpluses
+          .length,
+    },
+  );
+
+  return hydratedLoan;
 }
 
 
@@ -5833,6 +5910,10 @@ export async function getLoanById(
 export async function getLoanByNumber(
   loanNumber: string,
 ): Promise<Loan | null> {
+  /* =========================================================
+     NORMALIZE LOAN NUMBER
+  ========================================================= */
+
   const normalized =
     typeof loanNumber ===
       "string"
@@ -5843,6 +5924,10 @@ export async function getLoanByNumber(
     return null;
   }
 
+  /* =========================================================
+     COLLECTIONS
+  ========================================================= */
+
   const {
     loans,
     assessments,
@@ -5850,6 +5935,10 @@ export async function getLoanByNumber(
       repaymentCollection,
   } =
     await getCollections();
+
+  /* =========================================================
+     LOAD LOAN
+  ========================================================= */
 
   const loan =
     await loans.findOne({
@@ -5861,18 +5950,51 @@ export async function getLoanByNumber(
     return null;
   }
 
+  /* =========================================================
+     VALIDATE LOAN OBJECT ID
+
+     A persisted loan should always have a valid MongoDB
+     ObjectId. Do not query child collections using an
+     invalid identifier.
+  ========================================================= */
+
+  if (
+    !(loan._id instanceof ObjectId)
+  ) {
+    console.error(
+      "[GET LOAN BY NUMBER] Invalid loan _id.",
+      {
+        loanNumber:
+          normalized,
+        loanId:
+          loan._id,
+      },
+    );
+
+    return null;
+  }
+
   const objectId =
     loan._id;
 
   /* =========================================================
-     ASSESSMENTS
+     LOAD ASSESSMENTS
+
+     IMPORTANT:
+
+     fineAmount MUST be included.
+
+     calculateWeeklyRepaymentBalance() uses the
+     persisted assessment fineAmount as the authoritative
+     fine value.
+
+     Fines are not recalculated in this read operation.
   ========================================================= */
 
   const assessmentDocuments =
     await assessments
       .find({
-        loanId:
-          objectId,
+        loanId: objectId,
       })
       .project<{
         periodNumber: number;
@@ -5880,12 +6002,14 @@ export async function getLoanByNumber(
         periodEnd: CalendarDate;
         expectedInstallment: unknown;
         installmentShortfall: unknown;
+        fineAmount: unknown;
       }>({
         periodNumber: 1,
         periodStart: 1,
         periodEnd: 1,
         expectedInstallment: 1,
         installmentShortfall: 1,
+        fineAmount: 1,
       })
       .sort({
         periodNumber: 1,
@@ -5893,14 +6017,13 @@ export async function getLoanByNumber(
       .toArray();
 
   /* =========================================================
-     REPAYMENTS
+     LOAD REPAYMENTS
   ========================================================= */
 
   const repaymentDocuments =
     await repaymentCollection
       .find({
-        loanId:
-          objectId,
+        loanId: objectId,
       })
       .project<{
         amount: unknown;
@@ -5912,7 +6035,7 @@ export async function getLoanByNumber(
       .toArray();
 
   /* =========================================================
-     CALCULATE
+     CALCULATE WEEKLY REPAYMENT BALANCE
   ========================================================= */
 
   const result =
@@ -5924,23 +6047,84 @@ export async function getLoanByNumber(
     );
 
   /* =========================================================
-     RESPONSE
+     CONVERT DATABASE DOCUMENT TO RESPONSE MODEL
   ========================================================= */
 
-  return {
-    ...toLoan(
+  const hydratedLoan =
+    toLoan(
       loan,
-    ),
+    );
 
-    completedInstallmentBalance:
-      result.completedInstallmentBalance,
+  /* =========================================================
+     RESPONSE-ONLY FINANCIAL VALUES
 
-    weeklyRepaymentBalance:
-      result.weeklyRepaymentBalance,
+     These values are calculated dynamically and are NOT
+     persisted to MongoDB by this function.
+  ========================================================= */
 
-    weeklyRepaymentBreakdown:
-      result.weeklyRepaymentBreakdown,
-  };
+  hydratedLoan.completedInstallmentBalance =
+    result.completedInstallmentBalance;
+
+  hydratedLoan.weeklyRepaymentBalance =
+    result.weeklyRepaymentBalance;
+
+  hydratedLoan.weeklyRepaymentBreakdown =
+    result.weeklyRepaymentBreakdown;
+
+  /* =========================================================
+     DEBUG LOG
+  ========================================================= */
+
+  console.log(
+    "[GET LOAN BY NUMBER][WEEKLY BALANCE]",
+    {
+      loanId:
+        hydratedLoan.id,
+
+      loanNumber:
+        hydratedLoan.loanNumber,
+
+      memberNumber:
+        hydratedLoan.memberNumber,
+
+      completedBalance:
+        result.completedInstallmentBalance,
+
+      currentBalance:
+        result.currentInstallmentBalance,
+
+      totalBalance:
+        result.weeklyRepaymentBalance,
+
+      totalFines:
+        result
+          .weeklyRepaymentBreakdown
+          .totalFines,
+
+      currentPeriod:
+        result.currentPeriodNumber,
+
+      periodCount:
+        result
+          .weeklyRepaymentBreakdown
+          .periods
+          .length,
+
+      allocationCount:
+        result
+          .weeklyRepaymentBreakdown
+          .allocations
+          .length,
+
+      surplusCount:
+        result
+          .weeklyRepaymentBreakdown
+          .surpluses
+          .length,
+    },
+  );
+
+  return hydratedLoan;
 }
 
 
