@@ -60,6 +60,11 @@ import {
 import clientPromise from "@/lib/mongodb";
 
 import {
+  getOrCreateSavingsAccount,
+  createSavingsDeposit,
+} from "@/lib/savings/service";
+
+import {
   queueLoanDisbursementSms,
 } from "@/lib/sms/outbox/notifications";
 
@@ -68,6 +73,7 @@ import {
   queueLoanClearedSms,
   queueLoanPaymentReceivedSms,
   queueLoanPaymentReminderSms,
+  queueSavingsDepositSms,
 } from "@/lib/sms/outbox/notifications";
 
 import type {
@@ -8537,8 +8543,8 @@ export async function createLoanRepayment(
 
      These values are populated inside the transaction.
 
-     Notifications and the overpaid API call are sent ONLY
-     after the transaction successfully commits.
+     Notifications are sent ONLY after the transaction
+     successfully commits.
   ======================================================= */
 
   let loanPaymentRecipient =
@@ -8554,14 +8560,23 @@ export async function createLoanRepayment(
     false;
 
   /*
+   * Savings transaction created from an overpayment.
+   *
+   * The financial transaction is created inside the same
+   * MongoDB transaction as the loan repayment. Only the
+   * SMS notification is deferred until after commit.
+   */
+  let savingsDepositTransactionId =
+    "";
+
+  /*
    * Amount received above the loan's remaining core
    * balance.
    *
    * This is NOT applied to the loan.
    *
-   * It will be persisted separately in the `overpaid`
-   * collection through the overpaid API after the
-   * transaction commits.
+   * If positive, it is deposited into the member's
+   * savings account atomically with the repayment.
    */
   let overpaidAmount =
     0;
@@ -9164,6 +9179,74 @@ export async function createLoanRepayment(
           }
 
           /* =================================================
+             OVERPAYMENT -> SAVINGS
+
+             The full bank payment remains in the immutable
+             repayment ledger.
+
+             Only the amount required to clear the loan is
+             added to loan.amountPaid.
+
+             Any excess is deposited into the member's
+             savings account using the SAME MongoDB session.
+
+             Therefore:
+
+               loan repayment + savings deposit
+
+             either both commit or both roll back.
+          ================================================= */
+
+          if (
+            overpaidAmount > 0
+          ) {
+            const savingsAccount =
+              await getOrCreateSavingsAccount(
+                loan.memberId.toString(),
+                session,
+              );
+
+            const savingsDeposit =
+              await createSavingsDeposit({
+                savingsAccountId:
+                  savingsAccount.id,
+
+                memberId:
+                  loan.memberId.toString(),
+
+                memberName:
+                  loanPaymentMemberName,
+
+                amount:
+                  overpaidAmount,
+
+                source:
+                  "system",
+
+                reference:
+                  `loan-overpayment:${repaymentDocument._id!.toString()}`,
+
+                sourceReference:
+                  repaymentDocument._id!.toString(),
+
+                transactionAt:
+                  transactionDate,
+
+                recordedBy:
+                  input.recordedBy
+                    ? normalizeActor(
+                        input.recordedBy,
+                      )
+                    : SYSTEM_ACTOR,
+
+                session,
+              });
+
+            savingsDepositTransactionId =
+              savingsDeposit.id;
+          }
+
+          /* =================================================
              DOMAIN MODEL
           ================================================= */
 
@@ -9210,8 +9293,8 @@ export async function createLoanRepayment(
               /*
                * Amount received above the core loan balance.
                *
-               * This will later be saved to the `overpaid`
-               * collection.
+               * This amount is transferred to the member's
+               * savings account in the same MongoDB transaction.
                */
               overpaidAmount,
 
@@ -9326,195 +9409,16 @@ export async function createLoanRepayment(
        From this point onward the financial transaction is
        permanent.
 
-       Notification/API failure MUST NOT roll back the
+       Notification failure MUST NOT roll back the
        payment.
 
-       IMPORTANT:
-       overpaidAmount was calculated inside the transaction
-       and is now safe to send to the separate overpaid API.
+       Any savings deposit created from an overpayment was
+       committed atomically with the loan repayment above.
+       Only its SMS notification is deferred until now.
     ===================================================== */
 
     const repayment =
       transactionResult.repayment;
-
-    /* =====================================================
-       SAVE OVERPAID AMOUNT
-
-       IMPORTANT:
-
-       This call happens AFTER the MongoDB transaction has
-       successfully committed.
-
-       Therefore a failure here cannot roll back the loan
-       repayment.
-
-       Example:
-
-         Payment received       = 10,500
-         Loan outstanding       = 8,400
-         Applied to loan        = 8,400
-         Overpaid                = 2,100
-
-       The `overpaid` API receives only the 2,100 excess.
-    ===================================================== */
-
-    if (
-      overpaidAmount > 0
-    ) {
-      try {
-        const configuredBaseUrl =
-          process.env.NEXTAUTH_URL ??
-          process.env.APP_URL ??
-          (process.env.VERCEL_URL
-            ? `https://${process.env.VERCEL_URL}`
-            : undefined);
-
-        if (!configuredBaseUrl) {
-          throw new Error(
-            "Unable to determine application URL for the overpaid API.",
-          );
-        }
-
-        const overpaidApiUrl =
-          new URL(
-            "/api/overpaid",
-            configuredBaseUrl,
-          ).toString();
-
-        const overpaidResponse =
-          await fetch(
-            overpaidApiUrl,
-            {
-              method: "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json",
-              },
-
-              body: JSON.stringify({
-                loanId:
-                  repayment.loanId,
-
-                loanNumber:
-                  repayment.loanNumber,
-
-                memberId:
-                  repayment.memberId,
-
-                memberNumber:
-                  repayment.memberNumber,
-
-                repaymentId:
-                  repayment.id,
-
-                /*
-                 * Full bank payment.
-                 */
-                paymentAmount:
-                  repayment.amount,
-
-                /*
-                 * ONLY the amount above the
-                 * loan's core outstanding balance.
-                 */
-                amount:
-                  overpaidAmount,
-
-                transactionReference:
-                  repayment.transactionReference,
-
-                transactionDate:
-                  repayment.transactionDate,
-
-                ...(repayment.transactionAt
-                  ? {
-                      transactionAt:
-                        repayment.transactionAt,
-                    }
-                  : {}),
-
-                source:
-                  repayment.source,
-              }),
-            },
-          );
-
-        if (
-          !overpaidResponse.ok
-        ) {
-          const responseText =
-            await overpaidResponse
-              .text()
-              .catch(
-                () => "",
-              );
-
-          throw new Error(
-            `Overpaid API returned HTTP ${overpaidResponse.status}${
-              responseText
-                ? `: ${responseText}`
-                : ""
-            }`,
-          );
-        }
-
-        console.log(
-          "Overpaid amount saved successfully.",
-          {
-            repaymentId:
-              repayment.id,
-
-            loanId:
-              repayment.loanId,
-
-            memberId:
-              repayment.memberId,
-
-            transactionReference:
-              repayment.transactionReference,
-
-            paymentAmount:
-              repayment.amount,
-
-            overpaidAmount,
-          },
-        );
-      } catch (error) {
-        /*
-         * IMPORTANT:
-         *
-         * The repayment has already committed.
-         *
-         * Do NOT throw this error because doing so would
-         * make the caller believe the financial transaction
-         * failed even though MongoDB already committed it.
-         */
-        console.error(
-          "FAILED TO SAVE OVERPAID AMOUNT.",
-          {
-            repaymentId:
-              repayment.id,
-
-            loanId:
-              repayment.loanId,
-
-            memberId:
-              repayment.memberId,
-
-            transactionReference:
-              repayment.transactionReference,
-
-            paymentAmount:
-              repayment.amount,
-
-            overpaidAmount,
-
-            error,
-          },
-        );
-      }
-    }
 
     /* =====================================================
        PAYMENT RECEIVED SMS
@@ -9581,6 +9485,82 @@ export async function createLoanRepayment(
 
           memberId:
             repayment.memberId,
+        },
+      );
+    }
+
+    /* =====================================================
+       SAVINGS DEPOSIT SMS
+
+       The savings deposit itself was committed atomically
+       with the loan repayment above.
+
+       Only now is it safe to create the notification.
+
+       Notification failure MUST NOT affect the already
+       committed financial transaction.
+    ===================================================== */
+
+    if (
+      savingsDepositTransactionId &&
+      loanPaymentRecipient
+    ) {
+      try {
+        await queueSavingsDepositSms({
+          transactionId:
+            savingsDepositTransactionId,
+
+          memberId:
+            repayment.memberId,
+
+          recipient:
+            loanPaymentRecipient,
+
+          memberName:
+            loanPaymentMemberName,
+
+          amount:
+            overpaidAmount,
+        });
+      } catch (error) {
+        console.error(
+          "Failed to queue savings deposit SMS for loan overpayment.",
+          {
+            repaymentId:
+              repayment.id,
+
+            savingsDepositTransactionId,
+
+            loanId:
+              repayment.loanId,
+
+            memberId:
+              repayment.memberId,
+
+            overpaidAmount,
+
+            error,
+          },
+        );
+      }
+    } else if (
+      savingsDepositTransactionId
+    ) {
+      console.warn(
+        "Savings deposit SMS skipped: member has no phone number.",
+        {
+          repaymentId:
+            repayment.id,
+
+          savingsDepositTransactionId,
+
+          loanId:
+            repayment.loanId,
+
+          memberId:
+            repayment.memberId,
+
+          overpaidAmount,
         },
       );
     }
@@ -9707,11 +9687,12 @@ export async function createLoanRepayment(
       /*
        * IMPORTANT:
        *
-       * Do not call the overpaid API here.
+       * Do not create another savings deposit or send
+       * repayment notifications here.
        *
        * This request did not create the repayment. The
-       * original request is responsible for the post-commit
-       * overpaid API call.
+       * original request owns the committed financial
+       * transaction and its post-commit notifications.
        */
       return toRepayment(
         existing,
