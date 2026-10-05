@@ -311,26 +311,12 @@ export type WeeklyRepaymentPeriodStatus =
  */
 export interface WeeklyRepaymentBreakdownPeriod {
   periodNumber: number;
-
   periodStart: CalendarDate;
-
   periodEnd: CalendarDate;
-
-  /**
-   * Contractual installment for this period.
-   */
   installment: number;
-
-  /**
-   * Amount of repayments allocated to this period.
-   */
   allocated: number;
-
-  /**
-   * Amount still outstanding for this period.
-   */
   balance: number;
-
+  fine: number;
   status: WeeklyRepaymentPeriodStatus;
 }
 
@@ -454,68 +440,19 @@ export interface WeeklyRepaymentSurplus {
  * rather than reconstructing repayment allocation logic.
  */
 export interface WeeklyRepaymentBreakdown {
-  /**
-   * Contractual installment amount for the loan.
-   */
   installmentAmount: number;
-
-  /**
-   * Number of calendar days in one repayment cycle.
-   */
   cycleDays: number;
-
-  /**
-   * Number of the latest fully completed cycle.
-   *
-   * 0 means no repayment cycle has completed yet.
-   */
   latestCompletedPeriod: number;
-
-  /**
-   * Currently open repayment cycle.
-   */
   currentPeriodNumber: number;
 
-  /**
-   * Total outstanding balance from completed
-   * repayment cycles.
-   *
-   * Fines are excluded.
-   */
   completedBalance: number;
-
-  /**
-   * Outstanding balance in the current repayment cycle.
-   *
-   * Fines are excluded.
-   */
   currentBalance: number;
-
-  /**
-   * completedBalance + currentBalance.
-   *
-   * This is the value displayed as the weekly
-   * repayment balance.
-   */
   totalBalance: number;
 
-  /**
-   * Repayment cycles represented by this calculation.
-   *
-   * Ordered oldest → newest.
-   */
+  totalFines: number;
+
   periods: WeeklyRepaymentBreakdownPeriod[];
-
-  /**
-   * Detailed oldest-outstanding-first payment
-   * allocation records.
-   */
   allocations: WeeklyRepaymentAllocation[];
-
-  /**
-   * Payments containing credit that was not required
-   * by the displayed repayment cycles.
-   */
   surpluses: WeeklyRepaymentSurplus[];
 }
 
