@@ -41,17 +41,16 @@ public class MainActivity extends BridgeActivity {
         requestRequiredPermissions();
 
         /*
-         * Start and maintain the native background SMS
-         * outbox worker.
+         * Start the native background SMS outbox worker
+         * only when all required permissions are granted.
          *
-         * This schedules:
-         * - an immediate queue check
-         * - persistent WorkManager polling
-         *
-         * The worker can continue running when the
-         * Capacitor/WebView UI is closed.
+         * Permission requests are asynchronous. Therefore,
+         * the worker must not start while the permission
+         * dialog is still being displayed.
          */
-        SmsOutboxWorker.schedule(this);
+        if (hasRequiredPermissions()) {
+            SmsOutboxWorker.schedule(this);
+        }
 
         /*
          * Register the current FCM token.
@@ -62,6 +61,28 @@ public class MainActivity extends BridgeActivity {
         FcmTokenRegistrar.register(this);
 
         handleDeepLink(getIntent());
+    }
+
+    private boolean hasRequiredPermissions() {
+        if (
+                android.os.Build.VERSION.SDK_INT <
+                android.os.Build.VERSION_CODES.M
+        ) {
+            return true;
+        }
+
+        for (String permission : REQUIRED_PERMISSIONS) {
+            if (
+                    ContextCompat.checkSelfPermission(
+                            this,
+                            permission
+                    ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -122,6 +143,15 @@ public class MainActivity extends BridgeActivity {
          *
          * Individual permissions can be accepted or denied.
          */
+
+        if (hasRequiredPermissions()) {
+            /*
+             * The permission request has completed and all
+             * required permissions are now actually granted.
+             */
+            SmsOutboxWorker.schedule(this);
+        }
+
         for (int i = 0; i < permissions.length; i++) {
             boolean granted =
                     grantResults.length > i &&

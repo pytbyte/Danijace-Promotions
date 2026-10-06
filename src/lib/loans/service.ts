@@ -2508,6 +2508,258 @@ async function reconcileLoan(
   );
 }
 
+/**
+ * Suspend a member inside an existing MongoDB transaction.
+ *
+ * Returns true only when this call actually changes the
+ * member from a non-suspended status to suspended.
+ */
+async function suspendMemberInSession(
+  db: Db,
+  memberId: ObjectId,
+  session: ClientSession,
+  actor: LoanActor = SYSTEM_ACTOR,
+): Promise<boolean> {
+  const members =
+    db.collection<{
+      status?: string;
+      updatedAt?: string;
+      updatedBy?: string;
+    }>(MEMBERS_COLLECTION);
+
+  const existing =
+    await members.findOne(
+      {
+        _id:
+          memberId,
+      },
+      {
+        session,
+        projection: {
+          status: 1,
+        },
+      },
+    );
+
+  if (!existing) {
+    throw new Error(
+      "Member not found.",
+    );
+  }
+
+  if (
+    existing.status ===
+    "suspended"
+  ) {
+    return false;
+  }
+
+  const now =
+    new Date().toISOString();
+
+  const result =
+    await members.updateOne(
+      {
+        _id:
+          memberId,
+
+        status: {
+          $ne:
+            "suspended",
+        },
+      },
+      {
+        $set: {
+          status:
+            "suspended",
+
+          updatedAt:
+            now,
+
+          updatedBy:
+            actor.email ||
+            actor.name,
+        },
+      },
+      {
+        session,
+      },
+    );
+
+  if (
+    result.matchedCount ===
+    0
+  ) {
+    throw new Error(
+      "Member suspension failed.",
+    );
+  }
+
+  return true;
+}
+
+/**
+ * Process loans whose contractual end date has been reached
+ * or passed and that still have an outstanding core balance.
+ */
+export async function processExpiredLoans(
+  asOfDate: Date = new Date(),
+): Promise<number> {
+  if (!isValidDate(asOfDate)) {
+    throw new Error(
+      "Invalid as-of date.",
+    );
+  }
+
+  const today =
+    dateToKenyanCalendarDate(
+      asOfDate,
+    );
+
+  const {
+    client,
+    db,
+    loans,
+  } = await getCollections();
+
+  const candidates =
+    await loans
+      .find(
+        {
+          status: {
+            $in: [
+              "pending",
+              "active",
+            ],
+          },
+
+          endDate: {
+            $lte:
+              today,
+          },
+        },
+        {
+          projection: {
+            _id: 1,
+          },
+        },
+      )
+      .toArray();
+
+  let suspendedMembers =
+    0;
+
+  for (
+    const candidate
+      of candidates
+  ) {
+    if (
+      !candidate._id
+    ) {
+      continue;
+    }
+
+    const session =
+      client.startSession();
+
+    try {
+      const suspended =
+        await session.withTransaction(
+          async () => {
+            const loan =
+              await loans.findOne(
+                {
+                  _id:
+                    candidate._id,
+                },
+                {
+                  session,
+                },
+              );
+
+            if (
+              !loan ||
+              !loan._id ||
+              !loan.memberId
+            ) {
+              return false;
+            }
+
+            if (
+              loan.status !==
+                "pending" &&
+              loan.status !==
+                "active"
+            ) {
+              return false;
+            }
+
+            if (
+              loan.endDate >
+              today
+            ) {
+              return false;
+            }
+
+            const amountPaid =
+              await getLoanPaidTotal(
+                loan._id,
+                session,
+              );
+
+            const outstandingBalance =
+              calculateFinalOutstanding(
+                loan.principal,
+                loan.interestAmount,
+                amountPaid,
+              );
+
+            if (
+              outstandingBalance <=
+              0
+            ) {
+              return false;
+            }
+
+            return suspendMemberInSession(
+              db,
+              loan.memberId,
+              session,
+              SYSTEM_ACTOR,
+            );
+          },
+          {
+            readConcern: {
+              level:
+                "snapshot",
+            },
+
+            writeConcern: {
+              w:
+                "majority",
+            },
+
+            maxCommitTimeMS:
+              10_000,
+          },
+        );
+
+      if (suspended) {
+        suspendedMembers += 1;
+      }
+    } catch (error) {
+      console.error(
+        `[LOAN EXPIRY] Failed to process loan ${candidate._id.toString()}:`,
+        error,
+      );
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  return suspendedMembers;
+}
+
 /* =========================================================
    AUDIT
 ========================================================= */
@@ -6133,10 +6385,10 @@ export async function getLoans(
                         .loanPaymentReminder
                         .periodNumber,
 
-                    installmentAmount:
-                      result
-                        .loanPaymentReminder
-                        .installment,
+                    installmentAmountOwed:
+                    result
+                      .loanPaymentReminder
+                      .installment,
 
                     dueDate:
                       result
@@ -9103,6 +9355,28 @@ export async function createLoanRepayment(
               loan.interestAmount,
               newAmountPaid,
             );
+
+          /*
+           * If this repayment occurs on or after the
+           * contractual loan end date and the loan still
+           * has an outstanding balance, suspend the member.
+           *
+           * This executes inside the same MongoDB
+           * transaction as the repayment and loan update.
+           */
+          if (
+            loan.endDate <=
+              today &&
+            newOutstanding >
+              0
+          ) {
+            await suspendMemberInSession(
+              db,
+              loan.memberId,
+              session,
+              SYSTEM_ACTOR,
+            );
+          }
 
           const newStatus:
             Loan["status"] =

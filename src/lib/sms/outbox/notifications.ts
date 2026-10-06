@@ -263,7 +263,7 @@ export async function queueLoanPaymentReminderSms(
     recipient: string;
     memberName: string;
     periodNumber: number;
-    installmentAmount: number;
+    installmentAmountOwed: number;
     dueDate: string;
     scheduledFor?: string;
   },
@@ -288,15 +288,19 @@ export async function queueLoanPaymentReminderSms(
     "memberName",
   );
 
+  const paybill = "542542";
+
+  const accountNumber = "082083";
+
   const periodNumber =
     positiveInteger(
       data.periodNumber,
       "periodNumber",
     );
 
-  const installmentAmount =
+  const installmentAmountOwed =
     positiveAmount(
-      data.installmentAmount,
+      data.installmentAmountOwed,
     );
 
   const dueDate = required(
@@ -309,8 +313,11 @@ export async function queueLoanPaymentReminderSms(
 
   const message =
     `GEO-SHUA LTD\n` +
-    `Dear ${memberName}, your weekly loan payment` +
-    `is due ${dueDate}. Please pay on time.`;
+    `Dear ${memberName}, your weekly loan payment balance of KES ${formatAmount(installmentAmountOwed)} ` +
+    `is due on ${dueDate}.\n` +
+    `Paybill: ${paybill}\n` +
+    `Account: ${accountNumber}\n` +
+    `Please pay on time.`;
 
   return queueSms({
     type: SMS_TYPES.LOAN_PAYMENT_REMINDER,
