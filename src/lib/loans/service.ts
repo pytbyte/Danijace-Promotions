@@ -9009,16 +9009,7 @@ export async function createLoanRepayment(
            * SMS to update a completed loan must also redesign
            * the optimistic-concurrency/update logic below.
            */
-          if (
-            loan.status === "completed" &&
-            Number(
-              loan.outstandingBalance ?? 0,
-            ) <= 0
-          ) {
-            throw new Error(
-              "Completed loans cannot receive repayments.",
-            );
-          }
+         
 
           /* =================================================
              SMS DISBURSEMENT DATE PROTECTION
