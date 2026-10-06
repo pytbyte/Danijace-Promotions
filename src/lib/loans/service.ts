@@ -60,6 +60,33 @@ import {
 import clientPromise from "@/lib/mongodb";
 
 import {
+  reconcileLoanFines,
+  accrueLoanFines,
+  accrueAllLoanFines,
+  stopLoanFines,
+  resumeLoanFines,
+  getLoanFines,
+} from "@/lib/loans/fines/reconcile";
+
+import {
+  getLoanFineTotal,
+  getLoanFineSummaryTotal,
+  ensureFineIndexes,
+  deleteLoanFines,
+  getLoanFinesForCalculation,
+  getLoanFinesForCalculationByLoanIds,
+} from "@/lib/loans/fines/repository";
+
+export {
+  reconcileLoanFines,
+  accrueLoanFines,
+  accrueAllLoanFines,
+  stopLoanFines,
+  resumeLoanFines,
+  getLoanFines,
+};
+
+import {
   getOrCreateSavingsAccount,
   createSavingsDeposit,
 } from "@/lib/savings/service";
@@ -80,12 +107,10 @@ import type {
   CreateLoanInput,
   CreateLoanRepaymentInput,
   CreateLoanWaiverInput,
-  FineSource,
   Loan,
   LoanActor,
   LoanAssessment,
   LoanAuditEntry,
-  LoanFine,
   LoanRepayment,
   LoanSettings,
   LoanStatus,
@@ -191,17 +216,6 @@ type LoanRepaymentDocument =
     memberId: ObjectId;
   };
 
-type LoanFineDocument =
-  Omit<
-    LoanFine,
-    "id" |
-    "loanId" |
-    "memberId"
-  > & {
-    _id?: ObjectId;
-    loanId: ObjectId;
-    memberId: ObjectId;
-  };
 
 type LoanWaiverDocument =
   Omit<
@@ -309,7 +323,6 @@ type LoanCollections = {
 
   settings: Collection<LoanSettingsDocument>;
   repayments: Collection<LoanRepaymentDocument>;
-  fines: Collection<LoanFineDocument>;
   waivers: Collection<LoanWaiverDocument>;
   assessments: Collection<LoanAssessmentDocument>;
   audit: Collection<LoanAuditDocument>;
@@ -353,11 +366,6 @@ async function getCollections(): Promise<LoanCollections> {
     repayments:
       db.collection<LoanRepaymentDocument>(
         LOAN_REPAYMENTS_COLLECTION,
-      ),
-
-    fines:
-      db.collection<LoanFineDocument>(
-        LOAN_FINES_COLLECTION,
       ),
 
     waivers:
@@ -1367,29 +1375,6 @@ function toRepayment(
   };
 }
 
-function toFine(
-  document: LoanFineDocument,
-): LoanFine {
-  if (!document._id) {
-    throw new Error(
-      "Fine has no MongoDB ID.",
-    );
-  }
-
-  return {
-    ...document,
-
-    id:
-      document._id.toString(),
-
-    loanId:
-      document.loanId.toString(),
-
-    memberId:
-      document.memberId.toString(),
-  };
-}
-
 function toWaiver(
   document: LoanWaiverDocument,
 ): LoanWaiver {
@@ -1458,11 +1443,12 @@ function toAudit(
 ========================================================= */
 
 export async function ensureLoanIndexes(): Promise<void> {
+  await ensureFineIndexes();
+
   const {
     loans,
     settings,
     repayments,
-    fines,
     waivers,
     assessments,
     audit,
@@ -1571,29 +1557,6 @@ export async function ensureLoanIndexes(): Promise<void> {
       },
     ),
 
-    fines.createIndex(
-      {
-        loanId: 1,
-        fineDate: 1,
-      },
-      {
-        unique: true,
-        name:
-          "loanFines_loan_date_unique",
-      },
-    ),
-
-    fines.createIndex(
-      {
-        loanId: 1,
-        periodNumber: 1,
-      },
-      {
-        unique: true,
-        name:
-          "loanFines_loan_period_unique",
-      },
-    ),
 
     waivers.createIndex(
       {
@@ -2277,51 +2240,6 @@ async function getLoanPaidTotalAsOf(
   );
 }
 
-async function getLoanFineTotal(
-  loanId: ObjectId,
-  session?: ClientSession,
-): Promise<number> {
-  const { fines } =
-    await getCollections();
-
-  const result =
-    await fines
-      .aggregate<{
-        _id: null;
-        total: number;
-      }>(
-        [
-          {
-            $match: {
-              loanId,
-            },
-          },
-
-          {
-            $group: {
-              _id: null,
-
-              total: {
-                $sum:
-                  "$amount",
-              },
-            },
-          },
-        ],
-        {
-          session,
-        },
-      )
-      .toArray();
-
-  return money(
-    Number(
-      result[0]?.total ||
-        0,
-    ),
-  );
-}
-
 async function getLoanWaivedFineTotal(
   loanId: ObjectId,
   session?: ClientSession,
@@ -2838,12 +2756,6 @@ export async function createLoan(
 
             const paid =
               await getLoanPaidTotal(
-                previous._id,
-                session,
-              );
-
-            const fines =
-              await getLoanFineTotal(
                 previous._id,
                 session,
               );
@@ -3638,6 +3550,7 @@ function getLatestDueAssessmentPeriodForCalendarDate(
     getMaximumContractualPeriod(
       loan,
     );
+    
 
   if (
     maximumContractualPeriod <=
@@ -3863,13 +3776,14 @@ type WeeklyRepaymentBreakdown = {
  * 7. A repayment may clear multiple periods.
  * 8. No period balance can become negative.
  * 9. Historical assessment values are never recalculated here.
- * 10. Historical fines are read from persisted assessments.
+ * 10. Historical fines are read from persisted loanFines.
  * 11. Fines are completely excluded from repayment balances.
  * 12. Excess repayment is returned as surplus.
  *
  *
  * The returned breakdown is response-only and is not persisted.
  */
+
 function calculateWeeklyRepaymentBalance(
   loan: LoanDocument,
   assessments: Array<{
@@ -3972,25 +3886,40 @@ function calculateWeeklyRepaymentBalance(
     const emptyBreakdown:
       WeeklyRepaymentBreakdown = {
       installmentAmount,
+
       cycleDays,
+
       latestCompletedPeriod: 0,
+
       currentPeriodNumber: 0,
+
       completedBalance: 0,
+
       currentBalance: 0,
+
       totalBalance: 0,
+
       totalFines: 0,
+
       periods: [],
+
       allocations: [],
+
       surpluses: [],
     };
 
     return {
       completedInstallmentBalance: 0,
+
       currentInstallmentBalance: 0,
+
       weeklyRepaymentBalance: 0,
+
       currentPeriodNumber: 0,
+
       weeklyRepaymentBreakdown:
         emptyBreakdown,
+
       loanPaymentReminder: null,
     };
   }
@@ -4011,7 +3940,14 @@ function calculateWeeklyRepaymentBalance(
       maximumContractualPeriod,
     );
 
-  const currentPeriodNumber =
+  /*
+   * This is the period that would normally be considered
+   * current based purely on today's contractual date.
+   *
+   * It may later roll forward if this period has already been
+   * fully paid and another contractual period exists.
+   */
+  const baseCurrentPeriodNumber =
     latestCompletedPeriod >=
     maximumContractualPeriod
       ? maximumContractualPeriod
@@ -4022,46 +3958,70 @@ function calculateWeeklyRepaymentBalance(
   ========================================================= */
 
   const createEmptyBreakdown =
-    (): WeeklyRepaymentBreakdown => ({
+    (
+      effectiveCurrentPeriodNumber =
+        baseCurrentPeriodNumber,
+    ): WeeklyRepaymentBreakdown => ({
       installmentAmount,
+
       cycleDays,
+
       latestCompletedPeriod,
-      currentPeriodNumber,
+
+      currentPeriodNumber:
+        effectiveCurrentPeriodNumber,
+
       completedBalance: 0,
+
       currentBalance: 0,
+
       totalBalance: 0,
+
       totalFines: 0,
+
       periods: [],
+
       allocations: [],
+
       surpluses: [],
     });
 
   if (installmentAmount <= 0) {
     return {
       completedInstallmentBalance: 0,
+
       currentInstallmentBalance: 0,
+
       weeklyRepaymentBalance: 0,
-      currentPeriodNumber,
+
+      currentPeriodNumber:
+        baseCurrentPeriodNumber,
+
       weeklyRepaymentBreakdown:
         createEmptyBreakdown(),
+
       loanPaymentReminder: null,
     };
   }
 
   /* =========================================================
      ASSESSMENT LOOKUP
-     
+
      Assessments may provide the persisted contractual
      installment amount for closed periods.
 
      IMPORTANT:
-     Assessments are NOT the source of truth for:
-       - paidDuringPeriod
-       - historicalShortfall
-       - historicalFine
 
-     Actual repayment timing comes from loanRepayments.
-     Historical fines come from loanFines.
+     Assessments are NOT authoritative for:
+
+       - historical paid amount
+       - historical shortfall
+       - historical fine
+
+     The repayment ledger is authoritative for actual
+     repayment timing and amounts.
+
+     loanFines is authoritative for historical fines.
   ========================================================= */
 
   const assessmentByPeriod =
@@ -4134,8 +4094,11 @@ function calculateWeeklyRepaymentBalance(
       periodNumber,
       {
         expectedInstallment,
+
         paymentsDuringPeriod,
+
         installmentShortfall,
+
         fineAmount,
       },
     );
@@ -4147,12 +4110,20 @@ function calculateWeeklyRepaymentBalance(
      loanFines is the authoritative source for historical
      installment fines.
 
-     Example:
+     IMPORTANT:
 
-       period 1 -> Ksh 190
-       period 3 -> Ksh 112
+     We preserve the complete persisted historical fine
+     snapshot.
 
-     We do not calculate or infer the historical fine here.
+     We do NOT calculate or infer the fine here.
+
+     The fine snapshot contains:
+
+       - amount
+       - rate
+       - expected installment
+       - payments during period
+       - historical shortfall
   ========================================================= */
 
   const fineByPeriod =
@@ -4161,6 +4132,11 @@ function calculateWeeklyRepaymentBalance(
       {
         amount: number;
         fineRate: number;
+        expectedInstallment: number;
+        paymentsDuringPeriod: number;
+        installmentShortfall: number;
+        periodStart?: CalendarDate;
+        periodEnd?: CalendarDate;
       }
     >();
 
@@ -4186,14 +4162,57 @@ function calculateWeeklyRepaymentBalance(
     const fineRate =
       Number(fine.fineRate ?? 0);
 
+    const expectedInstallment =
+      money(
+        Math.max(
+          0,
+          Number(
+            fine.expectedInstallment ?? 0,
+          ),
+        ),
+      );
+
+    const paymentsDuringPeriod =
+      money(
+        Math.max(
+          0,
+          Number(
+            fine.paymentsDuringPeriod ?? 0,
+          ),
+        ),
+      );
+
+    const installmentShortfall =
+      money(
+        Math.max(
+          0,
+          Number(
+            fine.installmentShortfall ?? 0,
+          ),
+        ),
+      );
+
     fineByPeriod.set(
       periodNumber,
       {
         amount,
+
         fineRate:
           Number.isFinite(fineRate)
             ? fineRate
             : 0,
+
+        expectedInstallment,
+
+        paymentsDuringPeriod,
+
+        installmentShortfall,
+
+        periodStart:
+          fine.periodStart,
+
+        periodEnd:
+          fine.periodEnd,
       },
     );
   }
@@ -4201,8 +4220,8 @@ function calculateWeeklyRepaymentBalance(
   /* =========================================================
      NORMALIZED REPAYMENTS
 
-     The repayment collection is the authoritative source
-     for actual payment timing and amounts.
+     The repayment collection is authoritative for actual
+     payment timing and amounts.
 
      transactionDate is the financial date.
 
@@ -4218,19 +4237,13 @@ function calculateWeeklyRepaymentBalance(
 
      This prevents a payment exactly on a shared boundary
      from being counted in both periods.
-
-     Example:
-
-       Period 2 = Sep 12 -> Sep 19
-       Payment Sep 19 belongs to Period 2.
-
-       Period 3 = Sep 19 -> Sep 26
-       The same Sep 19 payment does NOT belong to Period 3.
   ========================================================= */
 
   type NormalizedRepayment = {
     paymentSequence: number;
+
     amount: number;
+
     transactionDate: CalendarDate;
   };
 
@@ -4270,8 +4283,12 @@ function calculateWeeklyRepaymentBalance(
           }
 
           return {
-            paymentSequence: index + 1,
-            amount: money(amount),
+            paymentSequence:
+              index + 1,
+
+            amount:
+              money(amount),
+
             transactionDate,
           };
         },
@@ -4302,26 +4319,74 @@ function calculateWeeklyRepaymentBalance(
 
   /* =========================================================
      CONTRACTUAL PERIOD MODEL
+
+     Each internal period contains two distinct concepts:
+
+     HISTORICAL
+       What actually happened during the original
+       contractual period.
+
+     CURRENT
+       How repayments received so far are currently
+       allocated against the contractual installment.
+
+     These values MUST NOT be mixed.
   ========================================================= */
 
   type InstallmentPeriod = {
     periodNumber: number;
+
     periodStart: CalendarDate;
+
     periodEnd: CalendarDate;
+
     periodInstallment: number;
+
     historicalPaidDuringPeriod: number;
+
     historicalShortfall: number;
-    historicalFine: number;
+
+    historicalFine: {
+      amount: number;
+      rate: number;
+      expectedInstallment: number;
+      paymentsDuringPeriod: number;
+      installmentShortfall: number;
+    } | null;
+
     remainingBalance: number;
+
     amountPaidToPeriod: number;
   };
 
   const periods:
     InstallmentPeriod[] = [];
 
+  /*
+   * Build through ONE period beyond the date-based current
+   * period.
+   *
+   * Why?
+   *
+   * If the current contractual period has already been fully
+   * paid, FIFO allocation must have somewhere to roll forward
+   * into. Otherwise the function incorrectly reports Ksh 0
+   * even though the loan is still contractually active.
+   *
+   * We cap this strictly at maximumContractualPeriod.
+   */
+  const periodBuildLimit =
+    Math.min(
+      maximumContractualPeriod,
+      Math.max(
+        1,
+        baseCurrentPeriodNumber + 1,
+      ),
+    );
+
   for (
     let periodNumber = 1;
-    periodNumber <= currentPeriodNumber;
+    periodNumber <= periodBuildLimit;
     periodNumber++
   ) {
     const period =
@@ -4329,6 +4394,33 @@ function calculateWeeklyRepaymentBalance(
         loan,
         periodNumber,
       );
+
+    /*
+     * HARD CONTRACTUAL DATE GUARDS
+     *
+     * A period may never:
+     *
+     *   - start on/after loan.endDate
+     *   - end after loan.endDate
+     *
+     * The final contractual period may be shorter than the
+     * normal repayment cycle.
+     */
+    if (
+      period.periodStart >=
+      loanEndDate
+    ) {
+      break;
+    }
+
+    if (
+      period.periodEnd >
+      loanEndDate
+    ) {
+      throw new Error(
+        `Contractual period ${periodNumber} exceeds loan end date for loan ${loan.loanNumber}.`,
+      );
+    }
 
     const assessment =
       assessmentByPeriod.get(
@@ -4340,13 +4432,16 @@ function calculateWeeklyRepaymentBalance(
         periodNumber,
       );
 
-    /*
-     * Closed periods use their persisted expected
-     * installment when available.
-     *
-     * Current/open periods use the loan's current
-     * installment.
-     */
+    /* =======================================================
+       CONTRACTUAL INSTALLMENT
+
+       Closed periods use their persisted expected
+       installment when available.
+
+       Current/open periods use the loan's current
+       contractual installment amount.
+    ======================================================= */
+
     const periodInstallment =
       periodNumber <= latestCompletedPeriod
         ? money(
@@ -4369,14 +4464,14 @@ function calculateWeeklyRepaymentBalance(
 
        IMPORTANT:
 
-       This MUST come from the actual repayment ledger.
+       This comes from the actual repayment ledger.
 
        We deliberately do NOT use:
 
          assessment?.paymentsDuringPeriod
 
-       because an assessment may be missing, stale,
-       incomplete, or absent for a period.
+       because the assessment is not authoritative for
+       actual payment timing.
 
        The repayment collection is authoritative.
     ======================================================= */
@@ -4423,21 +4518,23 @@ function calculateWeeklyRepaymentBalance(
     /* =======================================================
        HISTORICAL SHORTFALL
 
-       This is the contractual debt at the end of the
-       closed period.
+       This represents the contractual debt at the end of
+       the historical period.
 
-       It is based on:
+       Formula:
 
-         expected installment
-           -
-         actual payments during that period
+         max(
+           0,
+           installment - paidDuringPeriod
+         )
 
-       It is NOT:
+       IMPORTANT:
+
+       This is NOT:
 
          installment - current allocation
 
-       Later payments may change allocation without changing
-       this historical fact.
+       Later repayments must never rewrite this value.
     ======================================================= */
 
     const historicalShortfall =
@@ -4454,23 +4551,66 @@ function calculateWeeklyRepaymentBalance(
     /* =======================================================
        HISTORICAL FINE
 
-       The persisted loanFines collection is authoritative.
+       loanFines is authoritative.
 
        Current/open periods intentionally have no historical
        fine yet.
+
+       IMPORTANT:
+
+       The fine snapshot is copied exactly from the persisted
+       fine record.
+
+       We do NOT recalculate it from the current repayment
+       state.
     ======================================================= */
 
     const historicalFine =
-      periodNumber <= latestCompletedPeriod
-        ? money(
-            Math.max(
-              0,
-              Number(
-                fine?.amount ?? 0,
+      periodNumber <= latestCompletedPeriod &&
+      fine &&
+      fine.amount > 0
+        ? {
+            amount:
+              money(
+                Math.max(
+                  0,
+                  fine.amount,
+                ),
               ),
-            ),
-          )
-        : 0;
+
+            rate:
+              Number.isFinite(
+                fine.fineRate,
+              )
+                ? fine.fineRate
+                : 0,
+
+            expectedInstallment:
+              money(
+                Math.max(
+                  0,
+                  fine.expectedInstallment ||
+                    periodInstallment,
+                ),
+              ),
+
+            paymentsDuringPeriod:
+              money(
+                Math.max(
+                  0,
+                  fine.paymentsDuringPeriod,
+                ),
+              ),
+
+            installmentShortfall:
+              money(
+                Math.max(
+                  0,
+                  fine.installmentShortfall,
+                ),
+              ),
+          }
+        : null;
 
     periods.push({
       periodNumber,
@@ -4490,11 +4630,14 @@ function calculateWeeklyRepaymentBalance(
       historicalFine,
 
       /*
-       * Current allocation starts from the contractual
-       * installment, independently of historical shortfall.
+       * Current allocation starts from the full contractual
+       * installment.
        *
-       * The allocation engine below will apply actual
-       * repayments chronologically.
+       * Historical shortfall is NOT used as the starting
+       * current balance.
+       *
+       * The allocation engine below applies all repayments
+       * chronologically.
        */
       remainingBalance:
         periodInstallment,
@@ -4513,12 +4656,13 @@ function calculateWeeklyRepaymentBalance(
        "How much was actually paid during this contractual
         period?"
 
-     Allocation answers:
+     Current allocation answers:
 
        "How should all repayments received so far be applied
         against the contractual installment balances?"
 
-     Keep these concepts separate.
+     Later repayments can change current allocation without
+     changing historical facts.
   ========================================================= */
 
   const allocations:
@@ -4647,11 +4791,84 @@ function calculateWeeklyRepaymentBalance(
   }
 
   /* =========================================================
+     EFFECTIVE CURRENT PERIOD
+
+     The date-based current period is not necessarily the
+     actual current contractual balance.
+
+     Example:
+
+       Period 5 = Ksh 1,750
+       Period 5 has been fully paid
+       Loan has not ended
+       Period 6 exists
+
+     In that case:
+
+       currentPeriodNumber = 6
+
+     rather than incorrectly reporting:
+
+       currentPeriodNumber = 5
+       currentBalance = 0
+
+     This is what prevents the weekly repayment from
+     incorrectly becoming Ksh 0 while the loan is still
+     active and another contractual installment exists.
+  ========================================================= */
+
+  let effectiveCurrentPeriodNumber =
+    baseCurrentPeriodNumber;
+
+  const baseCurrentPeriod =
+    periods.find(
+      (period) =>
+        period.periodNumber ===
+        baseCurrentPeriodNumber,
+    );
+
+  const nextContractualPeriod =
+    periods.find(
+      (period) =>
+        period.periodNumber ===
+        baseCurrentPeriodNumber + 1,
+    );
+
+  if (
+    !loanIsOver &&
+    baseCurrentPeriod &&
+    nextContractualPeriod &&
+    baseCurrentPeriod.remainingBalance <=
+      0 &&
+    baseCurrentPeriodNumber <
+      maximumContractualPeriod
+  ) {
+    effectiveCurrentPeriodNumber =
+      baseCurrentPeriodNumber + 1;
+  }
+
+  /*
+   * Never allow the effective current period to exceed the
+   * maximum contractual period.
+   */
+  effectiveCurrentPeriodNumber =
+    Math.min(
+      effectiveCurrentPeriodNumber,
+      maximumContractualPeriod,
+    );
+
+  /* =========================================================
      COMPLETED INSTALLMENT BALANCE
 
      ONLY contractual installment balances.
 
-     Fines are excluded.
+     Historical fines are completely excluded.
+
+     IMPORTANT:
+
+     We still calculate completed balances from contractual
+     periods only. A later payment can change the current
+     allocation, but it cannot rewrite historical facts.
   ========================================================= */
 
   let completedInstallmentBalance = 0;
@@ -4694,15 +4911,27 @@ function calculateWeeklyRepaymentBalance(
     periods.find(
       (period) =>
         period.periodNumber ===
-        currentPeriodNumber,
+        effectiveCurrentPeriodNumber,
     );
 
   if (
-    latestCompletedPeriod >=
-    maximumContractualPeriod
+    loanIsOver
   ) {
+    /*
+     * Once the loan is actually cleared, there is no
+     * contractual repayment balance remaining for the
+     * weekly repayment widget.
+     *
+     * Historical fines remain visible separately.
+     */
+    completedInstallmentBalance = 0;
+
     currentInstallmentBalance = 0;
-  } else if (currentPeriod) {
+  } else if (
+    effectiveCurrentPeriodNumber >
+      latestCompletedPeriod &&
+    currentPeriod
+  ) {
     currentInstallmentBalance =
       money(
         Math.max(
@@ -4710,13 +4939,7 @@ function calculateWeeklyRepaymentBalance(
           currentPeriod.remainingBalance,
         ),
       );
-  }
-
-  if (
-    loanIsOver &&
-    latestCompletedPeriod >=
-      maximumContractualPeriod
-  ) {
+  } else {
     currentInstallmentBalance = 0;
   }
 
@@ -4725,6 +4948,9 @@ function calculateWeeklyRepaymentBalance(
 
      Fines NEVER form part of the weekly contractual
      installment balance.
+
+     weeklyRepaymentBalance contains only current contractual
+     installment balances.
   ========================================================= */
 
   const weeklyRepaymentBalance =
@@ -4738,10 +4964,28 @@ function calculateWeeklyRepaymentBalance(
 
   /* =========================================================
      PERIOD BREAKDOWN
+
+     Only return periods through the effective current period.
+
+     This is important because we may have temporarily built
+     one additional contractual period solely so FIFO
+     allocation could roll forward into it.
+
+     If the original current period was NOT fully paid, that
+     extra future period is not exposed in the breakdown.
+
+     If the original current period WAS fully paid, the next
+     contractual period becomes the actual current period and
+     is exposed.
   ========================================================= */
 
   const breakdownPeriods =
     periods
+      .filter(
+        (period) =>
+          period.periodNumber <=
+          effectiveCurrentPeriodNumber,
+      )
       .map(
         (
           period,
@@ -4762,23 +5006,9 @@ function calculateWeeklyRepaymentBalance(
               ),
             );
 
-          const isCompleted =
+           const isCompleted =
             period.periodNumber <=
             latestCompletedPeriod;
-
-          /*
-           * Fine comes only from the reconciled
-           * loanFines collection.
-           */
-          const historicalFine =
-            isCompleted
-              ? money(
-                  Math.max(
-                    0,
-                    period.historicalFine,
-                  ),
-                )
-              : 0;
 
           let status:
             | "paid"
@@ -4786,18 +5016,37 @@ function calculateWeeklyRepaymentBalance(
             | "current"
             | "unpaid";
 
-          if (isCompleted) {
-            if (balance <= 0) {
-              status = "paid";
-            } else if (allocated > 0) {
-              status = "partial";
-            } else {
-              status = "unpaid";
-            }
-          } else {
+          /*
+          * CURRENT ALLOCATION HAS PRIORITY.
+          *
+          * A contractual period can be paid before its due date.
+          *
+          * Example:
+          *
+          *   Period 5
+          *   Expected: 3,500
+          *   Historical paid: 0
+          *   Current allocated: 3,500
+          *   Current balance: 0
+          *
+          * That period is PAID even though it was not yet a
+          * completed historical period.
+          */
+          if (balance <= 0) {
+            status = "paid";
+          } else if (
+            isCompleted &&
+            allocated > 0
+          ) {
+            status = "partial";
+          } else if (
+            period.periodNumber ===
+            effectiveCurrentPeriodNumber
+          ) {
             status = "current";
+          } else {
+            status = "unpaid";
           }
-
           return {
             periodNumber:
               period.periodNumber,
@@ -4813,38 +5062,85 @@ function calculateWeeklyRepaymentBalance(
                 period.periodInstallment,
               ),
 
-            /*
-             * Historical payment fact.
+            /* =============================================
+               HISTORICAL FACTS
 
-             * This is NOT the current allocation.
-             */
-            paidDuringPeriod:
-              money(
-                period.historicalPaidDuringPeriod,
-              ),
+               These values describe the original
+               contractual period.
 
-            /*
-             * Historical contractual debt at period close.
-             */
-            historicalShortfall:
-              money(
-                period.historicalShortfall,
-              ),
+               They are NEVER changed by later repayments.
+            ============================================= */
 
-            /*
-             * Persisted historical fine.
-             */
-            fine: historicalFine,
+            historical: {
+              paidDuringPeriod:
+                money(
+                  period.historicalPaidDuringPeriod,
+                ),
 
-            /*
-             * Current FIFO allocation.
-             */
-            allocated,
+              shortfall:
+                money(
+                  period.historicalShortfall,
+                ),
 
-            /*
-             * Current contractual balance after allocation.
-             */
-            balance,
+              fine:
+                period.historicalFine
+                  ? {
+                      amount:
+                        money(
+                          period
+                            .historicalFine
+                            .amount,
+                        ),
+
+                      rate:
+                        Number.isFinite(
+                          period
+                            .historicalFine
+                            .rate,
+                        )
+                          ? period
+                              .historicalFine
+                              .rate
+                          : 0,
+
+                      expectedInstallment:
+                        money(
+                          period
+                            .historicalFine
+                            .expectedInstallment,
+                        ),
+
+                      paymentsDuringPeriod:
+                        money(
+                          period
+                            .historicalFine
+                            .paymentsDuringPeriod,
+                        ),
+
+                      installmentShortfall:
+                        money(
+                          period
+                            .historicalFine
+                            .installmentShortfall,
+                        ),
+                    }
+                  : null,
+            },
+
+            /* =============================================
+               CURRENT ALLOCATION STATE
+
+               These values are calculated from all
+               repayments received up to asOfDate.
+
+               Later repayments may change these values.
+            ============================================= */
+
+            current: {
+              allocated,
+
+              balance,
+            },
 
             status,
           };
@@ -4859,7 +5155,7 @@ function calculateWeeklyRepaymentBalance(
   /* =========================================================
      TOTAL FINES
 
-     Sum persisted per-period fines.
+     Sum persisted historical per-period fines.
 
      Fines remain completely separate from the contractual
      weekly repayment balance.
@@ -4874,7 +5170,8 @@ function calculateWeeklyRepaymentBalance(
               Math.max(
                 0,
                 Number(
-                  period.fine ?? 0,
+                  period.historical.fine
+                    ?.amount ?? 0,
                 ),
               ),
           ),
@@ -4948,7 +5245,8 @@ function calculateWeeklyRepaymentBalance(
 
     latestCompletedPeriod,
 
-    currentPeriodNumber,
+    currentPeriodNumber:
+      effectiveCurrentPeriodNumber,
 
     completedBalance:
       completedInstallmentBalance,
@@ -4976,7 +5274,8 @@ function calculateWeeklyRepaymentBalance(
   const loanPaymentReminder =
     getLoanPaymentReminderPeriod(
       {
-        currentPeriodNumber,
+        currentPeriodNumber:
+          effectiveCurrentPeriodNumber,
 
         weeklyRepaymentBreakdown,
       },
@@ -4994,13 +5293,16 @@ function calculateWeeklyRepaymentBalance(
 
     weeklyRepaymentBalance,
 
-    currentPeriodNumber,
+    currentPeriodNumber:
+      effectiveCurrentPeriodNumber,
 
     weeklyRepaymentBreakdown,
 
     loanPaymentReminder,
   };
 }
+
+
 
 
 /* =========================================================
@@ -5052,7 +5354,7 @@ function getLoanPaymentReminderPeriod(
    * has already been fully allocated.
    */
   if (
-    currentPeriod.balance <=
+    currentPeriod.current.balance <=
     0
   ) {
     return null;
@@ -5085,7 +5387,7 @@ function getLoanPaymentReminderPeriod(
       currentPeriod.installment,
 
     balance:
-      currentPeriod.balance,
+      currentPeriod.current.balance,
   };
 }
 
@@ -5126,8 +5428,6 @@ export async function getCompletedInstallmentBalance(
     assessments,
     repayments:
       repaymentCollection,
-    fines:
-      fineCollection,
   } =
     await getCollections();
 
@@ -5192,59 +5492,10 @@ export async function getCompletedInstallmentBalance(
       })
       .toArray();
 
-  /* =========================================================
-     FINES
-
-     Historical fines are read from the persisted
-     fines collection.
-
-     The fines collection is authoritative for
-     historical per-installment fines.
-  ========================================================= */
-
   const fineDocuments =
-    await fineCollection
-      .find({
-        loanId:
-          objectId,
-      })
-      .project<{
-        periodNumber: number;
-
-        amount: unknown;
-
-        fineRate: unknown;
-
-        periodStart?: CalendarDate;
-
-        periodEnd?: CalendarDate;
-
-        expectedInstallment?: unknown;
-
-        paymentsDuringPeriod?: unknown;
-
-        installmentShortfall?: unknown;
-      }>({
-        periodNumber: 1,
-
-        amount: 1,
-
-        fineRate: 1,
-
-        periodStart: 1,
-
-        periodEnd: 1,
-
-        expectedInstallment: 1,
-
-        paymentsDuringPeriod: 1,
-
-        installmentShortfall: 1,
-      })
-      .sort({
-        periodNumber: 1,
-      })
-      .toArray();
+    await getLoanFinesForCalculation(
+      objectId,
+    );
 
   /* =========================================================
      REPAYMENTS
@@ -5343,7 +5594,6 @@ export async function getLoans(
     members,
     assessments,
     repayments: repaymentCollection,
-    fines: fineCollection,
   } = await getCollections();
 
   /* =========================================================
@@ -5753,49 +6003,11 @@ export async function getLoans(
     }
   }
 
-  /* =========================================================
-     LOAD PERSISTED FINES
-
-     The fines collection is the authoritative
-     source for historical per-installment fines.
-
-     We intentionally do NOT use assessment.fineAmount
-     as the source of the displayed historical fine.
-  ========================================================= */
-
   const fineDocuments =
     loanIds.length > 0
-      ? await fineCollection
-          .find({
-            loanId: {
-              $in: loanIds,
-            },
-          })
-          .project<{
-            loanId: ObjectId;
-            periodNumber: number;
-            amount: unknown;
-            fineRate: unknown;
-            periodStart?: CalendarDate;
-            periodEnd?: CalendarDate;
-            expectedInstallment?: unknown;
-            paymentsDuringPeriod?: unknown;
-            installmentShortfall?: unknown;
-          }>({
-            loanId: 1,
-            periodNumber: 1,
-            amount: 1,
-            fineRate: 1,
-            periodStart: 1,
-            periodEnd: 1,
-            expectedInstallment: 1,
-            paymentsDuringPeriod: 1,
-            installmentShortfall: 1,
-          })
-          .sort({
-            periodNumber: 1,
-          })
-          .toArray()
+      ? await getLoanFinesForCalculationByLoanIds(
+          loanIds,
+        )
       : [];
 
   /* =========================================================
@@ -6083,8 +6295,6 @@ export async function getLoanById(
     assessments,
     repayments:
       repaymentCollection,
-    fines:
-      fineCollection,
   } = await getCollections();
 
   const objectId =
@@ -6130,44 +6340,10 @@ export async function getLoanById(
     })
     .toArray();
 
-  /* =========================================================
-     FINES
-
-     Historical fines come from the persisted
-     fines collection.
-
-     The fines collection is authoritative for
-     the displayed per-installment fine.
-  ========================================================= */
-
   const fineDocuments =
-    await fineCollection
-      .find({
-        loanId: objectId,
-      })
-      .project<{
-        periodNumber: number;
-        amount: unknown;
-        fineRate: unknown;
-        periodStart?: CalendarDate;
-        periodEnd?: CalendarDate;
-        expectedInstallment?: unknown;
-        paymentsDuringPeriod?: unknown;
-        installmentShortfall?: unknown;
-      }>({
-        periodNumber: 1,
-        amount: 1,
-        fineRate: 1,
-        periodStart: 1,
-        periodEnd: 1,
-        expectedInstallment: 1,
-        paymentsDuringPeriod: 1,
-        installmentShortfall: 1,
-      })
-      .sort({
-        periodNumber: 1,
-      })
-      .toArray();
+    await getLoanFinesForCalculation(
+      objectId,
+    );
 
   /* =========================================================
      REPAYMENTS
@@ -6241,8 +6417,6 @@ export async function getLoanByNumber(
     assessments,
     repayments:
       repaymentCollection,
-    fines:
-      fineCollection,
   } = await getCollections();
 
   const loan =
@@ -6289,44 +6463,10 @@ export async function getLoanByNumber(
     })
     .toArray();
 
-  /* =========================================================
-     FINES
-
-     Historical fines come from the persisted
-     fines collection.
-
-     The fines collection is authoritative for
-     the displayed per-installment fine.
-  ========================================================= */
-
   const fineDocuments =
-    await fineCollection
-      .find({
-        loanId: objectId,
-      })
-      .project<{
-        periodNumber: number;
-        amount: unknown;
-        fineRate: unknown;
-        periodStart?: CalendarDate;
-        periodEnd?: CalendarDate;
-        expectedInstallment?: unknown;
-        paymentsDuringPeriod?: unknown;
-        installmentShortfall?: unknown;
-      }>({
-        periodNumber: 1,
-        amount: 1,
-        fineRate: 1,
-        periodStart: 1,
-        periodEnd: 1,
-        expectedInstallment: 1,
-        paymentsDuringPeriod: 1,
-        installmentShortfall: 1,
-      })
-      .sort({
-        periodNumber: 1,
-      })
-      .toArray();
+    await getLoanFinesForCalculation(
+      objectId,
+    );
 
   /* =========================================================
      REPAYMENTS
@@ -7040,182 +7180,6 @@ export async function updateLoan(
 }
 
 /* =========================================================
-   ACCRUE ALL ELIGIBLE LOAN PERIODS
-========================================================= */
-
-/**
- * Closes every completed repayment period for every eligible
- * active loan.
- *
- * IMPORTANT:
- *
- * - This is an explicit financial operation.
- * - getLoans() does NOT call it.
- * - Each repayment period is evaluated independently.
- * - A period is closed only after its periodEnd has passed.
- * - Once an assessment exists for a period, that historical
- *   period is never recalculated or modified.
- * - Historical fines are persisted to loanFines.
- * - Historical assessments are persisted to loanAssessments.
- * - Later repayments do NOT rewrite historical assessments
- *   or historical fines.
- *
- * The returned number is the total number of newly closed
- * repayment periods across all processed loans.
- *
- * It is safe to run repeatedly:
- *
- *   completed period + no assessment
- *       -> assess and close it
- *
- *   completed period + existing assessment
- *       -> leave it untouched
- *
- *   open/current period
- *       -> leave it untouched
- */
-export async function accrueAllLoanFines(
-  asOfDate: Date = new Date(),
-): Promise<number> {
-  if (!isValidDate(asOfDate)) {
-    throw new Error(
-      "Invalid as-of date.",
-    );
-  }
-
-  const { loans } =
-    await getCollections();
-
-  const asOfCalendarDate =
-    dateToKenyanCalendarDate(
-      asOfDate,
-    );
-
-  /*
-   * We only need active loans here.
-   *
-   * Do NOT filter by fineStatus.
-   *
-   * fineStatus controls whether a newly calculated historical
-   * fine may be created. It must not prevent an ended repayment
-   * period from being historically assessed.
-   *
-   * The actual period-level eligibility check is performed by
-   * accrueLoanFines(), which checks every contractual period's
-   * periodEnd against asOfCalendarDate.
-   *
-   * The legacy Date branch allows older loans to be discovered
-   * even when firstDueDate was stored as BSON Date instead of
-   * the canonical calendar-date representation.
-   */
-  const candidates =
-    await loans
-      .find(
-        {
-          status: "active",
-
-          $or: [
-            {
-              firstDueDate: {
-                $lte: asOfCalendarDate,
-              },
-            },
-            {
-              firstDueDate: {
-                $type: "date",
-              },
-            },
-          ],
-        },
-        {
-          projection: {
-            _id: 1,
-            firstDueDate: 1,
-          },
-        },
-      )
-      .toArray();
-
-  let closedPeriods = 0;
-
-  for (const loan of candidates) {
-    if (!loan._id) {
-      continue;
-    }
-
-    const loanId =
-      loan._id.toString();
-
-    let firstDueDate: CalendarDate;
-
-    try {
-      firstDueDate =
-        normalizeLoanCalendarDate(
-          loan.firstDueDate,
-          "loan.firstDueDate",
-          loanId,
-        );
-    } catch (error) {
-      /*
-       * A malformed loan must not stop the batch.
-       */
-      console.error(
-        `Failed to normalize first due date for loan ${loanId}:`,
-        error,
-      );
-
-      continue;
-    }
-
-    /*
-     * The first due date itself must already have arrived before
-     * this loan can possibly have a completed repayment period.
-     *
-     * The detailed periodEnd check is still performed inside
-     * accrueLoanFines().
-     */
-    if (
-      firstDueDate >
-      asOfCalendarDate
-    ) {
-      continue;
-    }
-
-    try {
-      /*
-       * accrueLoanFines() closes completed periods only.
-       *
-       * It does NOT:
-       * - recalculate existing assessments
-       * - update existing fines
-       * - reconcile the loan projection
-       * - update repayment status
-       * - rewrite historical payment totals
-       */
-      closedPeriods +=
-        await accrueLoanFines(
-          loanId,
-          asOfDate,
-        );
-    } catch (error) {
-      /*
-       * One damaged loan must not prevent the remaining loans
-       * from being processed.
-       *
-       * The failed loan can be retried during the next batch run.
-       */
-      console.error(
-        `Failed to close completed repayment periods for loan ${loanId}:`,
-        error,
-      );
-    }
-  }
-
-  return closedPeriods;
-}
-
-
-/* =========================================================
    ASSESSMENT PERIOD
 ========================================================= */
 
@@ -7325,634 +7289,6 @@ async function getPeriodPaymentTotal(
     ),
   );
 }
-
-/* =========================================================
-   CREATE HISTORICAL PERIOD FINE
-========================================================= */
-
-/**
- * Creates the historical fine for a repayment period.
- *
- * IMPORTANT:
- *
- * A fine belongs to the repayment period in which the
- * installment was unpaid when that period closed.
- *
- * Once created, the fine is immutable.
- *
- * A later repayment NEVER:
- *
- * - reduces the fine
- * - increases the fine
- * - changes the fine rate
- * - changes the historical shortfall
- * - changes the historical payment amount
- *
- * This function is only called when the period is being
- * assessed for the first time.
- */
-async function createLoanPeriodFine(
-  loanId: ObjectId,
-  periodNumber: number,
-  loan: LoanDocument,
-  period: AssessmentPeriod,
-  expectedInstallment: number,
-  paymentsDuringPeriod: number,
-  unpaidInstallment: number,
-  fineRate: number,
-  session: ClientSession,
-): Promise<number> {
-  const { fines } =
-    await getCollections();
-
-  /*
-   * No historical shortfall means no historical fine.
-   */
-  if (
-    unpaidInstallment <= 0
-  ) {
-    return 0;
-  }
-
-  /*
-   * Fines must be active when the historical period is
-   * assessed.
-   *
-   * If fines are stopped, we do not create a new fine.
-   *
-   * Existing historical fines are never touched by this
-   * function.
-   */
-  if (
-    loan.fineStatus !== "active"
-  ) {
-    return 0;
-  }
-
-  const calculatedFine =
-    money(
-      unpaidInstallment *
-        fineRate,
-    );
-
-  if (
-    calculatedFine <= 0
-  ) {
-    return 0;
-  }
-
-  /*
-   * This should normally not exist because the caller only
-   * reaches this function for a new assessment.
-   *
-   * However, checking here makes the function safe against
-   * duplicate execution.
-   *
-   * Existing fine = return it unchanged.
-   */
-  const existingFine =
-    await fines.findOne(
-      {
-        loanId,
-        periodNumber,
-      },
-      {
-        session,
-      },
-    );
-
-  if (existingFine) {
-    return money(
-      Number(
-        existingFine.amount ?? 0,
-      ),
-    );
-  }
-
-  const fineDocument:
-    LoanFineDocument = {
-    _id:
-      new ObjectId(),
-
-    loanId,
-
-    loanNumber:
-      loan.loanNumber,
-
-    memberId:
-      loan.memberId,
-
-    amount:
-      calculatedFine,
-
-    fineDate:
-      period.periodEnd,
-
-    fineRate,
-
-    periodNumber,
-
-    periodStart:
-      period.periodStart,
-
-    periodEnd:
-      period.periodEnd,
-
-    expectedInstallment,
-
-    paymentsDuringPeriod,
-
-    installmentShortfall:
-      unpaidInstallment,
-
-    assessedCoreBalance:
-      unpaidInstallment,
-
-    source:
-      "system" as FineSource,
-
-    createdAt:
-      new Date(),
-  };
-
-  try {
-    await fines.insertOne(
-      fineDocument,
-      {
-        session,
-      },
-    );
-
-    await writeAudit(
-      loanId,
-      loan.loanNumber,
-      "fine_recorded",
-      SYSTEM_ACTOR,
-      {
-        periodNumber,
-
-        periodStart:
-          period.periodStart,
-
-        periodEnd:
-          period.periodEnd,
-
-        amount:
-          calculatedFine,
-
-        fineRate,
-
-        expectedInstallment,
-
-        amountPaidDuringPeriod:
-          paymentsDuringPeriod,
-
-        unpaidInstallment,
-
-        assessedCoreBalance:
-          unpaidInstallment,
-      },
-      session,
-    );
-
-    return calculatedFine;
-  } catch (error) {
-    /*
-     * Another transaction may have created the historical
-     * fine concurrently.
-     *
-     * Never create another fine.
-     */
-    if (
-      !isDuplicateKeyError(
-        error,
-      )
-    ) {
-      throw error;
-    }
-
-    const concurrentFine =
-      await fines.findOne(
-        {
-          loanId,
-          periodNumber,
-        },
-        {
-          session,
-        },
-      );
-
-    if (!concurrentFine) {
-      throw error;
-    }
-
-    return money(
-      Number(
-        concurrentFine.amount ?? 0,
-      ),
-    );
-  }
-}
-
-/* =========================================================
-   RECONCILE HISTORICAL PERIOD FINE
-
-   Historical fine is calculated from the repayment ledger:
-
-     expected installment
-       -
-     payments actually received during this period
-       =
-     historical installment shortfall
-
-     historical installment shortfall
-       ×
-     loan fine rate
-       =
-     historical period fine
-
-   IMPORTANT:
-   - Uses transactionDate through getPeriodPaymentTotal().
-   - Does NOT use current allocation.
-   - Does NOT use period.balance.
-   - Does NOT use loan.outstandingBalance.
-   - Does NOT mutate immutable assessments.
-   - Reconciles the fines collection.
-========================================================= */
-async function reconcileLoanPeriodFine(
-  loanId: ObjectId,
-  periodNumber: number,
-  loan: LoanDocument,
-  period: AssessmentPeriod,
-  session: ClientSession,
-): Promise<number> {
-  const { fines } = await getCollections();
-
-  assertCalendarDate(
-    period.periodStart,
-    "repayment period start",
-  );
-
-  assertCalendarDate(
-    period.periodEnd,
-    "repayment period end",
-  );
-
-  /*
-   * Determine what the expected installment was for this
-   * historical period.
-   *
-   * Use the same calculation used by the assessment workflow:
-   * the installment can depend on the amount already paid
-   * before the period.
-   */
-  const amountPaidBeforePeriod =
-    await getLoanPaidTotalAsOf(
-      loanId,
-      period.periodStart,
-      session,
-    );
-
-  const expectedInstallment = money(
-    Math.max(
-      0,
-      calculateLoanAmountDue(
-        loan.installmentAmount,
-        loan.principal,
-        loan.interestAmount,
-        amountPaidBeforePeriod,
-      ),
-    ),
-  );
-
-  /*
-   * IMPORTANT:
-   *
-   * getPeriodPaymentTotal() already contains the canonical
-   * repayment-date rules and legacy BSON Date support.
-   *
-   * It uses:
-   *   period 1  -> >= start and <= end
-   *   later     -> > start and <= end
-   *
-   * Therefore we deliberately use it rather than creating
-   * another payment-date implementation.
-   */
-  const paymentsDuringPeriod =
-    await getPeriodPaymentTotal(
-      loanId,
-      period,
-      session,
-    );
-
-  const installmentShortfall = money(
-    Math.max(
-      0,
-      expectedInstallment -
-        paymentsDuringPeriod,
-    ),
-  );
-
-  const fineRate = normalizeRate(
-    loan.fineRate,
-  );
-
-  const calculatedFine = money(
-    Math.max(
-      0,
-      installmentShortfall * fineRate,
-    ),
-  );
-
-  const existingFine =
-    await fines.findOne(
-      {
-        loanId,
-        periodNumber,
-      },
-      {
-        session,
-      },
-    );
-
-  /*
-   * No fine is currently due for this historical period.
-   *
-   * If an old fine exists, remove the stale amount so the
-   * fines collection remains consistent with the repayment
-   * ledger.
-   */
-  if (calculatedFine <= 0) {
-    if (existingFine) {
-      await fines.deleteOne(
-        {
-          _id: existingFine._id,
-        },
-        {
-          session,
-        },
-      );
-
-      await writeAudit(
-        loanId,
-        loan.loanNumber,
-        "fine_recorded",
-        SYSTEM_ACTOR,
-        {
-          periodNumber,
-          periodStart: period.periodStart,
-          periodEnd: period.periodEnd,
-          amount: 0,
-          previousAmount: money(
-            Number(existingFine.amount ?? 0),
-          ),
-          fineRate,
-          expectedInstallment,
-          amountPaidDuringPeriod:
-            paymentsDuringPeriod,
-          unpaidInstallment:
-            installmentShortfall,
-          assessedCoreBalance:
-            installmentShortfall,
-          source: "historical_reconciliation",
-          action: "removed_stale_fine",
-        },
-        session,
-      );
-    }
-
-    return 0;
-  }
-
-  /*
-   * No existing fine:
-   * create the authoritative historical fine record.
-   */
-  if (!existingFine) {
-    const fineDocument: LoanFineDocument = {
-      _id: new ObjectId(),
-      loanId,
-      loanNumber: loan.loanNumber,
-      memberId: loan.memberId,
-      amount: calculatedFine,
-      fineDate: period.periodEnd,
-      fineRate,
-      periodNumber,
-      periodStart: period.periodStart,
-      periodEnd: period.periodEnd,
-      expectedInstallment,
-      paymentsDuringPeriod,
-      installmentShortfall,
-      assessedCoreBalance:
-        installmentShortfall,
-      source: "system" as FineSource,
-      createdAt: new Date(),
-    };
-
-    try {
-      await fines.insertOne(
-        fineDocument,
-        {
-          session,
-        },
-      );
-
-      await writeAudit(
-        loanId,
-        loan.loanNumber,
-        "fine_recorded",
-        SYSTEM_ACTOR,
-        {
-          periodNumber,
-          periodStart: period.periodStart,
-          periodEnd: period.periodEnd,
-          amount: calculatedFine,
-          fineRate,
-          expectedInstallment,
-          amountPaidDuringPeriod:
-            paymentsDuringPeriod,
-          unpaidInstallment:
-            installmentShortfall,
-          assessedCoreBalance:
-            installmentShortfall,
-          source: "historical_reconciliation",
-          action: "created",
-        },
-        session,
-      );
-
-      return calculatedFine;
-    } catch (error) {
-      /*
-       * Another reconciliation process may have inserted
-       * the same period concurrently.
-       */
-      if (!isDuplicateKeyError(error)) {
-        throw error;
-      }
-
-      const concurrentFine =
-        await fines.findOne(
-          {
-            loanId,
-            periodNumber,
-          },
-          {
-            session,
-          },
-        );
-
-      if (!concurrentFine) {
-        throw error;
-      }
-
-      return money(
-        Number(
-          concurrentFine.amount ?? 0,
-        ),
-      );
-    }
-  }
-
-  /*
-   * Existing fine:
-   *
-   * Reconcile all historical facts that belong to this fine.
-   *
-   * We preserve:
-   *   - _id
-   *   - createdAt
-   *
-   * because this is a reconciliation of an existing
-   * financial record, not a new fine event.
-   */
-  const existingAmount = money(
-    Number(existingFine.amount ?? 0),
-  );
-
-  const existingExpectedInstallment =
-    money(
-      Number(
-        existingFine.expectedInstallment ??
-          0,
-      ),
-    );
-
-  const existingPaymentsDuringPeriod =
-    money(
-      Number(
-        existingFine.paymentsDuringPeriod ??
-          0,
-      ),
-    );
-
-  const existingInstallmentShortfall =
-    money(
-      Number(
-        existingFine.installmentShortfall ??
-          0,
-      ),
-    );
-
-  const existingAssessedCoreBalance =
-    money(
-      Number(
-        existingFine.assessedCoreBalance ??
-          0,
-      ),
-    );
-
-  const existingFineRate = normalizeRate(
-    Number(existingFine.fineRate ?? 0),
-  );
-
-  const existingPeriodStart =
-    existingFine.periodStart;
-
-  const existingPeriodEnd =
-    existingFine.periodEnd;
-
-  const needsUpdate =
-    existingAmount !== calculatedFine ||
-    existingExpectedInstallment !==
-      expectedInstallment ||
-    existingPaymentsDuringPeriod !==
-      paymentsDuringPeriod ||
-    existingInstallmentShortfall !==
-      installmentShortfall ||
-    existingAssessedCoreBalance !==
-      installmentShortfall ||
-    existingFineRate !== fineRate ||
-    existingPeriodStart !==
-      period.periodStart ||
-    existingPeriodEnd !==
-      period.periodEnd;
-
-  if (!needsUpdate) {
-    return existingAmount;
-  }
-
-  await fines.updateOne(
-    {
-      _id: existingFine._id,
-    },
-    {
-      $set: {
-        amount: calculatedFine,
-        fineDate: period.periodEnd,
-        fineRate,
-        periodStart:
-          period.periodStart,
-        periodEnd:
-          period.periodEnd,
-        expectedInstallment,
-        paymentsDuringPeriod,
-        installmentShortfall,
-        assessedCoreBalance:
-          installmentShortfall,
-      },
-    },
-    {
-      session,
-    },
-  );
-
-  await writeAudit(
-    loanId,
-    loan.loanNumber,
-    "fine_recorded",
-    SYSTEM_ACTOR,
-    {
-      periodNumber,
-      periodStart: period.periodStart,
-      periodEnd: period.periodEnd,
-      amount: calculatedFine,
-      previousAmount: existingAmount,
-      fineRate,
-      expectedInstallment,
-      previousExpectedInstallment:
-        existingExpectedInstallment,
-      amountPaidDuringPeriod:
-        paymentsDuringPeriod,
-      previousAmountPaidDuringPeriod:
-        existingPaymentsDuringPeriod,
-      unpaidInstallment:
-        installmentShortfall,
-      previousUnpaidInstallment:
-        existingInstallmentShortfall,
-      assessedCoreBalance:
-        installmentShortfall,
-      previousAssessedCoreBalance:
-        existingAssessedCoreBalance,
-      source: "historical_reconciliation",
-      action: "updated",
-    },
-    session,
-  );
-
-  return calculatedFine;
-}
-
 
 /* =========================================================
    ASSESS ONE COMPLETED LOAN PERIOD
@@ -8173,28 +7509,7 @@ async function assessLoanPeriod(
       loan.fineRate,
     );
 
-  /*
-   * =========================================================
-   * HISTORICAL FINE
-   * =========================================================
-   *
-   * This is created ONCE.
-   *
-   * It is based exclusively on the historical shortfall of
-   * this period.
-   */
-  const actualFineAmount =
-    await createLoanPeriodFine(
-      loanId,
-      periodNumber,
-      loan,
-      period,
-      expectedInstallment,
-      paymentsDuringPeriod,
-      unpaidInstallment,
-      fineRate,
-      session,
-    );
+  const actualFineAmount = 0;
 
   /*
    * =========================================================
@@ -8594,767 +7909,6 @@ async function closeCompletedLoanPeriods(
 
   return newlyClosedPeriods;
 }
-/* =========================================================
-   RECONCILE ALL HISTORICAL FINES FOR ONE LOAN
-
-   Historical fines are rebuilt from the repayment ledger.
-
-   For every closed contractual installment:
-
-     expected installment
-       -
-     payments received during that installment
-       =
-     historical installment shortfall
-
-     historical shortfall
-       ×
-     fine rate
-       =
-     historical fine
-
-   Current payment allocation is deliberately NOT used for
-   historical fine calculation.
-
-   Completed loans are included.
-   Cancelled loans are excluded.
-========================================================= */
-async function reconcileLoanHistoricalFines(
-  loanId: ObjectId,
-  asOfCalendarDate: CalendarDate,
-  session: ClientSession,
-): Promise<number> {
-  assertCalendarDate(
-    asOfCalendarDate,
-    "as-of calendar date",
-  );
-
-  const {
-    loans,
-    fines,
-  } = await getCollections();
-
-  const loan = await loans.findOne(
-    {
-      _id: loanId,
-    },
-    {
-      session,
-    },
-  );
-
-  if (!loan) {
-    throw new Error("Loan not found.");
-  }
-
-  /*
-   * Cancelled loans have no historical fine schedule to
-   * reconcile.
-   *
-   * Completed loans ARE processed because their historical
-   * repayment periods must remain financially accurate.
-   */
-  if (loan.status === "cancelled") {
-    return 0;
-  }
-
-  const disbursementDate =
-    normalizeLoanCalendarDate(
-      loan.disbursementDate,
-      "loan.disbursementDate",
-      loan.loanNumber,
-    );
-
-  const loanEndDate =
-    normalizeLoanCalendarDate(
-      loan.endDate,
-      "loan.endDate",
-      loan.loanNumber,
-    );
-
-  const cycleDaysRaw = Number(
-    loan.repaymentCycleDays ?? 7,
-  );
-
-  const cycleDays =
-    Number.isInteger(cycleDaysRaw) &&
-    cycleDaysRaw > 0
-      ? cycleDaysRaw
-      : 7;
-
-  /*
-   * No contractual periods exist when the end date is not
-   * after the disbursement date.
-   */
-  if (
-    loanEndDate <=
-    disbursementDate
-  ) {
-    await loans.updateOne(
-      {
-        _id: loanId,
-      },
-      {
-        $set: {
-          totalFines: 0,
-        },
-      },
-      {
-        session,
-      },
-    );
-
-    return 0;
-  }
-
-  /*
-   * Determine the maximum number of contractual periods
-   * directly from the loan's dates and repayment cycle.
-   */
-  let maximumContractualPeriod = 0;
-
-  for (;;) {
-    const periodStart =
-      addCalendarDays(
-        disbursementDate,
-        maximumContractualPeriod *
-          cycleDays,
-      );
-
-    if (
-      periodStart >=
-      loanEndDate
-    ) {
-      break;
-    }
-
-    maximumContractualPeriod++;
-  }
-
-  if (
-    maximumContractualPeriod <= 0
-  ) {
-    await loans.updateOne(
-      {
-        _id: loanId,
-      },
-      {
-        $set: {
-          totalFines: 0,
-        },
-      },
-      {
-        session,
-      },
-    );
-
-    return 0;
-  }
-
-  let reconciledPeriods = 0;
-
-  for (
-    let periodNumber = 1;
-    periodNumber <=
-    maximumContractualPeriod;
-    periodNumber++
-  ) {
-    const contractualPeriod =
-      getAssessmentPeriod(
-        loan,
-        periodNumber,
-      );
-
-    if (
-      contractualPeriod.periodStart >=
-      loanEndDate
-    ) {
-      break;
-    }
-
-    /*
-     * The final contractual period can extend beyond the
-     * actual loan end date.
-     *
-     * Never allow payments after loan.endDate to be included
-     * in that installment.
-     */
-    const boundedPeriodEnd =
-      contractualPeriod.periodEnd >
-      loanEndDate
-        ? loanEndDate
-        : contractualPeriod.periodEnd;
-
-    /*
-     * Only completely closed periods are eligible for
-     * historical fine reconciliation.
-     *
-     * An open/current installment must not receive a
-     * historical fine yet.
-     */
-    if (
-      boundedPeriodEnd >
-      asOfCalendarDate
-    ) {
-      break;
-    }
-
-    /*
-     * getPeriodPaymentTotal() already contains the canonical
-     * repayment-date rules and legacy BSON Date support.
-     *
-     * We therefore pass it the bounded period instead of
-     * creating another payment-date implementation.
-     */
-    const boundedPeriod: AssessmentPeriod =
-      {
-        ...contractualPeriod,
-        periodEnd:
-          boundedPeriodEnd,
-      };
-
-    await reconcileLoanPeriodFine(
-      loanId,
-      periodNumber,
-      loan,
-      boundedPeriod,
-      session,
-    );
-
-    reconciledPeriods++;
-  }
-
-  /*
-   * The fines collection is the authoritative source for
-   * the aggregate total.
-   *
-   * Recalculate loan.totalFines from persisted fine records
-   * rather than relying on the loop counter above.
-   */
-  const aggregateResult =
-    await fines
-      .aggregate<{
-        _id: null;
-        total: number;
-      }>(
-        [
-          {
-            $match: {
-              loanId,
-            },
-          },
-          {
-            $group: {
-              _id: null,
-              total: {
-                $sum: "$amount",
-              },
-            },
-          },
-        ],
-        {
-          session,
-        },
-      )
-      .toArray();
-
-  const authoritativeTotalFines =
-    money(
-      Number(
-        aggregateResult[0]?.total ??
-          0,
-      ),
-    );
-
-  const currentLoanTotalFines =
-    money(
-      Number(
-        loan.totalFines ?? 0,
-      ),
-    );
-
-  if (
-    currentLoanTotalFines !==
-    authoritativeTotalFines
-  ) {
-    await loans.updateOne(
-      {
-        _id: loanId,
-      },
-      {
-        $set: {
-          totalFines:
-            authoritativeTotalFines,
-        },
-      },
-      {
-        session,
-      },
-    );
-  }
-
-  return reconciledPeriods;
-}
-
-/* =========================================================
-   PUBLIC PERIOD CLOSURE WRAPPER
-========================================================= */
-
-/**
- * Public transactional wrapper.
- *
- * ONE RESPONSIBILITY:
- *
- *     Close repayment periods that have ended.
- *
- * It does NOT:
- *
- * - recalculate historical periods
- * - modify historical assessments
- * - modify historical fines
- * - reduce fines after later repayments
- * - increase historical fines
- * - update repaymentStatus
- * - reconcile the loan projection
- * - calculate current outstanding balance
- *
- * The return value is the number of newly closed periods.
- */
-/* =========================================================
-   PUBLIC: RECONCILE FINES FOR ONE LOAN
-========================================================= */
-export async function accrueLoanFines(
-  loanId: string,
-  asOfDate: Date = new Date(),
-): Promise<number> {
-  if (!ObjectId.isValid(loanId)) {
-    throw new Error(
-      "Invalid loan ID.",
-    );
-  }
-
-  if (!isValidDate(asOfDate)) {
-    throw new Error(
-      "Invalid as-of date.",
-    );
-  }
-
-  const {
-    client,
-  } = await getCollections();
-
-  const objectId =
-    createObjectId(loanId);
-
-  const asOfCalendarDate =
-    dateToKenyanCalendarDate(
-      asOfDate,
-    );
-
-  const session =
-    client.startSession();
-
-  try {
-    return await session.withTransaction(
-      async (): Promise<number> => {
-        return await reconcileLoanHistoricalFines(
-          objectId,
-          asOfCalendarDate,
-          session,
-        );
-      },
-      {
-        readConcern: {
-          level: "snapshot",
-        },
-        writeConcern: {
-          w: "majority",
-        },
-        maxCommitTimeMS: 10_000,
-      },
-    );
-  } finally {
-    await session.endSession();
-  }
-}
-/* =========================================================
-   STOP FINES
-========================================================= */
-
-export async function stopLoanFines(
-  loanId: string,
-  input: {
-    reason: string;
-    stoppedBy: LoanActor;
-  },
-): Promise<Loan> {
-  if (
-    !ObjectId.isValid(
-      loanId,
-    )
-  ) {
-    throw new Error(
-      "Invalid loan ID.",
-    );
-  }
-
-  const reason =
-    typeof input?.reason ===
-    "string"
-      ? normalizeText(
-          input.reason,
-        )
-      : "";
-
-  if (!reason) {
-    throw new Error(
-      "A reason is required when stopping fines.",
-    );
-  }
-
-  const actor =
-    normalizeActor(
-      input.stoppedBy,
-    );
-
-  const {
-    client,
-  } =
-    await getCollections();
-
-  const session =
-    client.startSession();
-
-  try {
-    return await session.withTransaction(
-      async (): Promise<Loan> => {
-        const {
-          loans,
-        } =
-          await getCollections();
-
-        const objectId =
-          createObjectId(
-            loanId,
-          );
-
-        const loan =
-          await loans.findOne(
-            {
-              _id:
-                objectId,
-            },
-
-            {
-              session,
-            },
-          );
-
-        if (!loan) {
-          throw new Error(
-            "Loan not found.",
-          );
-        }
-
-        if (
-          loan.status ===
-          "cancelled"
-        ) {
-          throw new Error(
-            "Fines cannot be changed on a cancelled loan.",
-          );
-        }
-
-        if (
-          loan.status ===
-          "completed"
-        ) {
-          throw new Error(
-            "Fines cannot be changed on a completed loan.",
-          );
-        }
-
-        if (
-          loan.fineStatus ===
-          "stopped"
-        ) {
-          return toLoan(
-            loan,
-          );
-        }
-
-        const now =
-          new Date();
-
-        const result =
-          await loans.updateOne(
-            {
-              _id:
-                objectId,
-
-              fineStatus:
-                "active",
-            },
-
-            {
-              $set: {
-                fineStatus:
-                  "stopped",
-
-                updatedAt:
-                  now,
-              },
-            },
-
-            {
-              session,
-            },
-          );
-
-        if (
-          result.modifiedCount !==
-          1
-        ) {
-          throw new Error(
-            "Loan fine status changed concurrently. Please retry.",
-          );
-        }
-
-        await writeAudit(
-          objectId,
-          loan.loanNumber,
-          "fine_stopped",
-          actor,
-          {
-            reason,
-
-            stoppedAt:
-              now,
-          },
-          session,
-        );
-
-        return reconcileLoan(
-          objectId,
-          session,
-        );
-      },
-
-      {
-        readConcern: {
-          level:
-            "snapshot",
-        },
-
-        writeConcern: {
-          w:
-            "majority",
-        },
-
-        maxCommitTimeMS:
-          10_000,
-      },
-    );
-  } finally {
-    await session.endSession();
-  }
-}
-
-/* =========================================================
-   RESUME FINES
-========================================================= */
-
-export async function resumeLoanFines(
-  loanId: string,
-  resumedBy: LoanActor,
-  reason: string,
-): Promise<Loan> {
-  if (
-    !ObjectId.isValid(
-      loanId,
-    )
-  ) {
-    throw new Error(
-      "Invalid loan ID.",
-    );
-  }
-
-  const actor =
-    normalizeActor(
-      resumedBy,
-    );
-
-  const cleanReason =
-    typeof reason ===
-    "string"
-      ? normalizeText(
-          reason,
-        )
-      : "";
-
-  if (!cleanReason) {
-    throw new Error(
-      "A reason is required when resuming fines.",
-    );
-  }
-
-  const {
-    client,
-  } =
-    await getCollections();
-
-  const session =
-    client.startSession();
-
-  try {
-    const loan =
-      await session.withTransaction(
-        async (): Promise<Loan> => {
-          const {
-            loans,
-          } =
-            await getCollections();
-
-          const objectId =
-            createObjectId(
-              loanId,
-            );
-
-          const current =
-            await loans.findOne(
-              {
-                _id:
-                  objectId,
-              },
-
-              {
-                session,
-              },
-            );
-
-          if (!current) {
-            throw new Error(
-              "Loan not found.",
-            );
-          }
-
-          if (
-            current.status ===
-              "cancelled" ||
-            current.status ===
-              "completed"
-          ) {
-            throw new Error(
-              "Fines cannot be resumed on a completed or cancelled loan.",
-            );
-          }
-
-          if (
-            current.fineStatus ===
-            "active"
-          ) {
-            return toLoan(
-              current,
-            );
-          }
-
-          const now =
-            new Date();
-
-          const result =
-            await loans.updateOne(
-              {
-                _id:
-                  objectId,
-
-                fineStatus:
-                  "stopped",
-              },
-
-              {
-                $set: {
-                  fineStatus:
-                    "active",
-
-                  updatedAt:
-                    now,
-                },
-              },
-
-              {
-                session,
-              },
-            );
-
-          if (
-            result.modifiedCount !==
-            1
-          ) {
-            throw new Error(
-              "Loan fine status changed concurrently. Please retry.",
-            );
-          }
-
-          await writeAudit(
-            objectId,
-            current.loanNumber,
-            "updated",
-            actor,
-            {
-              action:
-                "fines_resumed",
-
-              reason:
-                cleanReason,
-
-              resumedAt:
-                now,
-            },
-            session,
-          );
-
-          return reconcileLoan(
-            objectId,
-            session,
-          );
-        },
-
-        {
-          readConcern: {
-            level:
-              "snapshot",
-          },
-
-          writeConcern: {
-            w:
-              "majority",
-          },
-
-          maxCommitTimeMS:
-            10_000,
-        },
-      );
-
-    /*
-     * Assess overdue cycles after the fine status has been
-     * resumed. This intentionally runs in a separate
-     * transaction.
-     */
-    await accrueLoanFines(
-      loanId,
-      new Date(),
-    );
-
-    return (
-      await getLoanById(
-        loanId,
-      )
-    ) || loan;
-  } finally {
-    await session.endSession();
-  }
-}
-
 /**
  * =========================================================
  * HISTORICAL LOAN RESOLUTION FOR REPAYMENTS
@@ -10414,6 +8968,21 @@ export async function createLoanRepayment(
           );
 
           /* =================================================
+             RECONCILE HISTORICAL FINES
+
+             The repayment has already been inserted and any
+             ended assessment periods have been closed. The
+             centralized fine engine now derives missing
+             historical fines from the repayment ledger.
+          ================================================= */
+
+          await reconcileLoanFines(
+            loanObjectId.toString(),
+            new Date(transactionDate),
+            session,
+          );
+
+          /* =================================================
              RELOAD FINE LEDGER
 
              Fine assessment may have created new fine records,
@@ -10432,25 +9001,16 @@ export async function createLoanRepayment(
               session,
             );
 
-          /* =================================================
-             CURRENT CORE OUTSTANDING BEFORE THIS PAYMENT
-
-             IMPORTANT:
-
-             amountPaidBefore intentionally excludes the
-             repayment inserted above.
-
-             The loan's clearance balance is:
-
-               principal
-               + interest
-               - amountPaid
-
-             Fines are intentionally NOT included.
-
-             Fines remain a separate ledger.
-          ================================================= */
-
+          /*
+           * Calculate the remaining core loan balance using
+           * the original pre-repayment loan state.
+           *
+           * Fine reconciliation does not change the core
+           * principal/interest calculation.
+           *
+           * This value is intentionally calculated from
+           * `loan`, not `loanAfterFineReconciliation`.
+           */
           const currentOutstandingAfterAccrual =
             calculateFinalOutstanding(
               loan.principal,
@@ -10458,12 +9018,37 @@ export async function createLoanRepayment(
               amountPaidBefore,
             );
 
-          if (
-            currentOutstandingAfterAccrual <=
-            0
-          ) {
+          /* =================================================
+            RELOAD LOAN PROJECTION AFTER FINE RECONCILIATION
+
+            Fine reconciliation may update loans.totalFines.
+
+            The original `loan` object was loaded before
+            reconciliation, so its projection fields can now
+            be stale.
+
+            IMPORTANT:
+
+            The original `loan` remains authoritative for
+            calculating this repayment's pre-payment state.
+
+            This fresh document is used only for the
+            optimistic-concurrency snapshot below.
+          ================================================= */
+
+          const loanAfterFineReconciliation =
+            await loans.findOne(
+              {
+                _id: loanObjectId,
+              },
+              {
+                session,
+              },
+            );
+
+          if (!loanAfterFineReconciliation) {
             throw new Error(
-              "Loan has no outstanding balance.",
+              "Loan no longer exists after fine reconciliation.",
             );
           }
 
@@ -10559,16 +9144,16 @@ export async function createLoanRepayment(
                   loanObjectId,
 
                 amountPaid:
-                  loan.amountPaid,
+                  loanAfterFineReconciliation.amountPaid,
 
                 totalFines:
-                  loan.totalFines,
+                  loanAfterFineReconciliation.totalFines,
 
                 totalWaivedFines:
-                  loan.totalWaivedFines,
+                  loanAfterFineReconciliation.totalWaivedFines,
 
                 outstandingBalance:
-                  loan.outstandingBalance,
+                  loanAfterFineReconciliation.outstandingBalance,
 
                 status: {
                   $in: [
@@ -11844,50 +10429,6 @@ export async function getLoanRepayments(
 }
 
 /* =========================================================
-   GET FINES
-========================================================= */
-
-export async function getLoanFines(
-  loanId: string,
-): Promise<LoanFine[]> {
-  if (
-    !ObjectId.isValid(
-      loanId,
-    )
-  ) {
-    throw new Error(
-      "Invalid loan ID.",
-    );
-  }
-
-  const {
-    fines,
-  } =
-    await getCollections();
-
-  const documents =
-    await fines
-      .find({
-        loanId:
-          createObjectId(
-            loanId,
-          ),
-      })
-      .sort({
-        fineDate:
-          -1,
-
-        _id:
-          -1,
-      })
-      .toArray();
-
-  return documents.map(
-    toFine,
-  );
-}
-
-/* =========================================================
    GET WAIVERS
 ========================================================= */
 
@@ -12257,8 +10798,7 @@ export async function deleteLoan(
         const {
           loans,
           repayments,
-          fines,
-          waivers,
+                waivers,
           assessments,
           audit,
         } = await getCollections();
@@ -12301,13 +10841,9 @@ export async function deleteLoan(
           },
         );
 
-        await fines.deleteMany(
-          {
-            loanId: objectId,
-          },
-          {
-            session,
-          },
+        await deleteLoanFines(
+          objectId,
+          session,
         );
 
         await waivers.deleteMany(
@@ -12383,7 +10919,6 @@ export async function getLoanSummary(): Promise<LoanSummary> {
   const {
     loans,
     repayments,
-    fines,
     waivers,
   } =
     await getCollections();
@@ -12785,24 +11320,7 @@ export async function getLoanSummary(): Promise<LoanSummary> {
         ])
         .toArray(),
 
-      fines
-        .aggregate<{
-          _id: null;
-          totalFines: number;
-        }>([
-          {
-            $group: {
-              _id:
-                null,
-
-              totalFines: {
-                $sum:
-                  "$amount",
-              },
-            },
-          },
-        ])
-        .toArray(),
+      getLoanFineSummaryTotal(),
 
       waivers
         .aggregate<{
@@ -12855,8 +11373,7 @@ export async function getLoanSummary(): Promise<LoanSummary> {
   const totalFines =
     money(
       Number(
-        fineStats[0]
-          ?.totalFines ||
+        fineStats ||
           0,
       ),
     );

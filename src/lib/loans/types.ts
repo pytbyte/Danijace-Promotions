@@ -306,7 +306,155 @@ export type WeeklyRepaymentPeriodStatus =
   | "unpaid";
 
 /**
- * Response-only representation of one repayment cycle.
+ * Historical fine snapshot for one contractual
+ * repayment period.
+ *
+ * This is response-only data.
+ *
+ * It represents the fine that was actually persisted
+ * for the historical period.
+ *
+ * IMPORTANT:
+ *
+ * This object is NOT recalculated by
+ * calculateWeeklyRepaymentBalance().
+ *
+ * The persisted LoanFine record is authoritative.
+ */
+export interface WeeklyRepaymentHistoricalFine {
+  /**
+   * Persisted historical fine amount.
+   *
+   * Formula when the fine was originally created:
+   *
+   *   installmentShortfall * rate
+   */
+  amount: number;
+
+  /**
+   * Fine rate used when the historical fine was created.
+   *
+   * Example:
+   *
+   *   0.10 = 10%
+   */
+  rate: number;
+
+  /**
+   * Expected installment used when the historical
+   * fine was calculated.
+   */
+  expectedInstallment: number;
+
+  /**
+   * Payments that existed during the historical
+   * period when the fine was calculated.
+   */
+  paymentsDuringPeriod: number;
+
+  /**
+   * Historical shortfall used to calculate the fine.
+   */
+  installmentShortfall: number;
+}
+
+/**
+ * Immutable historical facts for one contractual
+ * repayment period.
+ *
+ * These values describe what actually happened during
+ * the original contractual period.
+ *
+ * Later repayments MUST NOT rewrite these values.
+ *
+ * A later repayment may change:
+ *
+ *   current.allocated
+ *   current.balance
+ *   status
+ *
+ * but must NOT change:
+ *
+ *   historical.paidDuringPeriod
+ *   historical.shortfall
+ *   historical.fine
+ */
+export interface WeeklyRepaymentHistorical {
+  /**
+   * Total amount of repayments whose financial
+   * transaction dates fell inside this contractual
+   * period.
+   *
+   * This is historical payment timing.
+   *
+   * It is NOT current FIFO allocation.
+   *
+   * Authoritative source:
+   *
+   *   loanRepayments
+   */
+  paidDuringPeriod: number;
+
+  /**
+   * Historical contractual shortfall.
+   *
+   * Formula:
+   *
+   *   max(
+   *     0,
+   *     installment - paidDuringPeriod
+   *   )
+   *
+   * Once the period has closed, later repayments
+   * do not reduce this value.
+   */
+  shortfall: number;
+
+  /**
+   * Persisted historical fine snapshot.
+   *
+   * null means no historical fine exists for
+   * this contractual period.
+   *
+   * The weekly repayment calculation MUST NOT
+   * recalculate this fine.
+   */
+  fine: WeeklyRepaymentHistoricalFine | null;
+}
+
+/**
+ * Current FIFO allocation state for one contractual
+ * repayment period.
+ *
+ * Unlike historical.*, these values are allowed to
+ * change when later repayments are received.
+ */
+export interface WeeklyRepaymentCurrent {
+  /**
+   * Total amount currently allocated to this
+   * contractual installment by the FIFO allocation
+   * engine.
+   *
+   * This may include repayments made after the
+   * contractual period originally ended.
+   */
+  allocated: number;
+
+  /**
+   * Current contractual balance remaining after
+   * current FIFO allocation.
+   *
+   * This represents current state and is therefore
+   * allowed to decrease after a later repayment.
+   *
+   * It does NOT modify historical.shortfall.
+   */
+  balance: number;
+}
+
+/**
+ * Response-only representation of one contractual
+ * repayment cycle.
  *
  * This is NOT stored directly in MongoDB.
  *
@@ -319,19 +467,19 @@ export type WeeklyRepaymentPeriodStatus =
  * HISTORICAL DATA
  * ---------------
  *
- * - paidDuringPeriod
- * - historicalShortfall
- * - fine
+ * - historical.paidDuringPeriod
+ * - historical.shortfall
+ * - historical.fine
  *
  * CURRENT ALLOCATION DATA
  * -----------------------
  *
- * - allocated
- * - balance
+ * - current.allocated
+ * - current.balance
  * - status
  *
- * Historical values come from persisted assessment and
- * fine records.
+ * Historical values come from the historical repayment
+ * ledger and persisted fine records.
  *
  * Current values come from current repayment allocation.
  *
@@ -339,31 +487,29 @@ export type WeeklyRepaymentPeriodStatus =
  * HISTORICAL IMMUTABILITY
  * =========================================================
  *
- * Once a repayment period has ended and its assessment
- * has been recorded:
+ * Once a repayment period has ended:
  *
- *   paidDuringPeriod
- *   historicalShortfall
- *   fine
+ *   historical.paidDuringPeriod
+ *   historical.shortfall
+ *   historical.fine
  *
- * MUST NEVER change.
+ * MUST NEVER change because of a later repayment.
  *
  * A later repayment may change:
  *
- *   allocated
- *   balance
+ *   current.allocated
+ *   current.balance
  *   status
  *
- * but it must NEVER rewrite the historical assessment.
+ * but it must NEVER rewrite the historical facts.
  *
  * Example:
  *
  * Original period:
  *
- *   installment          = 1,750
- *   paidDuringPeriod    = 598
- *   historicalShortfall = 1,152
- *   fine                = 0
+ *   installment        = 1,750
+ *   paidDuringPeriod  = 598
+ *   shortfall         = 1,152
  *
  * Later repayment:
  *
@@ -371,12 +517,15 @@ export type WeeklyRepaymentPeriodStatus =
  *
  * Current response:
  *
- *   installment          = 1,750
- *   paidDuringPeriod    = 598
- *   historicalShortfall = 1,152
- *   allocated            = 1,750
- *   balance              = 0
- *   fine                 = 0
+ *   installment = 1,750
+ *
+ *   historical:
+ *     paidDuringPeriod = 598
+ *     shortfall        = 1,152
+ *
+ *   current:
+ *     allocated = 1,750
+ *     balance   = 0
  *
  * The historical values remain unchanged.
  */
@@ -413,7 +562,7 @@ export interface WeeklyRepaymentBreakdownPeriod {
    * Expected contractual installment for this period.
    *
    * For a completed period, the persisted assessment's
-   * expectedInstallment is authoritative.
+   * expectedInstallment is authoritative where available.
    *
    * For the current period, this comes from the loan's
    * contractual installment amount.
@@ -421,105 +570,24 @@ export interface WeeklyRepaymentBreakdownPeriod {
   installment: number;
 
   /**
-   * Total amount of repayments whose transaction dates
-   * actually fell inside this historical period.
+   * Historical facts for this contractual period.
    *
-   * IMPORTANT:
-   *
-   * This is NOT the same thing as "allocated".
-   *
-   * A later repayment can increase allocated without
-   * changing this value.
-   *
-   * Authoritative historical source:
-   *
-   *   LoanAssessment.paymentsDuringPeriod
-   *
-   * Once the period has been assessed, this value is
-   * immutable.
+   * These values are independent from current FIFO
+   * allocation.
    */
-  paidDuringPeriod: number;
+  historical: WeeklyRepaymentHistorical;
 
   /**
-   * Amount of the expected installment that remained
-   * unpaid when the historical period was closed.
-   *
-   * Formula at historical assessment time:
-   *
-   *   max(
-   *     0,
-   *     expectedInstallment - paymentsDuringPeriod
-   *   )
-   *
-   * IMPORTANT:
-   *
-   * This is historical debt.
-   *
-   * It does NOT decrease when a later repayment is made.
-   *
-   * Authoritative historical source:
-   *
-   *   LoanAssessment.installmentShortfall
-   *
-   * Once the period has been assessed, this value is
-   * immutable.
+   * Current FIFO allocation state for this contractual
+   * period.
    */
-  historicalShortfall: number;
+  current: WeeklyRepaymentCurrent;
 
   /**
-   * Amount currently allocated to this period by the
-   * repayment allocation engine.
-   *
-   * This represents CURRENT allocation state.
-   *
-   * It may include repayments made after the period
-   * was historically closed.
-   *
-   * Therefore:
-   *
-   *   allocated
-   *
-   * MUST NOT be interpreted as:
-   *
-   *   paymentsDuringPeriod
-   */
-  allocated: number;
-
-  /**
-   * Current contractual amount remaining for this
-   * repayment period after current allocation.
-   *
-   * This is CURRENT state.
-   *
-   * It may decrease after a later repayment.
-   *
-   * It does NOT modify historicalShortfall.
-   */
-  balance: number;
-
-  /**
-   * Historical fine recorded for this repayment period.
-   *
-   * Authoritative source:
-   *
-   *   persisted LoanFine / LoanAssessment fineAmount
-   *
-   * The frontend MUST NOT calculate this from:
-   *
-   *   - current balance
-   *   - current allocation
-   *   - today's date
-   *   - outstanding loan balance
-   *
-   * Once recorded, this value is immutable.
-   */
-  fine: number;
-
-  /**
-   * Current repayment state of this period.
+   * Current presentation status of this period.
    *
    * This can change after a later repayment because it
-   * represents CURRENT allocation state.
+   * represents current allocation state.
    */
   status: WeeklyRepaymentPeriodStatus;
 }
@@ -665,67 +733,83 @@ export interface WeeklyRepaymentSurplus {
  */
 export interface WeeklyRepaymentBreakdown {
   /**
-   * Contractual installment amount for one normal
-   * repayment cycle.
-   *
-   * Example:
-   *
-   *   1,750
+   * Contractual installment amount used by the
+   * repayment calculation.
    */
   installmentAmount: number;
 
   /**
-   * Number of calendar days in one repayment cycle.
-   *
-   * Default:
-   *
-   *   7
+   * Number of days in one contractual repayment cycle.
    */
   cycleDays: number;
 
   /**
-   * Current unpaid balance belonging to completed
-   * repayment periods.
-   *
-   * IMPORTANT:
-   *
-   * This is CURRENT allocation state.
-   *
-   * It is NOT the sum of historical shortfalls.
+   * Highest contractual repayment period that has
+   * completed as of the calculation date.
    */
-  completedBalance: number;
+  latestCompletedPeriod: number;
 
   /**
-   * Current unpaid balance belonging to the currently
-   * open repayment period.
-   */
-  currentBalance: number;
-
-  /**
-   * Current repayment period number.
+   * Currently open contractual repayment period.
    *
-   * When the loan still has an open contractual period,
-   * this identifies that current period.
-   *
-   * When all contractual periods are complete, this
-   * identifies the final contractual period.
+   * If all contractual periods have completed,
+   * this may equal the final contractual period.
    */
   currentPeriodNumber: number;
 
   /**
-   * Contractual repayment periods represented by this
-   * calculation.
+   * Current unpaid balance across completed
+   * contractual periods.
+   *
+   * This is based on CURRENT FIFO allocation.
+   */
+  completedBalance: number;
+
+  /**
+   * Current unpaid balance for the currently open
+   * contractual period.
+   *
+   * This is based on CURRENT FIFO allocation.
+   */
+  currentBalance: number;
+
+  /**
+   * Current weekly repayment balance.
+   *
+   * Formula:
+   *
+   *   completedBalance + currentBalance
+   *
+   * Historical fines are NOT included here.
+   */
+  totalBalance: number;
+
+  /**
+   * Total historical fines represented by the
+   * returned contractual periods.
+   *
+   * This is the sum of:
+   *
+   *   period.historical.fine.amount
+   *
+   * where a historical fine exists.
+   */
+  totalFines: number;
+
+  /**
+   * Period-by-period repayment explanation.
    */
   periods: WeeklyRepaymentBreakdownPeriod[];
 
   /**
-   * Detailed current repayment allocation records.
+   * Detailed current FIFO payment allocations.
    */
   allocations: WeeklyRepaymentAllocation[];
 
   /**
-   * Payments that remain as unused/future credit after
-   * all represented installments have been covered.
+   * Payments or payment portions that remain unused
+   * after all displayed contractual installments
+   * have been covered.
    */
   surpluses: WeeklyRepaymentSurplus[];
 }
@@ -1598,3 +1682,4 @@ export type UpdateLoanInput = {
 
   guarantor?: LoanGuarantor;
 };
+
