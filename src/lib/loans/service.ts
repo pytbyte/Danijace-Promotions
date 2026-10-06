@@ -9010,8 +9010,10 @@ export async function createLoanRepayment(
            * the optimistic-concurrency/update logic below.
            */
           if (
-            loan.status ===
-            "completed"
+            loan.status === "completed" &&
+            Number(
+              loan.outstandingBalance ?? 0,
+            ) <= 0
           ) {
             throw new Error(
               "Completed loans cannot receive repayments.",
