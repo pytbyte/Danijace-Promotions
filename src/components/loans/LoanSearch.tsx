@@ -33,7 +33,7 @@ export type LoanSearchFilters = {
    * 2026-09-10
    */
   repaymentDate: string;
-}
+};
 
 type LoanSearchProps = {
   value: LoanSearchFilters;
@@ -53,7 +53,7 @@ type LoanSearchProps = {
 
 export const DEFAULT_LOAN_FILTERS: LoanSearchFilters = {
   search: "",
-  status: "",
+  status: "active",
   type: "",
   repaymentDate: "",
 };
@@ -71,11 +71,32 @@ export default function LoanSearch({
   const [filtersOpen, setFiltersOpen] =
     useState(false);
 
+  /*
+   * "active" is the default view, not a user-applied
+   * filter. Therefore it must not cause the filter badge
+   * or Reset button to appear.
+   */
   const hasFilters =
     value.search.trim() !== "" ||
-    value.status !== "" ||
+    (value.status !== "" &&
+      value.status !== "active") ||
     value.type !== "" ||
     value.repaymentDate !== "";
+
+  /*
+   * Count only filters that are actually applied by
+   * the user. The default "active" status is excluded.
+   */
+  const filterCount =
+    [
+      value.status !== "" &&
+        value.status !== "active"
+        ? value.status
+        : "",
+      value.type,
+      value.repaymentDate,
+    ].filter(Boolean).length +
+    (value.search.trim() ? 1 : 0);
 
   /* =======================================================
      UPDATE FILTER
@@ -132,7 +153,6 @@ export default function LoanSearch({
       =================================================== */}
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-
         {/* SEARCH */}
 
         <div className="relative min-w-0 flex-1">
@@ -246,16 +266,7 @@ export default function LoanSearch({
 
           {hasFilters && (
             <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-yellow-500 px-1.5 text-[10px] font-bold text-black">
-              {
-                [
-                  value.status,
-                  value.type,
-                  value.repaymentDate,
-                ].filter(Boolean).length +
-                (value.search.trim()
-                  ? 1
-                  : 0)
-              }
+              {filterCount}
             </span>
           )}
         </button>
@@ -301,7 +312,6 @@ export default function LoanSearch({
       {filtersOpen && (
         <div className="mt-3 border-t border-white/[0.06] pt-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-
             {/* STATUS */}
 
             <FilterSelect
