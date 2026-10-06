@@ -3998,22 +3998,31 @@ type WeeklyRepaymentBreakdown = {
  *
  *    These may change when later repayments are received.
  *
+ * 3. LOAN OUTSTANDING BALANCE
+ *    ------------------------
+ *    loan.outstandingBalance is the final contractual truth
+ *    for the amount still owed on the loan.
+ *
+ *    IMPORTANT:
+ *
+ *    The period allocation engine may temporarily show all
+ *    currently-built periods as fully allocated because
+ *    repayments can be allocated against future installments.
+ *
+ *    That must NEVER cause the overall weekly repayment
+ *    balance to become zero while the loan still has an
+ *    outstanding balance.
+ *
+ *
  * Example:
  *
- *   Period 1
- *   Expected installment:     1,750
- *   Paid during period:       1,000
- *   Historical debt:            750
- *   Historical fine:             75
+ *   Total contractual loan balance: 21,000
+ *   Amount paid:                    16,800
+ *   Outstanding balance:             4,200
  *
- *   Later repayment:             750
- *
- *   Current allocated:          1,750
- *   Current balance:                0
- *   Historical fine:               75
- *
- * The later repayment does NOT modify the historical
- * assessment or historical fine.
+ *   Even if FIFO allocation has allocated the 16,800 across
+ *   all periods currently built, the weekly repayment balance
+ *   MUST still be at least 4,200.
  *
  *
  * CONTRACTUAL SCHEDULE RULES
@@ -4031,6 +4040,10 @@ type WeeklyRepaymentBreakdown = {
  * 10. Historical fines are read from persisted loanFines.
  * 11. Fines are completely excluded from repayment balances.
  * 12. Excess repayment is returned as surplus.
+ * 13. loan.outstandingBalance is the final minimum truth for
+ *     the overall outstanding contractual balance.
+ * 14. weeklyRepaymentBalance MUST NEVER be zero while
+ *     loan.outstandingBalance is greater than zero.
  *
  *
  * The returned breakdown is response-only and is not persisted.
@@ -4115,6 +4128,18 @@ function calculateWeeklyRepaymentBalance(
 
   /* =========================================================
      LOAN STATE
+
+     IMPORTANT:
+
+     loan.outstandingBalance is the authoritative overall
+     contractual balance.
+
+     If this value is greater than zero, the loan still owes
+     money regardless of:
+       - current date
+       - loan end date
+       - future installment allocation
+       - historical period status
   ========================================================= */
 
   const loanOutstandingBalance = money(
@@ -4135,6 +4160,15 @@ function calculateWeeklyRepaymentBalance(
     getMaximumContractualPeriod(loan);
 
   if (maximumContractualPeriod <= 0) {
+    /*
+     * Even if there are no contractual periods available,
+     * never hide a real outstanding loan balance.
+     */
+    const fallbackBalance =
+      loanIsOver
+        ? 0
+        : loanOutstandingBalance;
+
     const emptyBreakdown:
       WeeklyRepaymentBreakdown = {
       installmentAmount,
@@ -4147,9 +4181,9 @@ function calculateWeeklyRepaymentBalance(
 
       completedBalance: 0,
 
-      currentBalance: 0,
+      currentBalance: fallbackBalance,
 
-      totalBalance: 0,
+      totalBalance: fallbackBalance,
 
       totalFines: 0,
 
@@ -4163,9 +4197,11 @@ function calculateWeeklyRepaymentBalance(
     return {
       completedInstallmentBalance: 0,
 
-      currentInstallmentBalance: 0,
+      currentInstallmentBalance:
+        fallbackBalance,
 
-      weeklyRepaymentBalance: 0,
+      weeklyRepaymentBalance:
+        fallbackBalance,
 
       currentPeriodNumber: 0,
 
@@ -4239,18 +4275,38 @@ function calculateWeeklyRepaymentBalance(
     });
 
   if (installmentAmount <= 0) {
+    /*
+     * Even when installmentAmount is unavailable, an actual
+     * outstanding loan balance must still be visible.
+     */
+    const fallbackBalance =
+      loanIsOver
+        ? 0
+        : loanOutstandingBalance;
+
+    const breakdown =
+      createEmptyBreakdown();
+
+    breakdown.currentBalance =
+      fallbackBalance;
+
+    breakdown.totalBalance =
+      fallbackBalance;
+
     return {
       completedInstallmentBalance: 0,
 
-      currentInstallmentBalance: 0,
+      currentInstallmentBalance:
+        fallbackBalance,
 
-      weeklyRepaymentBalance: 0,
+      weeklyRepaymentBalance:
+        fallbackBalance,
 
       currentPeriodNumber:
         baseCurrentPeriodNumber,
 
       weeklyRepaymentBreakdown:
-        createEmptyBreakdown(),
+        breakdown,
 
       loanPaymentReminder: null,
     };
@@ -4571,18 +4627,6 @@ function calculateWeeklyRepaymentBalance(
 
   /* =========================================================
      CONTRACTUAL PERIOD MODEL
-
-     Each internal period contains two distinct concepts:
-
-     HISTORICAL
-       What actually happened during the original
-       contractual period.
-
-     CURRENT
-       How repayments received so far are currently
-       allocated against the contractual installment.
-
-     These values MUST NOT be mixed.
   ========================================================= */
 
   type InstallmentPeriod = {
@@ -4618,14 +4662,12 @@ function calculateWeeklyRepaymentBalance(
    * Build through ONE period beyond the date-based current
    * period.
    *
-   * Why?
+   * This gives FIFO allocation somewhere to roll forward
+   * when the date-based current period has already been
+   * completely paid.
    *
-   * If the current contractual period has already been fully
-   * paid, FIFO allocation must have somewhere to roll forward
-   * into. Otherwise the function incorrectly reports Ksh 0
-   * even though the loan is still contractually active.
-   *
-   * We cap this strictly at maximumContractualPeriod.
+   * The overall outstanding balance is still authoritative
+   * for the final weekly repayment amount.
    */
   const periodBuildLimit =
     Math.min(
@@ -4649,14 +4691,6 @@ function calculateWeeklyRepaymentBalance(
 
     /*
      * HARD CONTRACTUAL DATE GUARDS
-     *
-     * A period may never:
-     *
-     *   - start on/after loan.endDate
-     *   - end after loan.endDate
-     *
-     * The final contractual period may be shorter than the
-     * normal repayment cycle.
      */
     if (
       period.periodStart >=
@@ -4686,12 +4720,6 @@ function calculateWeeklyRepaymentBalance(
 
     /* =======================================================
        CONTRACTUAL INSTALLMENT
-
-       Closed periods use their persisted expected
-       installment when available.
-
-       Current/open periods use the loan's current
-       contractual installment amount.
     ======================================================= */
 
     const periodInstallment =
@@ -4713,19 +4741,6 @@ function calculateWeeklyRepaymentBalance(
 
     /* =======================================================
        HISTORICAL PAYMENT FACT
-
-       IMPORTANT:
-
-       This comes from the actual repayment ledger.
-
-       We deliberately do NOT use:
-
-         assessment?.paymentsDuringPeriod
-
-       because the assessment is not authoritative for
-       actual payment timing.
-
-       The repayment collection is authoritative.
     ======================================================= */
 
     const historicalPaidDuringPeriod =
@@ -4769,24 +4784,6 @@ function calculateWeeklyRepaymentBalance(
 
     /* =======================================================
        HISTORICAL SHORTFALL
-
-       This represents the contractual debt at the end of
-       the historical period.
-
-       Formula:
-
-         max(
-           0,
-           installment - paidDuringPeriod
-         )
-
-       IMPORTANT:
-
-       This is NOT:
-
-         installment - current allocation
-
-       Later repayments must never rewrite this value.
     ======================================================= */
 
     const historicalShortfall =
@@ -4802,19 +4799,6 @@ function calculateWeeklyRepaymentBalance(
 
     /* =======================================================
        HISTORICAL FINE
-
-       loanFines is authoritative.
-
-       Current/open periods intentionally have no historical
-       fine yet.
-
-       IMPORTANT:
-
-       The fine snapshot is copied exactly from the persisted
-       fine record.
-
-       We do NOT recalculate it from the current repayment
-       state.
     ======================================================= */
 
     const historicalFine =
@@ -4885,11 +4869,7 @@ function calculateWeeklyRepaymentBalance(
        * Current allocation starts from the full contractual
        * installment.
        *
-       * Historical shortfall is NOT used as the starting
-       * current balance.
-       *
-       * The allocation engine below applies all repayments
-       * chronologically.
+       * Historical shortfall is intentionally NOT used here.
        */
       remainingBalance:
         periodInstallment,
@@ -4900,21 +4880,6 @@ function calculateWeeklyRepaymentBalance(
 
   /* =========================================================
      PAYMENT ALLOCATION
-
-     This is deliberately separate from historical facts.
-
-     Historical facts answer:
-
-       "How much was actually paid during this contractual
-        period?"
-
-     Current allocation answers:
-
-       "How should all repayments received so far be applied
-        against the contractual installment balances?"
-
-     Later repayments can change current allocation without
-     changing historical facts.
   ========================================================= */
 
   const allocations:
@@ -5044,29 +5009,6 @@ function calculateWeeklyRepaymentBalance(
 
   /* =========================================================
      EFFECTIVE CURRENT PERIOD
-
-     The date-based current period is not necessarily the
-     actual current contractual balance.
-
-     Example:
-
-       Period 5 = Ksh 1,750
-       Period 5 has been fully paid
-       Loan has not ended
-       Period 6 exists
-
-     In that case:
-
-       currentPeriodNumber = 6
-
-     rather than incorrectly reporting:
-
-       currentPeriodNumber = 5
-       currentBalance = 0
-
-     This is what prevents the weekly repayment from
-     incorrectly becoming Ksh 0 while the loan is still
-     active and another contractual installment exists.
   ========================================================= */
 
   let effectiveCurrentPeriodNumber =
@@ -5111,16 +5053,6 @@ function calculateWeeklyRepaymentBalance(
 
   /* =========================================================
      COMPLETED INSTALLMENT BALANCE
-
-     ONLY contractual installment balances.
-
-     Historical fines are completely excluded.
-
-     IMPORTANT:
-
-     We still calculate completed balances from contractual
-     periods only. A later payment can change the current
-     allocation, but it cannot rewrite historical facts.
   ========================================================= */
 
   let completedInstallmentBalance = 0;
@@ -5166,15 +5098,9 @@ function calculateWeeklyRepaymentBalance(
         effectiveCurrentPeriodNumber,
     );
 
-  if (
-    loanIsOver
-  ) {
+  if (loanIsOver) {
     /*
-     * Once the loan is actually cleared, there is no
-     * contractual repayment balance remaining for the
-     * weekly repayment widget.
-     *
-     * Historical fines remain visible separately.
+     * The loan has no outstanding contractual balance.
      */
     completedInstallmentBalance = 0;
 
@@ -5196,16 +5122,10 @@ function calculateWeeklyRepaymentBalance(
   }
 
   /* =========================================================
-     WEEKLY REPAYMENT BALANCE
-
-     Fines NEVER form part of the weekly contractual
-     installment balance.
-
-     weeklyRepaymentBalance contains only current contractual
-     installment balances.
+     CALCULATED PERIOD BALANCE
   ========================================================= */
 
-  const weeklyRepaymentBalance =
+  const calculatedWeeklyRepaymentBalance =
     money(
       Math.max(
         0,
@@ -5215,20 +5135,89 @@ function calculateWeeklyRepaymentBalance(
     );
 
   /* =========================================================
+     AUTHORITATIVE WEEKLY REPAYMENT BALANCE
+     =========================================================
+
+     IMPORTANT:
+
+     The period allocation model can legitimately produce a
+     lower value than loan.outstandingBalance when repayments
+     have already been allocated into future contractual
+     periods that are not currently represented in the
+     visible period breakdown.
+
+     Example:
+
+       Loan outstanding:             Ksh 4,200
+       Calculated period balance:    Ksh 0
+
+     The loan still owes Ksh 4,200.
+
+     Therefore the overall weekly repayment balance must
+     never fall below the persisted loan outstanding balance.
+
+     This also handles loans whose end date has already passed.
+
+     End date does NOT make an unpaid loan balance disappear.
+
+     Only an actual outstanding balance of zero allows the
+     weekly repayment balance to become zero.
+  ========================================================= */
+
+  const weeklyRepaymentBalance =
+    loanIsOver
+      ? 0
+      : money(
+          Math.max(
+            calculatedWeeklyRepaymentBalance,
+            loanOutstandingBalance,
+          ),
+        );
+
+  /* =========================================================
+     RECONCILE CURRENT BALANCE WITH AUTHORITATIVE BALANCE
+     =========================================================
+
+     If the period calculation is lower than the actual loan
+     outstanding balance, attach the difference to the current
+     contractual balance.
+
+     This keeps:
+
+       completedBalance +
+       currentBalance
+
+     consistent with:
+
+       weeklyRepaymentBalance
+
+     without modifying historical period facts or repayment
+     allocations.
+  ========================================================= */
+
+  if (
+    !loanIsOver &&
+    weeklyRepaymentBalance >
+      calculatedWeeklyRepaymentBalance
+  ) {
+    const balanceGap =
+      money(
+        Math.max(
+          0,
+          weeklyRepaymentBalance -
+            calculatedWeeklyRepaymentBalance,
+        ),
+      );
+
+    currentInstallmentBalance =
+      money(
+        currentInstallmentBalance +
+          balanceGap,
+      );
+  }
+
+  /* =========================================================
      PERIOD BREAKDOWN
-
-     Only return periods through the effective current period.
-
-     This is important because we may have temporarily built
-     one additional contractual period solely so FIFO
-     allocation could roll forward into it.
-
-     If the original current period was NOT fully paid, that
-     extra future period is not exposed in the breakdown.
-
-     If the original current period WAS fully paid, the next
-     contractual period becomes the actual current period and
-     is exposed.
   ========================================================= */
 
   const breakdownPeriods =
@@ -5258,7 +5247,7 @@ function calculateWeeklyRepaymentBalance(
               ),
             );
 
-           const isCompleted =
+          const isCompleted =
             period.periodNumber <=
             latestCompletedPeriod;
 
@@ -5269,21 +5258,22 @@ function calculateWeeklyRepaymentBalance(
             | "unpaid";
 
           /*
-          * CURRENT ALLOCATION HAS PRIORITY.
-          *
-          * A contractual period can be paid before its due date.
-          *
-          * Example:
-          *
-          *   Period 5
-          *   Expected: 3,500
-          *   Historical paid: 0
-          *   Current allocated: 3,500
-          *   Current balance: 0
-          *
-          * That period is PAID even though it was not yet a
-          * completed historical period.
-          */
+           * CURRENT ALLOCATION HAS PRIORITY.
+           *
+           * A contractual period can be paid before its due
+           * date.
+           *
+           * Example:
+           *
+           *   Period 5
+           *   Expected: 3,500
+           *   Historical paid: 0
+           *   Current allocated: 3,500
+           *   Current balance: 0
+           *
+           * That period is PAID even though it was not yet a
+           * completed historical period.
+           */
           if (balance <= 0) {
             status = "paid";
           } else if (
@@ -5299,6 +5289,7 @@ function calculateWeeklyRepaymentBalance(
           } else {
             status = "unpaid";
           }
+
           return {
             periodNumber:
               period.periodNumber,
@@ -5316,11 +5307,6 @@ function calculateWeeklyRepaymentBalance(
 
             /* =============================================
                HISTORICAL FACTS
-
-               These values describe the original
-               contractual period.
-
-               They are NEVER changed by later repayments.
             ============================================= */
 
             historical: {
@@ -5381,11 +5367,6 @@ function calculateWeeklyRepaymentBalance(
 
             /* =============================================
                CURRENT ALLOCATION STATE
-
-               These values are calculated from all
-               repayments received up to asOfDate.
-
-               Later repayments may change these values.
             ============================================= */
 
             current: {
@@ -5406,8 +5387,6 @@ function calculateWeeklyRepaymentBalance(
 
   /* =========================================================
      TOTAL FINES
-
-     Sum persisted historical per-period fines.
 
      Fines remain completely separate from the contractual
      weekly repayment balance.
@@ -5553,7 +5532,6 @@ function calculateWeeklyRepaymentBalance(
     loanPaymentReminder,
   };
 }
-
 
 
 
