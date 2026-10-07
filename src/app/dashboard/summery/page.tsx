@@ -2013,22 +2013,6 @@ function MobileDashboard({
 
         <div className="flex items-center gap-2">
 
-          {/* SMS TEST */}
-
-          <button
-            type="button"
-            onClick={() =>
-              router.push(
-                "/sms-test",
-              )
-            }
-            aria-label="Open SMS test"
-            title="SMS Test"
-            className="flex h-10 items-center justify-center rounded-xl bg-blue-600 px-3 text-[10px] font-semibold text-white shadow-sm transition active:scale-95 hover:bg-blue-700"
-          >
-            SMS Test
-          </button>
-
           {/* AMOUNT VISIBILITY */}
 
           <button
