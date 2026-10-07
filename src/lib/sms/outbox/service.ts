@@ -1,6 +1,7 @@
 import {
   ObjectId,
   type Collection,
+  type Filter,
 } from "mongodb";
 
 import clientPromise from "@/lib/mongodb/index";
@@ -18,14 +19,14 @@ import type {
 } from "@/lib/sms/types";
 
 /* =========================================================
-DATABASE
+   DATABASE
 ========================================================= */
 
 const DB_NAME = "geo-shua";
 const OUTBOX_COLLECTION = "smsOutbox";
 
 /* =========================================================
-CONSTANTS
+   CONSTANTS
 ========================================================= */
 
 /**
@@ -40,13 +41,12 @@ const DEFAULT_PRIORITY = 20;
 /**
  * Legacy retry-attempt field.
  *
+ * Retained for backwards compatibility.
+ *
  * IMPORTANT:
- * This value is retained for backwards compatibility with
- * existing MongoDB documents.
+ * This is NOT a terminal retry limit.
  *
- * It is NO LONGER used as a terminal retry limit.
- *
- * An SMS remains retryable until its status becomes "sent".
+ * Failed SMS messages remain retryable until they are sent.
  */
 const DEFAULT_MAX_ATTEMPTS = 3;
 
@@ -56,21 +56,24 @@ const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_CLAIM_LIMIT = 10;
 
 /**
- * Maximum messages one worker may claim in one request.
+ * Maximum messages one worker may claim.
  */
 const MAX_CLAIM_LIMIT = 50;
 
 /**
- * A processing SMS older than this is considered abandoned.
- *
- * This protects the queue when Android crashes, loses network,
- * or the application is killed after claiming an SMS.
+ * A processing claim older than this is considered abandoned.
  */
 const CLAIM_TIMEOUT_MS =
   5 * 60 * 1000;
 
+/**
+ * Maximum delay between failed-SMS retries.
+ */
+const MAX_RETRY_DELAY_MS =
+  15 * 60 * 1000;
+
 /* =========================================================
-COLLECTION
+   COLLECTION
 ========================================================= */
 
 async function getSmsOutboxCollection(): Promise<
@@ -79,16 +82,15 @@ async function getSmsOutboxCollection(): Promise<
   const client =
     await clientPromise;
 
-  const database =
-    client.db(DB_NAME);
-
-  return database.collection<SmsOutboxDocument>(
-    OUTBOX_COLLECTION,
-  );
+  return client
+    .db(DB_NAME)
+    .collection<SmsOutboxDocument>(
+      OUTBOX_COLLECTION,
+    );
 }
 
 /* =========================================================
-VALIDATION
+   VALIDATION
 ========================================================= */
 
 function requireNonEmptyString(
@@ -107,9 +109,9 @@ function requireNonEmptyString(
   return value.trim();
 }
 
-/* ---------------------------------------------------------
-PRIORITY
---------------------------------------------------------- */
+/* =========================================================
+   PRIORITY
+========================================================= */
 
 function normalizePriority(
   value: number | undefined,
@@ -132,17 +134,16 @@ function normalizePriority(
   return value;
 }
 
-/* ---------------------------------------------------------
-MAX ATTEMPTS
---------------------------------------------------------- */
+/* =========================================================
+   MAX ATTEMPTS
+========================================================= */
 
 /**
  * Retained for backwards compatibility.
  *
- * maxAttempts is stored on new SMS documents because the
- * field already exists in the database schema.
+ * This field is informational only.
  *
- * It is NOT used to permanently stop retries.
+ * It does NOT prevent retrying an SMS.
  */
 function normalizeMaxAttempts(
   value: number | undefined,
@@ -165,9 +166,9 @@ function normalizeMaxAttempts(
   return value;
 }
 
-/* ---------------------------------------------------------
-CLAIM LIMIT
---------------------------------------------------------- */
+/* =========================================================
+   CLAIM LIMIT
+========================================================= */
 
 function normalizeLimit(
   value: number | undefined,
@@ -193,9 +194,9 @@ function normalizeLimit(
   );
 }
 
-/* ---------------------------------------------------------
-OBJECT ID
---------------------------------------------------------- */
+/* =========================================================
+   OBJECT ID
+========================================================= */
 
 function toObjectId(
   value: string,
@@ -212,15 +213,14 @@ function toObjectId(
   return new ObjectId(value);
 }
 
-/* ---------------------------------------------------------
-CALENDAR DATE
---------------------------------------------------------- */
+/* =========================================================
+   CALENDAR DATE
+========================================================= */
 
 /**
- * Validates a GEO-SHUA calendar date without converting it
- * through JavaScript Date.
- *
- * Financial calendar dates remain exact YYYY-MM-DD strings.
+ * Keeps GEO-SHUA calendar dates as exact YYYY-MM-DD
+ * strings instead of converting them through JavaScript
+ * Date objects.
  */
 function normalizeCalendarDate(
   value: string | undefined,
@@ -299,16 +299,16 @@ function normalizeCalendarDate(
 }
 
 /* =========================================================
-FCM WAKE
+   FCM WAKE
 ========================================================= */
 
 /**
- * Wakes registered Android SMS workers.
+ * FCM is ONLY an acceleration mechanism.
  *
- * FCM is an acceleration mechanism only.
+ * It must never be part of the critical financial path.
  *
- * Failure here must NEVER cause a financial operation
- * or a successfully queued SMS to fail.
+ * The queue is already safely stored in MongoDB before this
+ * function is triggered.
  */
 async function wakeSmsWorkers(): Promise<void> {
   try {
@@ -321,25 +321,80 @@ async function wakeSmsWorkers(): Promise<void> {
   }
 }
 
+/**
+ * Fire-and-forget FCM wake.
+ *
+ * queueSms() intentionally does NOT await this.
+ */
+function wakeSmsWorkersAsync(): void {
+  void wakeSmsWorkers();
+}
+
 /* =========================================================
-QUEUE SMS
+   SMS DOCUMENT → CLAIM
+========================================================= */
+
+function toSmsClaim(
+  document: SmsOutboxDocument,
+): SmsClaim {
+  if (
+    !document._id
+  ) {
+    throw new Error(
+      "SMS queue item has no identifier.",
+    );
+  }
+
+  return {
+    id:
+      document._id.toString(),
+
+    type:
+      document.type,
+
+    ...(document.memberId
+      ? {
+          memberId:
+            document.memberId.toString(),
+        }
+      : {}),
+
+    ...(document.loanId
+      ? {
+          loanId:
+            document.loanId.toString(),
+        }
+      : {}),
+
+    recipient:
+      document.recipient,
+
+    message:
+      document.message,
+
+    ...(document.scheduledFor
+      ? {
+          scheduledFor:
+            document.scheduledFor,
+        }
+      : {}),
+
+    attempts:
+      document.attempts,
+  };
+}
+
+/* =========================================================
+   QUEUE SMS
 ========================================================= */
 
 /**
  * Adds an SMS to the outgoing queue.
  *
- * Financial services remain authoritative.
+ * MongoDB becomes authoritative first.
  *
- * The financial operation should commit first, then this
- * function should be called to create the communication task.
- *
- * Idempotency examples:
- *
- * savings_deposit:<transactionId>
- * loan_payment_received:<repaymentId>
- * loan_disbursement:<loanId>
- * loan_payment_reminder:<loanId>:<period>
- * loan_cleared:<loanId>
+ * FCM is then triggered asynchronously and NEVER delays
+ * the caller.
  */
 export async function queueSms(
   data: QueueSmsInput,
@@ -416,34 +471,45 @@ export async function queueSms(
   const smsOutbox =
     await getSmsOutboxCollection();
 
-  /*
-   * Fast idempotency lookup.
-   *
-   * The unique MongoDB index remains the final protection
-   * against concurrent duplicate inserts.
-   */
+  /* -------------------------------------------------------
+     IDEMPOTENCY LOOKUP
+  ------------------------------------------------------- */
+
   const existing =
-    await smsOutbox.findOne({
-      idempotencyKey,
-    });
+    await smsOutbox.findOne(
+      {
+        idempotencyKey,
+      },
+      {
+        projection: {
+          _id: 1,
+          status: 1,
+        },
+      },
+    );
 
   if (
     existing?._id
   ) {
     /*
-     * If the message is still pending, make another best-effort
-     * attempt to wake Android. This is useful when the original
-     * queue operation succeeded but FCM was temporarily unavailable.
+     * If the SMS is still pending, wake the worker again.
+     *
+     * IMPORTANT:
+     * Do NOT await the FCM operation.
      */
     if (
       existing.status ===
       "pending"
     ) {
-      await wakeSmsWorkers();
+      wakeSmsWorkersAsync();
     }
 
     return existing._id.toString();
   }
+
+  /* -------------------------------------------------------
+     CREATE DOCUMENT
+  ------------------------------------------------------- */
 
   const document:
     SmsOutboxDocument =
@@ -503,17 +569,17 @@ export async function queueSms(
     /*
      * MongoDB is now authoritative.
      *
-     * The SMS exists safely in the queue before FCM is
-     * attempted. Therefore an FCM failure cannot undo
-     * the financial operation or the queued SMS.
+     * Wake Android without delaying the caller.
      */
-    await wakeSmsWorkers();
+    wakeSmsWorkersAsync();
 
     return result.insertedId.toString();
   } catch (error) {
     /*
-     * Two requests can pass the initial findOne() at the same
-     * time. The unique idempotencyKey index prevents duplicates.
+     * Concurrent requests may both pass the initial
+     * idempotency lookup.
+     *
+     * The unique MongoDB index remains the final protection.
      */
     if (
       error instanceof Error &&
@@ -529,24 +595,26 @@ export async function queueSms(
       )
     ) {
       const duplicate =
-        await smsOutbox.findOne({
-          idempotencyKey,
-        });
+        await smsOutbox.findOne(
+          {
+            idempotencyKey,
+          },
+          {
+            projection: {
+              _id: 1,
+              status: 1,
+            },
+          },
+        );
 
       if (
         duplicate?._id
       ) {
-        /*
-         * The competing request may have inserted the SMS
-         * successfully without waking Android.
-         *
-         * Wake again if it is still pending.
-         */
         if (
           duplicate.status ===
           "pending"
         ) {
-          await wakeSmsWorkers();
+          wakeSmsWorkersAsync();
         }
 
         return duplicate._id.toString();
@@ -558,25 +626,155 @@ export async function queueSms(
 }
 
 /* =========================================================
-CLAIM ONE SMS
+   CLAIM FILTER
+========================================================= */
+
+/**
+ * Builds the atomic claim filter.
+ *
+ * A worker may claim:
+ *
+ * 1. A pending message whose availableAt has arrived.
+ *
+ * 2. A processing message whose previous claim has expired.
+ *
+ * There is intentionally NO attempts/maxAttempts restriction.
+ */
+function buildClaimFilter(
+  now: Date,
+): Filter<SmsOutboxDocument> {
+  const staleBefore = new Date(
+    now.getTime() - CLAIM_TIMEOUT_MS,
+  );
+
+  const pendingFilter: Filter<SmsOutboxDocument> = {
+    status: "pending",
+    availableAt: {
+      $lte: now,
+    },
+  };
+
+  const staleProcessingFilter: Filter<SmsOutboxDocument> = {
+    status: "processing",
+    claimedAt: {
+      $lt: staleBefore,
+    },
+  };
+
+  return {
+    $or: [
+      pendingFilter,
+      staleProcessingFilter,
+    ],
+  };
+}
+
+/* =========================================================
+   CLAIM ONE SMS
 ========================================================= */
 
 /**
  * Atomically claims one SMS for an Android device.
  *
- * Multiple Android devices may call this concurrently.
- *
- * MongoDB's findOneAndUpdate() makes the claim atomic.
- *
  * IMPORTANT:
- * An SMS is NOT limited to maxAttempts.
  *
- * Failed messages remain retryable until Android reports
- * "sent".
+ * There is NO preliminary stale-recovery updateMany().
+ *
+ * Stale processing messages are simply included in the
+ * atomic claim filter.
+ *
+ * That removes an entire MongoDB round trip from the
+ * hot path.
  */
 export async function claimSms(
   data: ClaimSmsInput,
 ): Promise<SmsClaim | null> {
+  const deviceId =
+    requireNonEmptyString(
+      data.deviceId,
+      "deviceId",
+    );
+
+  const now =
+    new Date();
+
+  const smsOutbox =
+    await getSmsOutboxCollection();
+
+  const result =
+    await smsOutbox.findOneAndUpdate(
+      buildClaimFilter(now),
+      {
+        $set: {
+          status:
+            "processing",
+
+          claimedBy:
+            deviceId,
+
+          claimedAt:
+            now,
+
+          updatedAt:
+            now,
+        },
+
+        $inc: {
+          attempts:
+            1,
+        },
+      },
+      {
+        sort: {
+          priority:
+            1,
+
+          availableAt:
+            1,
+
+          createdAt:
+            1,
+        },
+
+        returnDocument:
+          "after",
+      },
+    );
+
+  if (
+    !result
+  ) {
+    return null;
+  }
+
+  return toSmsClaim(
+    result,
+  );
+}
+
+/* =========================================================
+   CLAIM BATCH
+========================================================= */
+
+/**
+ * Claims multiple SMS messages for one Android worker.
+ *
+ * Each claim remains an atomic MongoDB operation.
+ *
+ * We intentionally claim sequentially so priority ordering is
+ * preserved:
+ *
+ *   priority 10
+ *   priority 10
+ *   priority 20
+ *   priority 50
+ *
+ * The old implementation unnecessarily executed stale
+ * recovery before EVERY claim. That has been removed.
+ */
+export async function claimSmsBatch(
+  data: ClaimSmsInput,
+): Promise<SmsClaim[]> {
   const deviceId =
     requireNonEmptyString(
       data.deviceId,
@@ -591,64 +789,14 @@ export async function claimSms(
   const smsOutbox =
     await getSmsOutboxCollection();
 
-  /*
-   * Recover abandoned claims before looking for the next SMS.
-   *
-   * This is important because recoverStaleSms() may not have
-   * a separate cron caller.
-   *
-   * Any processing message whose claim has expired is returned
-   * to pending regardless of its attempt count.
-   */
-  const recoveryNow =
-    new Date();
-
-  const recoveryStaleBefore =
-    new Date(
-      recoveryNow.getTime() -
-        CLAIM_TIMEOUT_MS,
-    );
-
-  await smsOutbox.updateMany(
-    {
-      status:
-        "processing",
-
-      claimedAt: {
-        $lt:
-          recoveryStaleBefore,
-      },
-    },
-    {
-      $set: {
-        status:
-          "pending",
-
-        availableAt:
-          recoveryNow,
-
-        updatedAt:
-          recoveryNow,
-
-        failureReason:
-          "Previous SMS worker claim expired; retry scheduled.",
-      },
-
-      $unset: {
-        claimedBy:
-          "",
-
-        claimedAt:
-          "",
-      },
-    },
-  );
+  const claims:
+    SmsClaim[] =
+    [];
 
   /*
-   * claimSms() normally claims one message.
-   *
-   * The limit remains in the public contract for compatibility
-   * and future use.
+   * Use the same collection directly rather than calling
+   * claimSms(), which would repeatedly reacquire the
+   * collection and rebuild the entire operation.
    */
   for (
     let index = 0;
@@ -658,52 +806,9 @@ export async function claimSms(
     const now =
       new Date();
 
-    /*
-     * A processing SMS older than CLAIM_TIMEOUT_MS is considered
-     * abandoned.
-     *
-     * The stale recovery above normally handles these messages.
-     * This value is retained here for defensive protection.
-     */
-    const staleBefore =
-      new Date(
-        now.getTime() -
-          CLAIM_TIMEOUT_MS,
-      );
-
-    /*
-     * IMPORTANT:
-     *
-     * There is intentionally NO attempts < maxAttempts condition.
-     *
-     * An SMS remains claimable regardless of how many times
-     * it has previously failed.
-     */
     const result =
       await smsOutbox.findOneAndUpdate(
-        {
-          $or: [
-            {
-              status:
-                "pending",
-
-              availableAt: {
-                $lte:
-                  now,
-              },
-            },
-
-            {
-              status:
-                "processing",
-
-              claimedAt: {
-                $lt:
-                  staleBefore,
-              },
-            },
-          ],
-        },
+        buildClaimFilter(now),
         {
           $set: {
             status:
@@ -741,123 +846,16 @@ export async function claimSms(
         },
       );
 
-    const document =
-      result;
-
     if (
-      !document ||
-      !document._id
+      !result
     ) {
-      return null;
-    }
-
-    /*
-     * There is intentionally NO defensive maxAttempts
-     * failure block here.
-     *
-     * A message with:
-     *
-     * attempts: 3
-     * maxAttempts: 3
-     *
-     * is still valid and retryable.
-     *
-     * A message with:
-     *
-     * attempts: 50
-     * maxAttempts: 3
-     *
-     * is also still valid and retryable.
-     */
-
-    return {
-      id:
-        document._id.toString(),
-
-      type:
-        document.type,
-
-      ...(document.memberId
-        ? {
-            memberId:
-              document.memberId.toString(),
-          }
-        : {}),
-
-      ...(document.loanId
-        ? {
-            loanId:
-              document.loanId.toString(),
-          }
-        : {}),
-
-      recipient:
-        document.recipient,
-
-      message:
-        document.message,
-
-      ...(document.scheduledFor
-        ? {
-            scheduledFor:
-              document.scheduledFor,
-          }
-        : {}),
-
-      attempts:
-        document.attempts,
-    };
-  }
-
-  return null;
-}
-
-/* =========================================================
-CLAIM BATCH
-========================================================= */
-
-/**
- * Claims multiple SMS messages for an Android worker.
- *
- * Each individual claim remains atomic.
- */
-export async function claimSmsBatch(
-  data: ClaimSmsInput,
-): Promise<SmsClaim[]> {
-  const deviceId =
-    requireNonEmptyString(
-      data.deviceId,
-      "deviceId",
-    );
-
-  const limit =
-    normalizeLimit(
-      data.limit,
-    );
-
-  const claims:
-    SmsClaim[] =
-    [];
-
-  for (
-    let index = 0;
-    index < limit;
-    index += 1
-  ) {
-    const claim =
-      await claimSms({
-        deviceId,
-
-        limit:
-          1,
-      });
-
-    if (!claim) {
       break;
     }
 
     claims.push(
-      claim,
+      toSmsClaim(
+        result,
+      ),
     );
   }
 
@@ -865,22 +863,27 @@ export async function claimSmsBatch(
 }
 
 /* =========================================================
-REPORT SMS RESULT
+   REPORT SMS RESULT
 ========================================================= */
 
 /**
  * Reports the result from Android.
  *
- * "sent" means Android accepted the SMS for sending.
+ * "sent" means Android accepted the SMS for transmission.
  *
  * It does NOT mean that the recipient handset received it.
  *
- * IMPORTANT:
+ * Normal successful path:
  *
- * "sent" is the terminal success state.
+ *     ONE MongoDB update
  *
- * A failed SMS is returned to "pending" and remains retryable
- * indefinitely until Android eventually reports "sent".
+ * Normal failed path:
+ *
+ *     ONE MongoDB update
+ *
+ * The old implementation performed an initial findOne()
+ * before every result update. That extra read has been removed
+ * from the normal path.
  */
 export async function reportSmsResult(
   data: ReportSmsResultInput,
@@ -906,59 +909,12 @@ export async function reportSmsResult(
   const smsOutbox =
     await getSmsOutboxCollection();
 
-  const existing =
-    await smsOutbox.findOne({
-      _id:
-        smsObjectId,
-    });
-
-  if (!existing) {
-    throw new Error(
-      "SMS queue item not found.",
-    );
-  }
-
-  /*
-   * Never allow another Android device to complete a claim
-   * belonging to this device.
-   */
-  if (
-    existing.claimedBy &&
-    existing.claimedBy !==
-      deviceId
-  ) {
-    throw new Error(
-      "SMS queue item is claimed by another device.",
-    );
-  }
-
-  /*
-   * Idempotent success reporting.
-   */
-  if (
-    existing.status ===
-      "sent" &&
-    data.status ===
-      "sent"
-  ) {
-    return;
-  }
-
-  if (
-    existing.status !==
-    "processing"
-  ) {
-    throw new Error(
-      `SMS cannot be completed from status "${existing.status}".`,
-    );
-  }
-
   const now =
     new Date();
 
-  /* -------------------------------------------------------
-  SUCCESS
-  ------------------------------------------------------- */
+  /* =======================================================
+     SENT
+  ======================================================= */
 
   if (
     data.status ===
@@ -969,34 +925,56 @@ export async function reportSmsResult(
         string,
         unknown
       > = {
-        status:
-          "sent",
+      status:
+        "sent",
 
-        sentAt:
-          now,
+      sentAt:
+        now,
 
-        updatedAt:
-          now,
-      };
+      updatedAt:
+        now,
+    };
+
+    const providerMessageId =
+      data.providerMessageId?.trim();
 
     if (
-      data.providerMessageId?.trim()
+      providerMessageId
     ) {
       setFields.providerMessageId =
-        data.providerMessageId.trim();
+        providerMessageId;
     }
 
+    /*
+     * Two valid cases:
+     *
+     * 1. The current device still owns the processing claim.
+     *
+     * 2. The SMS is already sent.
+     *
+     * The second case makes duplicate "sent" callbacks
+     * idempotent.
+     */
     const result =
       await smsOutbox.updateOne(
         {
           _id:
             smsObjectId,
 
-          status:
-            "processing",
+          $or: [
+            {
+              status:
+                "processing",
 
-          claimedBy:
-            deviceId,
+              claimedBy:
+                deviceId,
+            },
+
+            {
+              status:
+                "sent",
+            },
+          ],
         },
         {
           $set:
@@ -1015,84 +993,119 @@ export async function reportSmsResult(
         },
       );
 
-    /*
-     * If another process completed it between the initial
-     * read and this update, do not report a false failure.
-     */
     if (
-      result.matchedCount ===
+      result.matchedCount >
       0
     ) {
-      const current =
-        await smsOutbox.findOne({
+      return;
+    }
+
+    /*
+     * Only the exceptional path performs another read.
+     *
+     * This is reached when:
+     *
+     * - the SMS does not exist;
+     * - another device owns the claim;
+     * - the claim expired;
+     * - the SMS was cancelled;
+     * - or another state transition occurred.
+     */
+    const current =
+      await smsOutbox.findOne(
+        {
           _id:
             smsObjectId,
-        });
+        },
+        {
+          projection: {
+            _id: 1,
+            status: 1,
+            claimedBy: 1,
+          },
+        },
+      );
 
-      if (
-        current?.status ===
-        "sent"
-      ) {
-        return;
-      }
-
+    if (
+      !current
+    ) {
       throw new Error(
-        "SMS claim is no longer owned by this device.",
+        "SMS queue item not found.",
       );
     }
 
-    return;
+    if (
+      current.status ===
+      "sent"
+    ) {
+      return;
+    }
+
+    if (
+      current.claimedBy &&
+      current.claimedBy !==
+        deviceId
+    ) {
+      throw new Error(
+        "SMS queue item is claimed by another device.",
+      );
+    }
+
+    throw new Error(
+      `SMS cannot be completed from status "${current.status}".`,
+    );
   }
 
-  /* -------------------------------------------------------
-  FAILURE
-  ------------------------------------------------------- */
+  /* =======================================================
+     FAILED
+  ======================================================= */
+
+  if (
+    data.status !==
+    "failed"
+  ) {
+    throw new Error(
+      'SMS result status must be either "sent" or "failed".',
+    );
+  }
 
   /*
-   * There is intentionally NO maxAttempts/exhausted check.
+   * Attempts are diagnostic only.
    *
-   * Failed SMS messages remain retryable indefinitely.
-   *
-   * The attempt count is retained for diagnostics and
-   * monitoring only.
+   * There is intentionally NO maxAttempts terminal state.
    */
-
-  const attempts =
-    existing.attempts;
+  const currentAttempts =
+    1;
 
   /*
-   * Exponential retry backoff.
+   * We use the attempt number already represented by the
+   * current claim where possible through the update itself.
    *
-   * Attempt 1 → 1 minute
-   * Attempt 2 → 2 minutes
-   * Attempt 3 → 4 minutes
-   * Attempt 4 → 8 minutes
-   * Attempt 5+ → 15 minutes
+   * For retry scheduling, the first failed claim gets roughly
+   * one minute, then the delay doubles until fifteen minutes.
    *
-   * Maximum delay → 15 minutes.
+   * Because attempts are incremented during claim, the
+   * exponential delay is based on the persisted attempt count.
+   *
+   * We don't need a preliminary findOne() on the normal path.
+   * The retry delay is calculated from the current failure
+   * using a conservative first-delay value.
+   *
+   * The worker's immediate retry path remains fast for the
+   * initial failure while repeated failures progressively
+   * back off.
    */
-  const retryNumber =
-    Math.max(
-      attempts - 1,
-      0,
-    );
 
-  const retryDelay =
-    Math.min(
-      60_000 *
-        Math.pow(
-          2,
-          retryNumber,
-        ),
-      15 * 60_000,
-    );
-
-  const retryAt =
-    new Date(
-      now.getTime() +
-        retryDelay,
-    );
-
+  /*
+   * We need the existing attempt number to calculate the
+   * exact exponential delay. Rather than adding a read,
+   * calculate the next delay from the known claim sequence
+   * stored by MongoDB using an update pipeline.
+   *
+   * MongoDB will calculate:
+   *
+   *   min(60s * 2^(attempts - 1), 15m)
+   */
   const result =
     await smsOutbox.updateOne(
       {
@@ -1105,54 +1118,150 @@ export async function reportSmsResult(
         claimedBy:
           deviceId,
       },
-      {
-        $set: {
-          status:
-            "pending",
+      [
+        {
+          $set: {
+            status:
+              "pending",
 
-          availableAt:
-            retryAt,
+            availableAt: {
+              $let: {
+                vars: {
+                  retryExponent: {
+                    $max: [
+                      {
+                        $subtract: [
+                          "$attempts",
+                          1,
+                        ],
+                      },
 
-          failureReason:
-            data.error?.trim() ||
-            "SMS sending failed; retry scheduled.",
+                      0,
+                    ],
+                  },
+                },
 
-          updatedAt:
-            now,
+                in: {
+                  $add: [
+                    now,
+                    {
+                      $min: [
+                        MAX_RETRY_DELAY_MS,
+
+                        {
+                          $multiply: [
+                            60_000,
+
+                            {
+                              $pow: [
+                                2,
+                                "$$retryExponent",
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+
+            failureReason:
+              data.error?.trim() ||
+              "SMS sending failed; retry scheduled.",
+
+            updatedAt:
+              now,
+          },
         },
 
-        $unset: {
-          claimedBy:
-            "",
+        {
+          $unset: [
+            "claimedBy",
+            "claimedAt",
+          ],
+        },
+      ],
+    );
 
-          claimedAt:
-            "",
+  if (
+    result.matchedCount >
+    0
+  ) {
+    /*
+     * Wake the worker again.
+
+     * This is deliberately fire-and-forget.
+     *
+     * availableAt still controls when the SMS may actually
+     * be claimed again.
+     */
+    wakeSmsWorkersAsync();
+
+    return;
+  }
+
+  /*
+   * Exceptional path only.
+   */
+  const current =
+    await smsOutbox.findOne(
+      {
+        _id:
+          smsObjectId,
+      },
+      {
+        projection: {
+          _id: 1,
+          status: 1,
+          claimedBy: 1,
         },
       },
     );
 
   if (
-    result.matchedCount ===
-    0
+    !current
   ) {
     throw new Error(
-      "SMS claim is no longer owned by this device.",
+      "SMS queue item not found.",
     );
   }
+
+  if (
+    current.status ===
+    "sent"
+  ) {
+    return;
+  }
+
+  if (
+    current.claimedBy &&
+    current.claimedBy !==
+      deviceId
+  ) {
+    throw new Error(
+      "SMS queue item is claimed by another device.",
+    );
+  }
+
+  throw new Error(
+    `SMS cannot be failed from status "${current.status}".`,
+  );
 }
 
 /* =========================================================
-RECOVER STALE CLAIMS
+   RECOVER STALE CLAIMS
 ========================================================= */
 
 /**
- * Returns abandoned processing messages to the queue.
+ * Explicit maintenance operation.
  *
- * SMS messages are NEVER permanently abandoned because of
- * attempt count.
+ * Normally claimSms()/claimSmsBatch() do not need this
+ * function because stale processing messages are directly
+ * eligible for atomic reclamation.
  *
- * A stale claim simply becomes pending again and can be
- * claimed by the next Android worker execution.
+ * This function remains useful for maintenance/diagnostics.
  */
 export async function recoverStaleSms(): Promise<number> {
   const smsOutbox =
@@ -1167,7 +1276,7 @@ export async function recoverStaleSms(): Promise<number> {
         CLAIM_TIMEOUT_MS,
     );
 
-  const recoverResult =
+  const result =
     await smsOutbox.updateMany(
       {
         status:
@@ -1203,11 +1312,11 @@ export async function recoverStaleSms(): Promise<number> {
       },
     );
 
-  return recoverResult.modifiedCount;
+  return result.modifiedCount;
 }
 
 /* =========================================================
-CANCEL
+   CANCEL
 ========================================================= */
 
 /**
@@ -1256,20 +1365,27 @@ export async function cancelSms(
   }
 
   const existing =
-    await smsOutbox.findOne({
-      _id:
-        objectId,
-    });
+    await smsOutbox.findOne(
+      {
+        _id:
+          objectId,
+      },
+      {
+        projection: {
+          _id: 1,
+          status: 1,
+        },
+      },
+    );
 
-  if (!existing) {
+  if (
+    !existing
+  ) {
     throw new Error(
       "SMS queue item not found.",
     );
   }
 
-  /*
-   * Idempotent cancellation.
-   */
   if (
     existing.status ===
     "cancelled"
@@ -1283,7 +1399,7 @@ export async function cancelSms(
 }
 
 /* =========================================================
-GET SMS
+   GET SMS
 ========================================================= */
 
 export async function getSmsById(

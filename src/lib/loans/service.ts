@@ -8985,7 +8985,28 @@ export async function createLoanRepayment(
               .join(" ");
 
           /* =================================================
-             LOAN STATUS
+             LOAN PAYMENT ELIGIBILITY
+
+             Cancelled loans cannot receive repayments.
+
+             IMPORTANT:
+
+             A loan that has passed its contractual end date
+             is STILL allowed to receive a repayment when it
+             has an outstanding balance.
+
+             Likewise, a member being marked as a defaulter
+             or suspended does NOT prevent repayment.
+
+             Therefore we deliberately do NOT reject based on:
+
+               - loan.endDate
+               - member default status
+               - member suspended status
+               - active/pending loan status
+
+             The only loan status explicitly prohibited here
+             is "cancelled".
           ================================================= */
 
           if (
@@ -8996,20 +9017,6 @@ export async function createLoanRepayment(
               "Cancelled loans cannot receive repayments.",
             );
           }
-
-          /*
-           * IMPORTANT:
-           *
-           * Do NOT remove the completed-loan protection yet.
-           *
-           * Historical loan resolution and historical
-           * repayment acceptance are separate problems.
-           *
-           * A future change that allows a historically valid
-           * SMS to update a completed loan must also redesign
-           * the optimistic-concurrency/update logic below.
-           */
-         
 
           /* =================================================
              SMS DISBURSEMENT DATE PROTECTION
@@ -9093,74 +9100,74 @@ export async function createLoanRepayment(
 
           const repaymentDocument:
             LoanRepaymentDocument = {
-            _id:
-              new ObjectId(),
+              _id:
+                new ObjectId(),
 
-            loanId:
-              loanObjectId,
+              loanId:
+                loanObjectId,
 
-            loanNumber:
-              loan.loanNumber,
+              loanNumber:
+                loan.loanNumber,
 
-            memberId:
-              loan.memberId,
+              memberId:
+                loan.memberId,
 
-            memberNumber:
-              loan.memberNumber,
+              memberNumber:
+                loan.memberNumber,
 
-            /*
-             * IMPORTANT:
-             *
-             * This remains the FULL amount received from
-             * the bank.
-             *
-             * Example:
-             *
-             * Bank payment = 10,500
-             * Loan balance = 8,400
-             *
-             * repayment.amount = 10,500
-             *
-             * Only 8,400 is applied to the loan ledger.
-             * 2,100 becomes overpaidAmount.
-             */
-            amount,
+              /*
+               * IMPORTANT:
+               *
+               * This remains the FULL amount received from
+               * the bank.
+               *
+               * Example:
+               *
+               * Bank payment = 10,500
+               * Loan balance = 8,400
+               *
+               * repayment.amount = 10,500
+               *
+               * Only 8,400 is applied to the loan ledger.
+               * 2,100 becomes overpaidAmount.
+               */
+              amount,
 
-            transactionReference:
-              reference,
+              transactionReference:
+                reference,
 
-            transactionDate:
-              transactionDate,
+              transactionDate:
+                transactionDate,
 
-            ...(transactionAt
-              ? {
-                  transactionAt:
-                    transactionAt,
-                }
-              : {}),
+              ...(transactionAt
+                ? {
+                    transactionAt:
+                      transactionAt,
+                  }
+                : {}),
 
-            source:
-              input.source,
+              source:
+                input.source,
 
-            ...(input.rawMessage
-              ? {
-                  rawMessage:
-                    input.rawMessage,
-                }
-              : {}),
+              ...(input.rawMessage
+                ? {
+                    rawMessage:
+                      input.rawMessage,
+                  }
+                : {}),
 
-            ...(input.recordedBy
-              ? {
-                  recordedBy:
-                    normalizeActor(
-                      input.recordedBy,
-                    ),
-                }
-              : {}),
+              ...(input.recordedBy
+                ? {
+                    recordedBy:
+                      normalizeActor(
+                        input.recordedBy,
+                      ),
+                  }
+                : {}),
 
-            createdAt:
-              new Date(),
-          };
+              createdAt:
+                new Date(),
+            };
 
           /* =================================================
              INSERT IMMUTABLE REPAYMENT
@@ -9207,7 +9214,9 @@ export async function createLoanRepayment(
           await closeCompletedLoanPeriods(
             loanObjectId,
             dateToKenyanCalendarDate(
-              new Date(transactionDate),
+              new Date(
+                transactionDate,
+              ),
             ),
             session,
           );
@@ -9264,34 +9273,37 @@ export async function createLoanRepayment(
             );
 
           /* =================================================
-            RELOAD LOAN PROJECTION AFTER FINE RECONCILIATION
+             RELOAD LOAN PROJECTION AFTER FINE RECONCILIATION
 
-            Fine reconciliation may update loans.totalFines.
+             Fine reconciliation may update loans.totalFines.
 
-            The original `loan` object was loaded before
-            reconciliation, so its projection fields can now
-            be stale.
+             The original `loan` object was loaded before
+             reconciliation, so its projection fields can now
+             be stale.
 
-            IMPORTANT:
+             IMPORTANT:
 
-            The original `loan` remains authoritative for
-            calculating this repayment's pre-payment state.
+             The original `loan` remains authoritative for
+             calculating this repayment's pre-payment state.
 
-            This fresh document is used only for the
-            optimistic-concurrency snapshot below.
+             This fresh document is used only for the
+             optimistic-concurrency snapshot below.
           ================================================= */
 
           const loanAfterFineReconciliation =
             await loans.findOne(
               {
-                _id: loanObjectId,
+                _id:
+                  loanObjectId,
               },
               {
                 session,
               },
             );
 
-          if (!loanAfterFineReconciliation) {
+          if (
+            !loanAfterFineReconciliation
+          ) {
             throw new Error(
               "Loan no longer exists after fine reconciliation.",
             );
@@ -9349,14 +9361,19 @@ export async function createLoanRepayment(
               newAmountPaid,
             );
 
-          /*
-           * If this repayment occurs on or after the
-           * contractual loan end date and the loan still
-           * has an outstanding balance, suspend the member.
-           *
-           * This executes inside the same MongoDB
-           * transaction as the repayment and loan update.
-           */
+          /* =================================================
+             MEMBER DEFAULT / SUSPENSION
+
+             Passing the contractual loan end date does NOT
+             prevent repayment.
+
+             Instead, if the loan has reached/passed its end
+             date AND still has an outstanding balance after
+             this payment, the member is suspended/defaulted.
+
+             The repayment continues normally.
+          ================================================= */
+
           if (
             loan.endDate <=
               today &&
@@ -9370,6 +9387,19 @@ export async function createLoanRepayment(
               SYSTEM_ACTOR,
             );
           }
+
+          /* =================================================
+             LOAN STATUS
+
+             Only a zero outstanding balance completes the
+             loan.
+
+             An overdue/defaulted loan with a remaining balance
+             keeps its existing loan status and remains payable.
+
+             A payment that clears the balance moves the loan
+             to completed.
+          ================================================= */
 
           const newStatus:
             Loan["status"] =
@@ -9398,10 +9428,23 @@ export async function createLoanRepayment(
              repayment from overwriting this repayment's
              calculated state.
 
-             Only pending/active loans are accepted here.
+             IMPORTANT REPAYMENT RULE:
 
-             This is intentional until historical repayment
-             handling for completed loans is redesigned.
+             The loan may be:
+
+               - pending
+               - active
+               - past its end date
+               - associated with a defaulter
+               - associated with a suspended member
+
+             and still receive payment.
+
+             Therefore the status condition below only prevents
+             a cancelled loan from being updated.
+
+             The financial snapshot fields remain part of the
+             optimistic-concurrency protection.
           ================================================= */
 
           const updateResult =
@@ -9410,6 +9453,13 @@ export async function createLoanRepayment(
                 _id:
                   loanObjectId,
 
+                /*
+                 * Optimistic concurrency protection.
+                 *
+                 * These values must still match the loan
+                 * projection that was read after fine
+                 * reconciliation.
+                 */
                 amountPaid:
                   loanAfterFineReconciliation.amountPaid,
 
@@ -9422,11 +9472,20 @@ export async function createLoanRepayment(
                 outstandingBalance:
                   loanAfterFineReconciliation.outstandingBalance,
 
+                /*
+                 * Cancelled loans cannot receive repayments.
+                 *
+                 * Do NOT use:
+                 *
+                 *   status: {
+                 *     $in: ["pending", "active"]
+                 *   }
+                 *
+                 * because an expired/defaulted loan with an
+                 * outstanding balance must remain payable.
+                 */
                 status: {
-                  $in: [
-                    "pending",
-                    "active",
-                  ],
+                  $ne: "cancelled",
                 },
               },
 
@@ -9495,7 +9554,8 @@ export async function createLoanRepayment(
           ================================================= */
 
           if (
-            overpaidAmount > 0
+            overpaidAmount >
+            0
           ) {
             const savingsAccount =
               await getOrCreateSavingsAccount(
@@ -9982,8 +10042,6 @@ export async function createLoanRepayment(
       }
 
       /*
-       * IMPORTANT:
-       *
        * Do not create another savings deposit or send
        * repayment notifications here.
        *

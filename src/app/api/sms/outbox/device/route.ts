@@ -5,10 +5,6 @@ import {
 } from "@/lib/sms/outbox/devices";
 
 import {
-  ensureSmsOutboxIndexes,
-} from "@/lib/sms/outbox/indexes";
-
-import {
   isSmsWorkerRequest,
 } from "@/lib/sms/outbox/workerAuth";
 
@@ -17,7 +13,8 @@ import {
 
    Registers or refreshes an Android SMS worker device.
 
-   The Android device sends:
+   Android sends:
+
    {
      deviceId: "...",
      token: "...",
@@ -26,6 +23,16 @@ import {
 
    deviceId = stable Android installation identity
    token    = current Firebase Cloud Messaging token
+
+   HOT PATH
+   ---------------------------------------------------------
+   This endpoint should be extremely lightweight.
+
+   IMPORTANT:
+   MongoDB indexes are NOT created here.
+
+   Index initialization belongs to application/database
+   startup rather than the Android registration request.
 ========================================================= */
 
 export async function POST(
@@ -34,19 +41,33 @@ export async function POST(
   try {
     /* =====================================================
        AUTHENTICATION
+
+       Only the trusted Android SMS worker may register or
+       refresh an SMS device.
+
+       Check this before parsing the request body so an
+       unauthorized request exits immediately.
     ===================================================== */
 
-    if (!isSmsWorkerRequest(request)) {
+    if (
+      !isSmsWorkerRequest(request)
+    ) {
       return NextResponse.json(
         {
           ok: false,
-          error: "Unauthorized.",
+          error:
+            "Unauthorized.",
         },
         {
           status: 401,
+          headers: {
+            "Cache-Control":
+              "no-store",
+          },
         },
       );
     }
+
 
     /* =====================================================
        BODY
@@ -55,18 +76,29 @@ export async function POST(
     let body: unknown;
 
     try {
-      body = await request.json();
+      body =
+        await request.json();
     } catch {
       return NextResponse.json(
         {
           ok: false,
-          error: "Invalid JSON body.",
+          error:
+            "Invalid JSON body.",
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control":
+              "no-store",
+          },
         },
       );
     }
+
+
+    /* =====================================================
+       BODY TYPE
+    ===================================================== */
 
     if (
       !body ||
@@ -76,130 +108,225 @@ export async function POST(
       return NextResponse.json(
         {
           ok: false,
-          error: "Request body must be an object.",
+          error:
+            "Request body must be an object.",
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control":
+              "no-store",
+          },
         },
       );
     }
 
+
     const payload =
-      body as Record<string, unknown>;
+      body as Record<
+        string,
+        unknown
+      >;
 
-    const deviceId =
-      typeof payload.deviceId === "string"
-        ? payload.deviceId.trim()
-        : "";
-
-    const token =
-      typeof payload.token === "string"
-        ? payload.token.trim()
-        : "";
-
-    const platform =
-      typeof payload.platform === "string"
-        ? payload.platform.trim()
-        : "android";
 
     /* =====================================================
-       VALIDATION
+       DEVICE ID
     ===================================================== */
+
+    const deviceId =
+      typeof payload.deviceId ===
+      "string"
+        ? payload.deviceId.trim()
+        : "";
 
     if (!deviceId) {
       return NextResponse.json(
         {
           ok: false,
-          error: "deviceId is required.",
+          error:
+            "deviceId is required.",
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control":
+              "no-store",
+          },
         },
       );
     }
+
+    if (
+      deviceId.length >
+      200
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "deviceId is too long.",
+        },
+        {
+          status: 400,
+          headers: {
+            "Cache-Control":
+              "no-store",
+          },
+        },
+      );
+    }
+
+
+    /* =====================================================
+       FCM TOKEN
+    ===================================================== */
+
+    const token =
+      typeof payload.token ===
+      "string"
+        ? payload.token.trim()
+        : "";
 
     if (!token) {
       return NextResponse.json(
         {
           ok: false,
-          error: "FCM token is required.",
+          error:
+            "FCM token is required.",
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control":
+              "no-store",
+          },
         },
       );
     }
 
-    if (deviceId.length > 200) {
+    if (
+      token.length >
+      4096
+    ) {
       return NextResponse.json(
         {
           ok: false,
-          error: "deviceId is too long.",
+          error:
+            "FCM token is too long.",
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control":
+              "no-store",
+          },
         },
       );
     }
 
-    if (token.length > 4096) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "FCM token is too long.",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    if (platform !== "android") {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Only Android devices are supported.",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
 
     /* =====================================================
-       ENSURE INDEXES
+       PLATFORM
     ===================================================== */
 
-    await ensureSmsOutboxIndexes();
+    const platform =
+      typeof payload.platform ===
+      "string"
+        ? payload.platform.trim()
+        : "android";
+
+    if (
+      platform !==
+      "android"
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Only Android devices are supported.",
+        },
+        {
+          status: 400,
+          headers: {
+            "Cache-Control":
+              "no-store",
+          },
+        },
+      );
+    }
+
 
     /* =====================================================
-       REGISTER DEVICE
+       REGISTER / REFRESH DEVICE
     ===================================================== */
+
+    /*
+     * This should be the only database operation performed
+     * by this endpoint.
+     *
+     * registerSmsDevice() should internally perform an
+     * atomic upsert using deviceId.
+     *
+     * Do NOT:
+     *
+     *   find device
+     *   ↓
+     *   update device
+     *
+     * because that creates an unnecessary database round
+     * trip and a race window.
+     */
 
     const device =
       await registerSmsDevice({
         deviceId,
         token,
-        platform: "android",
+        platform:
+          "android",
       });
+
 
     /* =====================================================
        RESPONSE
-
-       Do not return the FCM token.
     ===================================================== */
 
-    return NextResponse.json({
-      ok: true,
-      device: {
-        id: device._id?.toString(),
-        deviceId: device.deviceId,
-        platform: device.platform,
-        enabled: device.enabled,
-        lastSeenAt:
-          device.lastSeenAt.toISOString(),
+    /*
+     * Never return the FCM token.
+     *
+     * Return only the information Android needs to confirm
+     * that registration succeeded.
+     */
+
+    return NextResponse.json(
+      {
+        ok: true,
+
+        device: {
+          id:
+            device._id?.toString(),
+
+          deviceId:
+            device.deviceId,
+
+          platform:
+            device.platform,
+
+          enabled:
+            device.enabled,
+
+          lastSeenAt:
+            device.lastSeenAt.toISOString(),
+        },
       },
-    });
+      {
+        status: 200,
+        headers: {
+          "Cache-Control":
+            "no-store",
+        },
+      },
+    );
+
   } catch (error) {
     console.error(
       "[SMS DEVICE] Registration failed:",
@@ -209,6 +336,7 @@ export async function POST(
     return NextResponse.json(
       {
         ok: false,
+
         error:
           error instanceof Error
             ? error.message
@@ -216,6 +344,10 @@ export async function POST(
       },
       {
         status: 500,
+        headers: {
+          "Cache-Control":
+            "no-store",
+        },
       },
     );
   }

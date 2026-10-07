@@ -73,8 +73,6 @@ function getResultLabelClass(
 ========================================================= */
 
 export default function SmsInboxMonitor() {
-  const isNative = Capacitor.isNativePlatform();
-
   const {
     scanPhase,
     performingTransaction,
@@ -87,46 +85,59 @@ export default function SmsInboxMonitor() {
 
   const [resultsOpen, setResultsOpen] = useState(false);
 
-  /*
-   * Only display SMS messages that actually caused
-   * a financial change.
-   *
-   * The provider/native reader remains responsible for
-   * reading the configured SMS window.
-   *
-   * Results are explicitly sorted newest-first here so
-   * the UI always shows the latest financial SMS first,
-   * regardless of the order returned by the provider.
-   */
-  const financialResults = useMemo(
-    () =>
-      results
-        .filter(
-          (result) => result.financialChange === true,
-        )
-        .sort((a, b) => {
-          const dateA =
-            typeof a.sms.date === "number"
-              ? a.sms.date
-              : Number(a.sms.date);
+  /* -------------------------------------------------------
+     Native check
 
-          const dateB =
-            typeof b.sms.date === "number"
-              ? b.sms.date
-              : Number(b.sms.date);
+     Capacitor.isNativePlatform() is synchronous and cheap,
+     but keeping it outside the render flow makes the intent
+     explicit: this component is native-only.
+  ------------------------------------------------------- */
 
-          const timestampA = Number.isFinite(dateA)
-            ? dateA
-            : 0;
+  const isNative = Capacitor.isNativePlatform();
 
-          const timestampB = Number.isFinite(dateB)
-            ? dateB
-            : 0;
+  /* -------------------------------------------------------
+     FINANCIAL RESULTS
 
-          return timestampB - timestampA;
-        }),
-    [results],
-  );
+     Never mutate the provider's results array.
+
+     Filter first, then sort a new array newest-first.
+  ------------------------------------------------------- */
+
+  const financialResults = useMemo(() => {
+    const filtered = results.filter(
+      (result) =>
+        result.financialChange === true,
+    );
+
+    return filtered.sort((a, b) => {
+      const dateA =
+        typeof a.sms.date === "number"
+          ? a.sms.date
+          : Number(a.sms.date);
+
+      const dateB =
+        typeof b.sms.date === "number"
+          ? b.sms.date
+          : Number(b.sms.date);
+
+      const timestampA = Number.isFinite(dateA)
+        ? dateA
+        : 0;
+
+      const timestampB = Number.isFinite(dateB)
+        ? dateB
+        : 0;
+
+      return timestampB - timestampA;
+    });
+  }, [results]);
+
+  /* -------------------------------------------------------
+     WEB / DESKTOP
+
+     This monitor is only meaningful inside the native
+     Android application.
+  ------------------------------------------------------- */
 
   if (!isNative) {
     return null;
@@ -164,6 +175,10 @@ export default function SmsInboxMonitor() {
         "
       >
         <div className="min-w-0 flex-1">
+          {/* -------------------------------------------------
+              READING
+          ------------------------------------------------- */}
+
           {scanPhase === "reading" && (
             <div className="flex items-center gap-2">
               <span
@@ -190,6 +205,10 @@ export default function SmsInboxMonitor() {
               </span>
             </div>
           )}
+
+          {/* -------------------------------------------------
+              PROCESSING
+          ------------------------------------------------- */}
 
           {scanPhase === "processing" && (
             <div className="min-w-0">
@@ -275,6 +294,10 @@ export default function SmsInboxMonitor() {
             </div>
           )}
 
+          {/* -------------------------------------------------
+              COMPLETE
+          ------------------------------------------------- */}
+
           {scanPhase === "complete" && (
             <div className="flex items-center gap-2">
               <span
@@ -303,6 +326,10 @@ export default function SmsInboxMonitor() {
             </div>
           )}
 
+          {/* -------------------------------------------------
+              ERROR
+          ------------------------------------------------- */}
+
           {scanPhase === "error" && (
             <div className="flex items-center gap-2">
               <span
@@ -326,6 +353,10 @@ export default function SmsInboxMonitor() {
               </span>
             </div>
           )}
+
+          {/* -------------------------------------------------
+              IDLE
+          ------------------------------------------------- */}
 
           {scanPhase === "idle" && (
             <span
@@ -351,6 +382,10 @@ export default function SmsInboxMonitor() {
             gap-1.5
           "
         >
+          {/* -------------------------------------------------
+              MANUAL CHECK
+          ------------------------------------------------- */}
+
           <button
             type="button"
             onClick={() => {
@@ -388,19 +423,29 @@ export default function SmsInboxMonitor() {
           >
             <RefreshCw
               className={`h-3.5 w-3.5 ${
-                isRunning ? "animate-spin" : ""
+                isRunning
+                  ? "animate-spin"
+                  : ""
               }`}
             />
 
             <span>Check SMS</span>
           </button>
 
+          {/* -------------------------------------------------
+              RESULTS TOGGLE
+          ------------------------------------------------- */}
+
           <button
             type="button"
             onClick={() =>
-              setResultsOpen((open) => !open)
+              setResultsOpen(
+                (open) => !open,
+              )
             }
-            disabled={financialResults.length === 0}
+            disabled={
+              financialResults.length === 0
+            }
             aria-label={
               resultsOpen
                 ? "Hide transaction results"
@@ -471,113 +516,125 @@ export default function SmsInboxMonitor() {
           FINANCIAL TRANSACTION RESULTS
       =================================================== */}
 
-      {resultsOpen && financialResults.length > 0 && (
-        <div
-          className="
-            border-t
-            border-slate-800
-            bg-slate-900/60
-          "
-        >
+      {resultsOpen &&
+        financialResults.length > 0 && (
           <div
             className="
-              max-h-[360px]
-              overflow-y-auto
-              overscroll-contain
-              p-3
-              [scrollbar-width:thin]
-            "
-          >
-            <div className="space-y-2">
-              {financialResults.map((result, index) => (
-                <div
-                  key={`${result.sms.id || result.sms.date}-${index}`}
-                  className="
-                    rounded-xl
-                    border
-                    border-slate-800
-                    bg-slate-950/80
-                    p-3
-                  "
-                >
-                  <div
-                    className="
-                      flex
-                      items-center
-                      justify-between
-                      gap-3
-                    "
-                  >
-                    <div className="min-w-0">
-                      <span
-                        className={`
-                          text-[10px]
-                          font-semibold
-                          uppercase
-                          tracking-[0.08em]
-                          ${getResultLabelClass(result)}
-                        `}
-                      >
-                        {getResultType(result)}
-                      </span>
-                    </div>
-
-                    <span
-                      className="
-                        shrink-0
-                        text-[9px]
-                        text-slate-600
-                      "
-                    >
-                      {formatSmsDate(result.sms.date)}
-                    </span>
-                  </div>
-
-                  <p
-                    className="
-                      mt-2
-                      whitespace-pre-wrap
-                      break-words
-                      text-[11px]
-                      leading-relaxed
-                      text-slate-300
-                    "
-                  >
-                    {result.sms.body ||
-                      "SMS body unavailable."}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div
-            className="
-              flex
-              items-center
-              justify-between
-              gap-3
               border-t
               border-slate-800
-              px-3
-              py-2
-              text-[9px]
-              text-slate-600
+              bg-slate-900/60
             "
           >
-            <span>
-              {financialResults.length} transaction
-              {financialResults.length === 1 ? "" : "s"}
-            </span>
+            <div
+              className="
+                max-h-[360px]
+                overflow-y-auto
+                overscroll-contain
+                p-3
+                [scrollbar-width:thin]
+              "
+            >
+              <div className="space-y-2">
+                {financialResults.map(
+                  (result, index) => (
+                    <div
+                      key={`${result.sms.id || result.sms.date}-${index}`}
+                      className="
+                        rounded-xl
+                        border
+                        border-slate-800
+                        bg-slate-950/80
+                        p-3
+                      "
+                    >
+                      <div
+                        className="
+                          flex
+                          items-center
+                          justify-between
+                          gap-3
+                        "
+                      >
+                        <div className="min-w-0">
+                          <span
+                            className={`
+                              text-[10px]
+                              font-semibold
+                              uppercase
+                              tracking-[0.08em]
+                              ${getResultLabelClass(result)}
+                            `}
+                          >
+                            {getResultType(result)}
+                          </span>
+                        </div>
 
-            <span>
-              {lastSync
-                ? `Last checked ${lastSync.toLocaleTimeString()}`
-                : "Processing"}
-            </span>
+                        <span
+                          className="
+                            shrink-0
+                            text-[9px]
+                            text-slate-600
+                          "
+                        >
+                          {formatSmsDate(
+                            result.sms.date,
+                          )}
+                        </span>
+                      </div>
+
+                      <p
+                        className="
+                          mt-2
+                          whitespace-pre-wrap
+                          break-words
+                          text-[11px]
+                          leading-relaxed
+                          text-slate-300
+                        "
+                      >
+                        {result.sms.body ||
+                          "SMS body unavailable."}
+                      </p>
+                    </div>
+                  ),
+                )}
+              </div>
+            </div>
+
+            {/* -------------------------------------------------
+                FOOTER
+            ------------------------------------------------- */}
+
+            <div
+              className="
+                flex
+                items-center
+                justify-between
+                gap-3
+                border-t
+                border-slate-800
+                px-3
+                py-2
+                text-[9px]
+                text-slate-600
+              "
+            >
+              <span>
+                {financialResults.length}{" "}
+                transaction
+                {financialResults.length === 1
+                  ? ""
+                  : "s"}
+              </span>
+
+              <span>
+                {lastSync
+                  ? `Last checked ${lastSync.toLocaleTimeString()}`
+                  : "Processing"}
+              </span>
+            </div>
           </div>
-        </div>
-      )}
+        )}
     </section>
   );
 }

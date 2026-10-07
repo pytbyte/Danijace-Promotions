@@ -19,22 +19,25 @@ import {
    Authentication:
    - Android worker: x-geoshua-sms-worker
    - Web/admin callers: NextAuth session
+
+   Performance:
+   - Worker authentication is checked first.
+   - No unnecessary database reads.
+   - No cacheable responses.
+   - Result reporting is delegated to one service operation.
 ========================================================= */
 
-export async function POST(
-  request: Request,
-) {
+export async function POST(request: Request) {
   try {
     /* -----------------------------------------------------
        AUTHENTICATION
+
+       The Android worker uses the lightweight worker token.
+       Only non-worker callers pay the NextAuth session cost.
     ----------------------------------------------------- */
 
-    const workerRequest =
-      isSmsWorkerRequest(request);
-
-    if (!workerRequest) {
-      const session =
-        await auth();
+    if (!isSmsWorkerRequest(request)) {
+      const session = await auth();
 
       if (!session?.user) {
         return NextResponse.json(
@@ -44,6 +47,9 @@ export async function POST(
           },
           {
             status: 401,
+            headers: {
+              "Cache-Control": "no-store",
+            },
           },
         );
       }
@@ -56,52 +62,54 @@ export async function POST(
     let body: unknown;
 
     try {
-      body =
-        await request.json();
+      body = await request.json();
     } catch {
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Invalid JSON request body.",
+          error: "Invalid JSON request body.",
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control": "no-store",
+          },
         },
       );
     }
 
     if (
       !body ||
-      typeof body !== "object"
+      typeof body !== "object" ||
+      Array.isArray(body)
     ) {
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Invalid request body.",
+          error: "Invalid request body.",
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control": "no-store",
+          },
         },
       );
     }
 
-    const data =
-      body as Record<
-        string,
-        unknown
-      >;
+    const data = body as Record<string, unknown>;
+
+    /* -----------------------------------------------------
+       EXTRACT
+    ----------------------------------------------------- */
 
     const deviceId =
-      typeof data.deviceId ===
-      "string"
+      typeof data.deviceId === "string"
         ? data.deviceId.trim()
         : "";
 
     const smsId =
-      typeof data.smsId ===
-      "string"
+      typeof data.smsId === "string"
         ? data.smsId.trim()
         : "";
 
@@ -112,30 +120,47 @@ export async function POST(
         : null;
 
     const providerMessageId =
-      typeof data.providerMessageId ===
-      "string"
+      typeof data.providerMessageId === "string"
         ? data.providerMessageId.trim()
         : undefined;
 
     const error =
-      typeof data.error ===
-      "string"
+      typeof data.error === "string"
         ? data.error.trim()
         : undefined;
 
     /* -----------------------------------------------------
        VALIDATION
+
+       Keep these checks local and cheap.
     ----------------------------------------------------- */
 
     if (!deviceId) {
       return NextResponse.json(
         {
           success: false,
-          error:
-            "deviceId is required.",
+          error: "deviceId is required.",
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    }
+
+    if (deviceId.length > 200) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "deviceId is too long.",
+        },
+        {
+          status: 400,
+          headers: {
+            "Cache-Control": "no-store",
+          },
         },
       );
     }
@@ -144,11 +169,28 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "smsId is required.",
+          error: "smsId is required.",
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    }
+
+    if (smsId.length > 200) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "smsId is too long.",
+        },
+        {
+          status: 400,
+          headers: {
+            "Cache-Control": "no-store",
+          },
         },
       );
     }
@@ -157,11 +199,49 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error:
-            'status must be either "sent" or "failed".',
+          error: 'status must be either "sent" or "failed".',
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    }
+
+    if (
+      providerMessageId &&
+      providerMessageId.length > 500
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "providerMessageId is too long.",
+        },
+        {
+          status: 400,
+          headers: {
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    }
+
+    if (
+      error &&
+      error.length > 2000
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "error message is too long.",
+        },
+        {
+          status: 400,
+          headers: {
+            "Cache-Control": "no-store",
+          },
         },
       );
     }
@@ -173,17 +253,22 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "error is required when status is failed.",
+          error: "error is required when status is failed.",
         },
         {
           status: 400,
+          headers: {
+            "Cache-Control": "no-store",
+          },
         },
       );
     }
 
     /* -----------------------------------------------------
-       REPORT
+       REPORT RESULT
+
+       This should be an atomic DB update inside
+       reportSmsResult().
     ----------------------------------------------------- */
 
     await reportSmsResult({
@@ -194,9 +279,23 @@ export async function POST(
       error,
     });
 
-    return NextResponse.json({
-      success: true,
-    });
+    /* -----------------------------------------------------
+       SUCCESS
+
+       No additional DB work.
+    ----------------------------------------------------- */
+
+    return NextResponse.json(
+      {
+        success: true,
+      },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      },
+    );
   } catch (error) {
     console.error(
       "SMS OUTBOX RESULT ERROR:",
@@ -215,6 +314,9 @@ export async function POST(
       },
       {
         status: 500,
+        headers: {
+          "Cache-Control": "no-store",
+        },
       },
     );
   }

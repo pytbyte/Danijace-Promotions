@@ -39,6 +39,12 @@ const FINANCIAL_TERMS = [
 
 const MAX_RESULTS = 100;
 
+/*
+ * Prevent one broken network request from hanging the
+ * entire inbox scan indefinitely.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -300,7 +306,90 @@ function getResultKind(
 }
 
 /* =========================================================
-   PROVIDER
+   PROCESS REQUEST
+========================================================= */
+
+async function processSms(
+  sms: SmsMessage,
+): Promise<{
+  response: Response;
+  payload: ApiRecord;
+}> {
+  const body =
+    typeof sms.body === "string"
+      ? sms.body.trim()
+      : "";
+
+  const date =
+    typeof sms.date === "number"
+      ? sms.date
+      : Number(sms.date || 0);
+
+  const address =
+    typeof sms.address === "string"
+      ? sms.address.trim()
+      : "";
+
+  const smsId =
+    typeof sms.id === "string" &&
+    sms.id.trim()
+      ? sms.id.trim()
+      : getLocalSmsKey(sms);
+
+  const controller =
+    new AbortController();
+
+  const timeout =
+    setTimeout(() => {
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+
+  try {
+    const response =
+      await fetch(
+        PROCESS_URL,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          cache: "no-store",
+          signal:
+            controller.signal,
+          body: JSON.stringify({
+            smsId,
+            address,
+            body,
+            date,
+          }),
+        },
+      );
+
+    let payload: ApiRecord = {};
+
+    try {
+      const parsed =
+        await response.json();
+
+      if (isRecord(parsed)) {
+        payload = parsed;
+      }
+    } catch {
+      payload = {};
+    }
+
+    return {
+      response,
+      payload,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/* =========================================================
+   COMPONENT
 ========================================================= */
 
 export function SmsInboxProvider({
@@ -370,10 +459,16 @@ export function SmsInboxProvider({
 
   const processInbox =
     useCallback(async () => {
+      /*
+       * Never allow overlapping inbox scans.
+       */
       if (runningRef.current) {
         return;
       }
 
+      /*
+       * Web/Desktop has no SMS inbox.
+       */
       if (!isNative) {
         setStatus("idle");
         setScanPhase("idle");
@@ -397,9 +492,9 @@ export function SmsInboxProvider({
       setResults([]);
 
       try {
-        /* ---------------------------------------------------
+        /* =================================================
            READ SMS INBOX
-        --------------------------------------------------- */
+        ================================================= */
 
         const inboxResult =
           await SmsReader.readInbox();
@@ -411,9 +506,9 @@ export function SmsInboxProvider({
             ? inboxResult.messages
             : [];
 
-        /* ---------------------------------------------------
-           DEDUPLICATE SMS
-        --------------------------------------------------- */
+        /* =================================================
+           DEDUPLICATE
+        ================================================= */
 
         const uniqueMessages: SmsMessage[] =
           [];
@@ -433,24 +528,44 @@ export function SmsInboxProvider({
           uniqueMessages.push(sms);
         }
 
-        /* ---------------------------------------------------
-           FIND FINANCIAL CANDIDATES
-        --------------------------------------------------- */
+        /* =================================================
+           FIND CANDIDATES ONCE
 
-        const candidates =
-          uniqueMessages.filter(
-            isFinancialCandidate,
+           Store the result in a Set so we don't repeatedly
+           scan the SMS body inside the processing loop.
+        ================================================= */
+
+        const candidates: SmsMessage[] =
+          [];
+
+        for (const sms of uniqueMessages) {
+          if (
+            isFinancialCandidate(
+              sms,
+            )
+          ) {
+            candidates.push(sms);
+          }
+        }
+
+        const candidateKeys =
+          new Set(
+            candidates.map(
+              getLocalSmsKey,
+            ),
           );
 
-        const initialStats: SmsProcessStats =
-          {
+        const filtered =
+          uniqueMessages.length -
+          candidates.length;
+
+        const initialStats:
+          SmsProcessStats = {
             inbox:
               uniqueMessages.length,
             candidates:
               candidates.length,
-            filtered:
-              uniqueMessages.length -
-              candidates.length,
+            filtered,
             submitted: 0,
             processed: 0,
             duplicate: 0,
@@ -460,9 +575,13 @@ export function SmsInboxProvider({
             savingsUpdated: 0,
           };
 
-        setStats(initialStats);
+        setStats(
+          initialStats,
+        );
 
-        setScanPhase("processing");
+        setScanPhase(
+          "processing",
+        );
 
         setProgress({
           current: 0,
@@ -477,9 +596,9 @@ export function SmsInboxProvider({
           savingsUpdated: 0,
         });
 
-        /* ---------------------------------------------------
+        /* =================================================
            RUNNING COUNTERS
-        --------------------------------------------------- */
+        ================================================= */
 
         let submitted = 0;
         let processed = 0;
@@ -489,18 +608,25 @@ export function SmsInboxProvider({
         let loanUpdated = 0;
         let savingsUpdated = 0;
 
-        const resultList: SmsProcessResult[] =
-          [];
+        const resultList:
+          SmsProcessResult[] = [];
 
-        /* ---------------------------------------------------
-           PROCESS SMS SEQUENTIALLY
+        /* =================================================
+           PROCESS SEQUENTIALLY
 
-           This intentionally remains sequential.
+           IMPORTANT:
 
-           Financial SMS processing must not be fired
-           concurrently because two payments may belong to
-           the same member/loan and ordering matters.
-        --------------------------------------------------- */
+           We deliberately do NOT Promise.all() these.
+
+           Two SMS payments can belong to the same loan.
+           Keeping financial mutations ordered prevents the
+           client from creating avoidable race conditions.
+
+           The background SMS worker/outbox is responsible
+           for near-instant outgoing SMS. This inbox scanner
+           must not compromise financial ordering merely for
+           UI speed.
+        ================================================= */
 
         for (
           let index = 0;
@@ -513,6 +639,9 @@ export function SmsInboxProvider({
 
           const current =
             index + 1;
+
+          const smsKey =
+            getLocalSmsKey(sms);
 
           setProgress({
             current,
@@ -532,20 +661,22 @@ export function SmsInboxProvider({
           });
 
           /* -----------------------------------------------
-             SKIP NON-FINANCIAL SMS
-          ------------------------------------------------ */
+             NON-FINANCIAL SMS
+
+             We already classified these above.
+          ----------------------------------------------- */
 
           if (
-            !isFinancialCandidate(
-              sms,
+            !candidateKeys.has(
+              smsKey,
             )
           ) {
             continue;
           }
 
           /* -----------------------------------------------
-             NORMALIZE SMS
-          ------------------------------------------------ */
+             NORMALIZE
+          ----------------------------------------------- */
 
           const body =
             typeof sms.body === "string"
@@ -559,23 +690,9 @@ export function SmsInboxProvider({
                   sms.date || 0,
                 );
 
-          const address =
-            typeof sms.address ===
-            "string"
-              ? sms.address.trim()
-              : "";
-
-          const smsId =
-            typeof sms.id === "string" &&
-            sms.id.trim()
-              ? sms.id.trim()
-              : getLocalSmsKey(
-                  sms,
-                );
-
           /* -----------------------------------------------
              INVALID SMS
-          ------------------------------------------------ */
+          ----------------------------------------------- */
 
           if (!body || !date) {
             failed++;
@@ -587,20 +704,18 @@ export function SmsInboxProvider({
                 "SMS body or date is invalid.",
             });
 
-            setResults([
-              ...resultList.slice(
+            setResults(
+              resultList.slice(
                 -MAX_RESULTS,
               ),
-            ]);
+            );
 
             setStats({
               inbox:
                 uniqueMessages.length,
               candidates:
                 candidates.length,
-              filtered:
-                uniqueMessages.length -
-                candidates.length,
+              filtered,
               submitted,
               processed,
               duplicate,
@@ -608,31 +723,14 @@ export function SmsInboxProvider({
               failed,
               loanUpdated,
               savingsUpdated,
-            });
-
-            setProgress({
-              current,
-              total:
-                uniqueMessages.length,
-              submitted,
-              processed,
-              duplicate,
-              ignored,
-              failed,
-              loanUpdated,
-              savingsUpdated,
-              currentAddress:
-                sms.address,
-              currentSmsId:
-                sms.id,
             });
 
             continue;
           }
 
           /* -----------------------------------------------
-             SEND TO SERVER
-          ------------------------------------------------ */
+             TRANSACTION IN PROGRESS
+          ----------------------------------------------- */
 
           setPerformingTransaction(
             true,
@@ -641,40 +739,11 @@ export function SmsInboxProvider({
           submitted++;
 
           try {
-            const response =
-              await fetch(
-                PROCESS_URL,
-                {
-                  method: "POST",
-                  headers: {
-                    "Content-Type":
-                      "application/json",
-                  },
-                  body: JSON.stringify({
-                    smsId,
-                    address,
-                    body,
-                    date,
-                  }),
-                },
-              );
-
-            let payload: ApiRecord =
-              {};
-
-            try {
-              const parsed =
-                await response.json();
-
-              if (
-                isRecord(parsed)
-              ) {
-                payload =
-                  parsed;
-              }
-            } catch {
-              payload = {};
-            }
+            const {
+              response,
+              payload,
+            } =
+              await processSms(sms);
 
             const statusValue =
               getString(
@@ -708,8 +777,8 @@ export function SmsInboxProvider({
               payload.financialChange ===
               true;
 
-            const result: SmsProcessResult =
-              {
+            const result:
+              SmsProcessResult = {
                 sms,
                 httpStatus:
                   response.status,
@@ -728,10 +797,12 @@ export function SmsInboxProvider({
                   processedFlag,
               };
 
-            resultList.push(result);
+            resultList.push(
+              result,
+            );
 
             /* ---------------------------------------------
-               CLASSIFY RESULT
+               CLASSIFY
             --------------------------------------------- */
 
             if (
@@ -771,23 +842,21 @@ export function SmsInboxProvider({
             }
 
             /* ---------------------------------------------
-               KEEP ONLY RECENT RESULTS
+               UPDATE UI
             --------------------------------------------- */
 
-            setResults([
-              ...resultList.slice(
+            setResults(
+              resultList.slice(
                 -MAX_RESULTS,
               ),
-            ]);
+            );
 
             setStats({
               inbox:
                 uniqueMessages.length,
               candidates:
                 candidates.length,
-              filtered:
-                uniqueMessages.length -
-                candidates.length,
+              filtered,
               submitted,
               processed,
               duplicate,
@@ -795,30 +864,16 @@ export function SmsInboxProvider({
               failed,
               loanUpdated,
               savingsUpdated,
-            });
-
-            setProgress({
-              current,
-              total:
-                uniqueMessages.length,
-              submitted,
-              processed,
-              duplicate,
-              ignored,
-              failed,
-              loanUpdated,
-              savingsUpdated,
-              currentAddress:
-                sms.address,
-              currentSmsId:
-                sms.id,
             });
           } catch (error) {
             failed++;
 
             const message =
               error instanceof Error
-                ? error.message
+                ? error.name ===
+                  "AbortError"
+                  ? "SMS processing request timed out."
+                  : error.message
                 : "Failed to process SMS.";
 
             resultList.push({
@@ -827,20 +882,18 @@ export function SmsInboxProvider({
               error: message,
             });
 
-            setResults([
-              ...resultList.slice(
+            setResults(
+              resultList.slice(
                 -MAX_RESULTS,
               ),
-            ]);
+            );
 
             setStats({
               inbox:
                 uniqueMessages.length,
               candidates:
                 candidates.length,
-              filtered:
-                uniqueMessages.length -
-                candidates.length,
+              filtered,
               submitted,
               processed,
               duplicate,
@@ -848,23 +901,6 @@ export function SmsInboxProvider({
               failed,
               loanUpdated,
               savingsUpdated,
-            });
-
-            setProgress({
-              current,
-              total:
-                uniqueMessages.length,
-              submitted,
-              processed,
-              duplicate,
-              ignored,
-              failed,
-              loanUpdated,
-              savingsUpdated,
-              currentAddress:
-                sms.address,
-              currentSmsId:
-                sms.id,
             });
           } finally {
             setPerformingTransaction(
@@ -873,19 +909,17 @@ export function SmsInboxProvider({
           }
         }
 
-        /* ---------------------------------------------------
+        /* =================================================
            FINAL STATE
-        --------------------------------------------------- */
+        ================================================= */
 
-        const finalStats: SmsProcessStats =
-          {
+        const finalStats:
+          SmsProcessStats = {
             inbox:
               uniqueMessages.length,
             candidates:
               candidates.length,
-            filtered:
-              uniqueMessages.length -
-              candidates.length,
+            filtered,
             submitted,
             processed,
             duplicate,
@@ -895,7 +929,9 @@ export function SmsInboxProvider({
             savingsUpdated,
           };
 
-        setStats(finalStats);
+        setStats(
+          finalStats,
+        );
 
         setProgress({
           current:
@@ -911,7 +947,9 @@ export function SmsInboxProvider({
           savingsUpdated,
         });
 
-        setLastSync(new Date());
+        setLastSync(
+          new Date(),
+        );
 
         setPerformingTransaction(
           false,
@@ -933,10 +971,16 @@ export function SmsInboxProvider({
           false,
         );
 
-        setScanPhase("error");
-        setStatus("error");
+        setScanPhase(
+          "error",
+        );
+
+        setStatus(
+          "error",
+        );
       } finally {
-        runningRef.current = false;
+        runningRef.current =
+          false;
 
         setPerformingTransaction(
           false,
@@ -972,17 +1016,17 @@ export function SmsInboxProvider({
      CONTEXT
   ======================================================= */
 
-  const value: SmsInboxContextValue =
-    {
-      status,
-      scanPhase,
-      performingTransaction,
-      stats,
-      progress,
-      results,
-      lastSync,
-      processInbox,
-    };
+  const value:
+    SmsInboxContextValue = {
+    status,
+    scanPhase,
+    performingTransaction,
+    stats,
+    progress,
+    results,
+    lastSync,
+    processInbox,
+  };
 
   return (
     <SmsInboxContext.Provider

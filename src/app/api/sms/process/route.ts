@@ -110,7 +110,6 @@ const OLD_SMS_WARNING_MS =
 function getOptionalString(
   value: unknown,
 ): string | null {
-
   if (
     typeof value !== "string"
   ) {
@@ -132,7 +131,6 @@ function getOptionalString(
 function getSmsDate(
   value: unknown,
 ): number | null {
-
   if (
     typeof value !== "number" ||
     !Number.isFinite(value) ||
@@ -151,7 +149,6 @@ function getSmsDate(
 function getErrorMessage(
   error: unknown,
 ): string {
-
   if (
     error instanceof Error &&
     error.message.trim().length > 0
@@ -177,7 +174,6 @@ function response(
   body: Record<string, unknown>,
   status = 200,
 ) {
-
   return NextResponse.json(
     body,
     {
@@ -198,7 +194,6 @@ function response(
 export async function POST(
   request: Request,
 ) {
-
   const receivedAt =
     Date.now();
 
@@ -212,12 +207,9 @@ export async function POST(
     | null = null;
 
   try {
-
     payload =
       (await request.json()) as SmsProcessRequest;
-
   } catch {
-
     return response(
       {
         status:
@@ -244,7 +236,6 @@ export async function POST(
     !payload ||
     typeof payload !== "object"
   ) {
-
     return response(
       {
         status:
@@ -297,7 +288,6 @@ export async function POST(
   ======================================================= */
 
   if (!body) {
-
     return response(
       {
         status:
@@ -329,7 +319,6 @@ export async function POST(
   if (
     smsDate === null
   ) {
-
     return response(
       {
         status:
@@ -366,7 +355,6 @@ export async function POST(
     futureDifference >
     FUTURE_SMS_TOLERANCE_MS
   ) {
-
     return response(
       {
         status:
@@ -418,7 +406,6 @@ export async function POST(
   let parsed;
 
   try {
-
     parsed =
       parseBankSms(
         {
@@ -433,9 +420,7 @@ export async function POST(
             smsDate,
         },
       );
-
   } catch (error) {
-
     const message =
       getErrorMessage(
         error,
@@ -535,7 +520,6 @@ export async function POST(
   ======================================================= */
 
   try {
-
     const result =
       await processIncomingTransaction(
         parsed,
@@ -550,7 +534,6 @@ export async function POST(
       result.type ===
       "savings"
     ) {
-
       return response(
         {
           status:
@@ -602,7 +585,6 @@ export async function POST(
       result.type ===
       "loan"
     ) {
-
       return response(
         {
           status:
@@ -678,7 +660,6 @@ export async function POST(
     );
 
   } catch (error) {
-
     const message =
       getErrorMessage(
         error,
@@ -690,15 +671,14 @@ export async function POST(
     ====================================================== */
 
     /**
-     * This is a terminal business outcome, NOT a server
-     * failure.
+     * This is a terminal historical consistency outcome,
+     * NOT a loan-status restriction.
      *
-     * The processor currently rejects only when:
+     * The processor rejects only when:
      *
      *     transactionDate < disbursementDate
      *
-     * Same-day transactions are currently allowed by the
-     * processor.
+     * Same-day transactions remain allowed.
      *
      * This SMS must therefore NOT be retried indefinitely.
      */
@@ -707,7 +687,6 @@ export async function POST(
       error.message ===
         "SMS_REPAYMENT_BEFORE_DISBURSEMENT"
     ) {
-
       return response(
         {
           status:
@@ -744,30 +723,24 @@ export async function POST(
     /**
      * IMPORTANT:
      *
-     * This is the Step 5 fix.
+     * This is a historical timestamp consistency check,
+     * not an active/expired/defaulted loan restriction.
      *
      * The processor can deliberately throw:
      *
      * SMS_REPAYMENT_RECEIVED_BEFORE_LOAN_AUTHORIZATION
      *
-     * This is NOT a server failure.
-     *
-     * It means the SMS itself was received before the loan
-     * authorization timestamp.
+     * This means the bank transaction timestamp itself
+     * precedes the loan authorization timestamp.
      *
      * Retrying the same SMS cannot change its original
-     * timestamp, so returning HTTP 500 would cause
-     * WorkManager to retry the same message unnecessarily.
-     *
-     * Return HTTP 200 + ignored so Android can mark the
-     * queued SMS as terminally handled.
+     * timestamp, so return HTTP 200 + ignored.
      */
     if (
       error instanceof Error &&
       error.message ===
         "SMS_REPAYMENT_RECEIVED_BEFORE_LOAN_AUTHORIZATION"
     ) {
-
       return response(
         {
           status:
@@ -837,7 +810,6 @@ export async function POST(
     if (
       isDuplicate
     ) {
-
       return response(
         {
           status:
@@ -879,7 +851,6 @@ export async function POST(
         "not configured",
       )
     ) {
-
       return response(
         {
           status:
@@ -934,7 +905,6 @@ export async function POST(
         )
       )
     ) {
-
       return response(
         {
           status:
@@ -967,47 +937,37 @@ export async function POST(
 
 
     /* =====================================================
-       LOAN/SAVINGS ROUTING FAILURE
+       LOAN ROUTING FAILURE
     ====================================================== */
 
-    if (
-      lowerMessage.includes(
-        "no active geo-shua loan",
-      ) ||
-      lowerMessage.includes(
-        "multiple active loans",
-      )
-    ) {
-
-      return response(
-        {
-          status:
-            "ignored" satisfies ApiStatus,
-
-          processed:
-            false,
-
-          financialChange:
-            false,
-
-          reason:
-            "loan_resolution_failed",
-
-          message,
-
-          smsId,
-
-          parsed:
-            parsedDiagnostic,
-
-          memberName:
-            parsed.senderName,
-
-          oldSms,
-        },
-        200,
-      );
-    }
+    /**
+     * IMPORTANT:
+     *
+     * There is intentionally NO "active loan" restriction
+     * in this API layer.
+     *
+     * A loan that has passed its contractual end date may
+     * still have an outstanding balance and must therefore
+     * remain eligible for repayment.
+     *
+     * Likewise, expired/defaulted/suspended loans must not
+     * be rejected here merely because their status is no
+     * longer "active".
+     *
+     * The actual loan-resolution and repayment service is
+     * responsible for determining whether the payment can
+     * be applied.
+     *
+     * Therefore we deliberately DO NOT check for:
+     *
+     *     "no active geo-shua loan"
+     *
+     * and we do not impose a status restriction here.
+     *
+     * If the underlying processor cannot resolve a payable
+     * loan, its error falls through to the normal processor
+     * error handling below.
+     */
 
 
     /* =====================================================
@@ -1019,7 +979,6 @@ export async function POST(
         "savings account",
       )
     ) {
-
       return response(
         {
           status:
@@ -1100,7 +1059,6 @@ export async function POST(
 ========================================================= */
 
 export async function GET() {
-
   return response(
     {
       status:
@@ -1127,4 +1085,3 @@ export async function GET() {
     200,
   );
 }
-
