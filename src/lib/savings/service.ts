@@ -1,5 +1,5 @@
 /**
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * Savings Domain Service
  *
  * Production-safe savings ledger.
@@ -62,7 +62,7 @@ import type {
 
 const DB_NAME =
   process.env.MONGODB_DB ||
-  "geo-shua";
+  "danijace-promotions";
 
 const ACCOUNT_COLLECTION =
   "savingsAccounts";

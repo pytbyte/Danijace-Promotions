@@ -1,4 +1,4 @@
-package com.pytbyte.geoshua;
+package com.pytbyte.danijacepromotions;
 
 import android.content.Context;
 import android.net.ConnectivityManager;
@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * ANDROID SMS DIAGNOSTIC WORKER
  * =========================================================
  *
@@ -63,14 +63,14 @@ public final class SmsDiagnosticWorker
         extends Worker {
 
     private static final String TAG =
-            "GeoShuaSmsDiagnostic";
+            "DanijaceSmsDiagnostic";
 
     /* =====================================================
        API
     ===================================================== */
 
     private static final String API_BASE_URL =
-            "https://geo-shua.vercel.app";
+            "https://danijace-promotions.vercel.app";
 
     private static final String API_ENDPOINT =
             API_BASE_URL +
@@ -81,7 +81,7 @@ public final class SmsDiagnosticWorker
     ===================================================== */
 
     private static final String UNIQUE_WORK_NAME =
-            "geoshua_sms_diagnostic_now";
+            "danijace_sms_diagnostic_now";
 
     /* =====================================================
        SMS WINDOW

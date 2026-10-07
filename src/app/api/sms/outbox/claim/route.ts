@@ -25,7 +25,7 @@ import {
 
    Authentication:
    - trusted Android SMS worker token
-   - OR normal authenticated GEO-SHUA session
+   - OR normal authenticated DANIJACE PROMOTIONS session
 ========================================================= */
 
 export async function POST(

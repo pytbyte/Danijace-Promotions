@@ -1,5 +1,5 @@
 /**
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * Member Financial Projection
  *
  * =========================================================
@@ -49,7 +49,7 @@ import type {
 ========================================================= */
 
 const DB_NAME =
-  process.env.MONGODB_DB || "geo-shua";
+  process.env.MONGODB_DB || "danijace-promotions";
 
 const SAVINGS_ACCOUNTS_COLLECTION =
   "savingsAccounts";

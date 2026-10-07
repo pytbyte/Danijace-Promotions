@@ -37,7 +37,7 @@ export default function SavingsHeader({
             <div className="h-1.5 w-1.5 rounded-full bg-sky-400" />
 
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-300/60">
-              GEO-SHUA
+              DANIJACE PROMOTIONS
             </p>
           </div>
 

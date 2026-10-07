@@ -17,7 +17,7 @@ import {
    sent or failed.
 
    Authentication:
-   - Android worker: x-geoshua-sms-worker
+   - Android worker: x-danijace-sms-worker
    - Web/admin callers: NextAuth session
 
    Performance:

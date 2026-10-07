@@ -1,5 +1,5 @@
 /**
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * Loan Settings API
  *
  * GET   /api/loans/settings

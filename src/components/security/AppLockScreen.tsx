@@ -212,7 +212,7 @@ export default function AppLockScreen({
 
       /**
        * The existing server-side verification has now created
-       * or refreshed the GEO-SHUA security session.
+       * or refreshed the DANIJACE PROMOTIONS security session.
        *
        * AppLockProvider will then clear its client-side lock.
        */
@@ -259,7 +259,7 @@ export default function AppLockScreen({
       "
       role="dialog"
       aria-modal="true"
-      aria-labelledby="geoshua-app-lock-title"
+      aria-labelledby="danijace-app-lock-title"
     >
       {/* ======================================================
           BACKGROUND
@@ -287,11 +287,11 @@ export default function AppLockScreen({
             </div>
 
             <p className="mt-3 text-[9px] font-bold uppercase tracking-[0.45em] text-sky-300/80">
-              GEO-SHUA
+              DANIJACE PROMOTIONS
             </p>
 
             <h1
-              id="geoshua-app-lock-title"
+              id="danijace-app-lock-title"
               className="mt-1.5 text-xl font-semibold"
             >
               App locked
@@ -357,7 +357,7 @@ export default function AppLockScreen({
                 maxLength={6}
                 disabled={checking}
                 placeholder="Enter PIN"
-                aria-label="GEO-SHUA security PIN"
+                aria-label="DANIJACE PROMOTIONS security PIN"
                 className="
                   h-12
                   w-full
@@ -453,7 +453,7 @@ export default function AppLockScreen({
             </div>
           ) : (
             <p className="mt-3 text-center text-[9px] text-white/20">
-              Enter your 4–6 digit GEO-SHUA PIN.
+              Enter your 4–6 digit DANIJACE PROMOTIONS PIN.
             </p>
           )}
 
@@ -499,7 +499,7 @@ export default function AppLockScreen({
               </>
             ) : (
               <>
-                Unlock GEO-SHUA
+                Unlock DANIJACE PROMOTIONS
                 <ArrowRight className="h-4 w-4" />
               </>
             )}
@@ -511,7 +511,7 @@ export default function AppLockScreen({
 
           <div className="mt-5 flex items-center justify-center gap-1.5 text-[8px] font-semibold uppercase tracking-[0.25em] text-white/15">
             <ShieldCheck className="h-3 w-3" />
-            GEO-SHUA protected
+            DANIJACE PROMOTIONS protected
           </div>
         </section>
       </div>

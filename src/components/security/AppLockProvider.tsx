@@ -71,9 +71,9 @@ const DEFAULT_FOREGROUND_TIMEOUT_MS =
 ============================================================ */
 
 const PREF_KEYS = {
-  foregroundTimeoutMs: "geoshua.app_lock_timeout_ms",
-  lastActivity: "geoshua.app_lock_last_activity",
-  backgroundedAt: "geoshua.app_lock_backgrounded_at",
+  foregroundTimeoutMs: "danijace.app_lock_timeout_ms",
+  lastActivity: "danijace.app_lock_last_activity",
+  backgroundedAt: "danijace.app_lock_backgrounded_at",
 };
 
 /* ============================================================
@@ -119,7 +119,7 @@ function isNativeDeviceSecurityUnavailable(
    * These mean Android cannot provide a usable native
    * authentication mechanism.
    *
-   * Only in these cases do we expose the GEO-SHUA PIN.
+   * Only in these cases do we expose the DANIJACE PROMOTIONS PIN.
    */
   return [
     "NO_HARDWARE",
@@ -141,7 +141,7 @@ async function authenticateWithNativeSecurity(): Promise<DeviceSecurityResult> {
    * On web/desktop the custom native plugin does not exist.
    *
    * The exception is deliberately converted into an unavailable
-   * result so that the normal GEO-SHUA PIN fallback is used.
+   * result so that the normal DANIJACE PROMOTIONS PIN fallback is used.
    */
   try {
     const result = await DeviceSecurity.authenticate();
@@ -188,7 +188,7 @@ export function AppLockProvider({
 
   /*
    * Whether the native authentication mechanism is unavailable
-   * and therefore the GEO-SHUA PIN should be shown.
+   * and therefore the DANIJACE PROMOTIONS PIN should be shown.
    */
   const [showPinFallback, setShowPinFallback] =
     useState(false);
@@ -350,7 +350,7 @@ export function AppLockProvider({
      * failed face verification, timeout, or lockout does NOT
      * mean native security is unavailable.
      *
-     * Therefore we do NOT fall back to the weaker GEO-SHUA PIN
+     * Therefore we do NOT fall back to the weaker DANIJACE PROMOTIONS PIN
      * in those cases.
      */
     if (!isNativeDeviceSecurityUnavailable(result)) {
@@ -371,12 +371,12 @@ export function AppLockProvider({
     /*
      * No usable native device security exists.
      *
-     * Only now is the GEO-SHUA PIN allowed.
+     * Only now is the DANIJACE PROMOTIONS PIN allowed.
      */
     setShowPinFallback(true);
 
     setAuthMessage(
-      "Android device security is unavailable. Use your GEO-SHUA PIN.",
+      "Android device security is unavailable. Use your DANIJACE PROMOTIONS PIN.",
     );
   }, [completeUnlock, locked]);
 
@@ -879,7 +879,7 @@ export function AppLockProvider({
   ]);
 
   /* ==========================================================
-     GEO-SHUA PIN FALLBACK
+     DANIJACE PROMOTIONS PIN FALLBACK
   ========================================================== */
 
   const verifyPin = useCallback(
@@ -894,7 +894,7 @@ export function AppLockProvider({
 
       if (!/^\d{4,6}$/.test(cleanPin)) {
         setPinError(
-          "Enter your 4–6 digit GEO-SHUA PIN.",
+          "Enter your 4–6 digit DANIJACE PROMOTIONS PIN.",
         );
 
         return;
@@ -928,7 +928,7 @@ export function AppLockProvider({
         if (!response.ok || !data?.success) {
           throw new Error(
             data?.message ||
-              "Incorrect GEO-SHUA PIN.",
+              "Incorrect DANIJACE PROMOTIONS PIN.",
           );
         }
 
@@ -1000,7 +1000,7 @@ export function AppLockProvider({
           <div className="h-9 w-9 rounded-full border-2 border-slate-200 border-t-[#1683ff] animate-spin" />
 
           <p className="text-sm text-slate-500">
-            Securing GEO-SHUA…
+            Securing DANIJACE PROMOTIONS…
           </p>
         </div>
       </div>
@@ -1052,7 +1052,7 @@ export function AppLockProvider({
                 </div>
 
                 <h1 className="text-2xl font-bold tracking-tight">
-                  GEO-SHUA Locked
+                  DANIJACE PROMOTIONS Locked
                 </h1>
 
                 <p className="mt-2 max-w-xs text-sm leading-6 text-slate-500">
@@ -1084,7 +1084,7 @@ export function AppLockProvider({
               )}
 
               {/* ------------------------------------------------
-                 GEO-SHUA PIN FALLBACK
+                 DANIJACE PROMOTIONS PIN FALLBACK
               ------------------------------------------------ */}
 
               {showPinFallback && (
@@ -1098,7 +1098,7 @@ export function AppLockProvider({
                     </p>
 
                     <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Use your GEO-SHUA security PIN
+                      Use your DANIJACE PROMOTIONS security PIN
                       to continue.
                     </p>
 
@@ -1140,7 +1140,7 @@ export function AppLockProvider({
                     >
                       {pinLoading
                         ? "Verifying…"
-                        : "Unlock GEO-SHUA"}
+                        : "Unlock DANIJACE PROMOTIONS"}
                     </button>
                   </div>
                 </form>

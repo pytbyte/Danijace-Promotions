@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "GEO-SHUA Company",
-    short_name: "GEO-SHUA",
-    description: "GEO-SHUA SACCO Management System",
+    name: "DANIJACE PROMOTIONS Company",
+    short_name: "DANIJACE PROMOTIONS",
+    description: "DANIJACE PROMOTIONS SACCO Management System",
     start_url: "/dashboard",
     display: "standalone",
     background_color: "#050505",

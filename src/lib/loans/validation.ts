@@ -1,5 +1,5 @@
 /**
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * Loan Validation
  *
  * Input validation only.

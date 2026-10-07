@@ -462,7 +462,7 @@ const filteredMembers = useMemo(() => {
                     <div className="h-1.5 w-1.5 rounded-full bg-sky-500" />
 
                     <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-600">
-                      GEO-SHUA
+                      DANIJACE PROMOTIONS
                     </p>
                   </div>
 
@@ -656,7 +656,7 @@ const filteredMembers = useMemo(() => {
                     </p>
 
                     <p className="mt-1 text-xs text-black/50">
-                      Add your first GEO-SHUA member
+                      Add your first DANIJACE PROMOTIONS member
                       to get started.
                     </p>
 

@@ -17,8 +17,8 @@ type ReverseRequestBody = {
   reason?: unknown;
 };
 
-const SACCO_ID = "geoshua";
-const SACCO_NAME = "GEO-SHUA";
+const SACCO_ID = "danijace";
+const SACCO_NAME = "DANIJACE PROMOTIONS";
 
 export async function POST(
   request: Request,

@@ -39,9 +39,9 @@ export async function sendPinRecoveryEmail({
         from,
         to: [email],
         subject:
-          "GEO-SHUA PIN recovery code",
+          "DANIJACE PROMOTIONS PIN recovery code",
         text: [
-          "GEO-SHUA Security",
+          "DANIJACE PROMOTIONS Security",
           "",
           `Your PIN recovery code is: ${code}`,
           "",
@@ -52,9 +52,9 @@ export async function sendPinRecoveryEmail({
         ].join("\n"),
         html: `
           <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto">
-            <h2>GEO-SHUA Security</h2>
+            <h2>DANIJACE PROMOTIONS Security</h2>
 
-            <p>You requested to reset your GEO-SHUA security PIN.</p>
+            <p>You requested to reset your DANIJACE PROMOTIONS security PIN.</p>
 
             <p>Your recovery code is:</p>
 
@@ -80,7 +80,7 @@ export async function sendPinRecoveryEmail({
               this email.
             </p>
 
-            <p>GEO-SHUA</p>
+            <p>DANIJACE PROMOTIONS</p>
           </div>
         `,
       }),

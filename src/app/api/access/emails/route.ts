@@ -12,7 +12,7 @@ import clientPromise from "@/lib/mongodb";
 
 const DB_NAME =
   process.env.MONGODB_DB ||
-  "geo-shua";
+  "danijace-promotions";
 
 const COLLECTION_NAME =
   "authorizedEmails";
@@ -253,7 +253,7 @@ async function requireAuthorizedUser(): Promise<
     return {
       authorized: false,
       response: errorResponse(
-        "You are not authorized to access GEO-SHUA.",
+        "You are not authorized to access DANIJACE PROMOTIONS.",
         403,
       ),
     };

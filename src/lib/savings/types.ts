@@ -174,7 +174,7 @@ export interface SavingsAccount {
   /**
    * Savings account type.
    *
-   * GEO-SHUA currently uses fixed savings accounts.
+   * DANIJACE PROMOTIONS currently uses fixed savings accounts.
    */
   accountType: SavingsAccountType;
 

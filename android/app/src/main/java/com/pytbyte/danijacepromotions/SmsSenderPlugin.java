@@ -1,4 +1,4 @@
-package com.pytbyte.geoshua;
+package com.pytbyte.danijacepromotions;
 
 import android.Manifest;
 import android.content.Context;
@@ -273,7 +273,7 @@ public class SmsSenderPlugin extends Plugin {
              * not delivered reliably to a dynamically
              * registered receiver.
              *
-             * Waiting for that callback caused GEO-SHUA to
+             * Waiting for that callback caused DANIJACE PROMOTIONS to
              * report:
              *
              *     "SMS send timed out"

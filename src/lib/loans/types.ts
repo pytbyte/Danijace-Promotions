@@ -1,5 +1,5 @@
 /**
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * Loan Domain Types
  *
  * =========================================================
@@ -1160,7 +1160,7 @@ export interface LoanRepayment {
    * This is NOT:
    *
    * - the Android SMS receipt timestamp
-   * - the GEO-SHUA repayment createdAt timestamp
+   * - the DANIJACE PROMOTIONS repayment createdAt timestamp
    *
    * It is used for historical loan resolution and replay
    * protection.

@@ -21,7 +21,7 @@ import {
    CONFIG
 ========================================================= */
 
-const DB_NAME = "geo-shua";
+const DB_NAME = "danijace-promotions";
 const COLLECTION_NAME = "smsOutbox";
 
 const DEFAULT_PRIORITY = 20;

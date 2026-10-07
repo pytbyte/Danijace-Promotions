@@ -30,7 +30,7 @@ require_dir() {
 
 echo
 echo "========================================================="
-echo " GEO-SHUA LOAN ARCHITECTURE VERIFICATION"
+echo " DANIJACE PROMOTIONS LOAN ARCHITECTURE VERIFICATION"
 echo "========================================================="
 echo
 

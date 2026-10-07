@@ -17,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Geo-Shua",
-  description: "Geo-Shua Company",
+  title: "Danijace Promotions",
+  description: "Danijace Promotions Company",
 };
 
 export default function RootLayout({

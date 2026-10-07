@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 
 const FRESH_LAUNCH_KEY =
-  "geoshua_native_session_initialized";
+  "danijace_native_session_initialized";
 
 export default function CapacitorAuthListener() {
   const router = useRouter();
@@ -31,7 +31,7 @@ export default function CapacitorAuthListener() {
        *
        * sessionStorage belongs to the current WebView session.
        *
-       * When GEO-SHUA is running normally, this flag prevents
+       * When DANIJACE PROMOTIONS is running normally, this flag prevents
        * repeated sign-outs during navigation or component
        * re-renders.
        *
@@ -89,7 +89,7 @@ export default function CapacitorAuthListener() {
       if (freshLaunch) {
         try {
           console.log(
-            "[CapacitorAuthListener] Fresh GEO-SHUA launch detected. Clearing authentication session.",
+            "[CapacitorAuthListener] Fresh DANIJACE PROMOTIONS launch detected. Clearing authentication session.",
           );
 
           await signOut({
@@ -126,7 +126,7 @@ export default function CapacitorAuthListener() {
        *
        * Once the app has already initialized, receiving:
        *
-       * geoshua://auth...
+       * danijace://auth...
        *
        * takes the authenticated user to the dashboard.
        */
@@ -141,7 +141,7 @@ export default function CapacitorAuthListener() {
 
             if (
               !url.startsWith(
-                "geoshua://auth",
+                "danijace://auth",
               )
             ) {
               return;

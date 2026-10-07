@@ -1,4 +1,4 @@
-package com.pytbyte.geoshua;
+package com.pytbyte.danijacepromotions;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -31,11 +31,11 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * =========================================================
- * GEO-SHUA FCM TOKEN REGISTRAR
+ * DANIJACE PROMOTIONS FCM TOKEN REGISTRAR
  * =========================================================
  *
  * Registers this Android installation and its Firebase Cloud
- * Messaging token with the GEO-SHUA backend.
+ * Messaging token with the DANIJACE PROMOTIONS backend.
  *
  * The registered device/token is used by the backend to wake
  * the Android SMS outbox worker when new outgoing SMS messages
@@ -92,10 +92,10 @@ public final class FcmTokenRegistrar {
     ===================================================== */
 
     private static final String DEVICE_REGISTRATION_URL =
-            "https://geo-shua.vercel.app/api/sms/outbox/device";
+            "https://danijace-promotions.vercel.app/api/sms/outbox/device";
 
     private static final String WORKER_TOKEN_HEADER =
-            "x-geoshua-sms-worker";
+            "x-danijace-sms-worker";
 
     /* =====================================================
        HTTP
@@ -123,7 +123,7 @@ public final class FcmTokenRegistrar {
      * that could become inconsistent with MongoDB.
      */
     private static final String PREFS_NAME =
-            "geoshua_fcm_registration";
+            "danijace_fcm_registration";
 
     private static final String TOKEN_KEY =
             "fcm_token";
@@ -133,7 +133,7 @@ public final class FcmTokenRegistrar {
     ===================================================== */
 
     private static final String REGISTRATION_WORK_NAME =
-            "geoshua_fcm_device_registration";
+            "danijace_fcm_device_registration";
 
     /* =====================================================
        EXECUTOR
@@ -210,7 +210,7 @@ public final class FcmTokenRegistrar {
      *
      * Called from:
      *
-     *     GeoShuaFirebaseMessagingService.onNewToken()
+     *     DanijaceFirebaseMessagingService.onNewToken()
      *
      * and internally after Firebase returns the current
      * token.
@@ -553,7 +553,7 @@ public final class FcmTokenRegistrar {
      * Firebase owns token generation and refresh.
      *
      * Once obtained, registerToken() persists and registers
-     * the token with the GEO-SHUA backend.
+     * the token with the DANIJACE PROMOTIONS backend.
      */
     private static void requestCurrentFirebaseToken(
             Context context
@@ -782,7 +782,7 @@ public final class FcmTokenRegistrar {
              */
             connection.setRequestProperty(
                     WORKER_TOKEN_HEADER,
-                    BuildConfig.GEO_SHUA_SMS_WORKER_TOKEN
+                    BuildConfig.DANIJACE_SMS_WORKER_TOKEN
             );
 
             byte[] payload =
@@ -959,7 +959,7 @@ public final class FcmTokenRegistrar {
      * This worker does NOT send SMS.
      *
      * It only ensures that the Android installation's current
-     * FCM token is registered with GEO-SHUA.
+     * FCM token is registered with DANIJACE PROMOTIONS.
      *
      * IMPORTANT:
      *

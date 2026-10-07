@@ -1,4 +1,4 @@
-package com.pytbyte.geoshua;
+package com.pytbyte.danijacepromotions;
 
 import android.Manifest;
 import android.content.Context;
@@ -46,7 +46,7 @@ public class SmsOutboxWorker extends Worker {
      */
 
     private static final String API_BASE_URL =
-            "https://geo-shua.vercel.app";
+            "https://danijace-promotions.vercel.app";
 
     private static final String CLAIM_URL =
             API_BASE_URL + "/api/sms/outbox/claim";
@@ -63,7 +63,7 @@ public class SmsOutboxWorker extends Worker {
             30_000;
 
     private static final String PREFS_NAME =
-            "geoshua_sms_worker";
+            "danijace_sms_worker";
 
     private static final String DEVICE_ID_KEY =
             "device_id";
@@ -73,10 +73,10 @@ public class SmsOutboxWorker extends Worker {
      */
 
     private static final String IMMEDIATE_WORK_NAME =
-            "geoshua_sms_outbox_now";
+            "danijace_sms_outbox_now";
 
     private static final String PERIODIC_WORK_NAME =
-            "geoshua_sms_outbox";
+            "danijace_sms_outbox";
 
     /*
      * =========================================================
@@ -402,7 +402,7 @@ public class SmsOutboxWorker extends Worker {
      * FCM WAKE
      * =========================================================
      *
-     * Called by GeoShuaFirebaseMessagingService when the
+     * Called by DanijaceFirebaseMessagingService when the
      * backend sends:
      *
      *     event=sms_outbox
@@ -1081,8 +1081,8 @@ public class SmsOutboxWorker extends Worker {
              */
 
             connection.setRequestProperty(
-                    "x-geoshua-sms-worker",
-                    BuildConfig.GEO_SHUA_SMS_WORKER_TOKEN
+                    "x-danijace-sms-worker",
+                    BuildConfig.DANIJACE_SMS_WORKER_TOKEN
             );
 
             byte[] payload =

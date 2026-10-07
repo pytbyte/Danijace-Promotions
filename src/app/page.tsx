@@ -312,7 +312,7 @@ export default function Home() {
 
             <img
               src="/logo.png"
-              alt="GEO-SHUA Company"
+              alt="DANIJACE PROMOTIONS Company"
               className="
                 relative
                 h-auto
@@ -449,7 +449,7 @@ export default function Home() {
           ================================================= */}
 
           <p className="mt-12 text-[11px] uppercase tracking-[0.25em] text-black/25">
-            GEO-SHUA COMPANY
+            DANIJACE PROMOTIONS COMPANY
           </p>
         </div>
       </div>

@@ -2,7 +2,7 @@ import type { ObjectId } from "mongodb";
 
 import clientPromise from "@/lib/mongodb/index";
 
-const DB_NAME = "geo-shua";
+const DB_NAME = "danijace-promotions";
 const COLLECTION_NAME = "smsOutboxDevices";
 
 export type SmsDevicePlatform = "android";

@@ -29,7 +29,7 @@ import type { SavingsTransaction } from "@/lib/savings/types";
    CONSTANTS
 ========================================================= */
 
-const COMPANY_NAME = "GEO-SHUA COMPANY";
+const COMPANY_NAME = "DANIJACE PROMOTIONS COMPANY";
 const COMPANY_SUBTITLE = "Member Financial Services";
 
 const TRANSACTIONS_ENDPOINT =
@@ -344,7 +344,7 @@ function normalizeDate(
 
     /*
      * Calendar dates are authoritative
-     * business dates in GEO-SHUA.
+     * business dates in DANIJACE PROMOTIONS.
      *
      * Preserve YYYY-MM-DD exactly instead
      * of converting it through local time.
@@ -2295,7 +2295,7 @@ async function savePdfOnAndroid(
     title: fileName,
 
     text:
-      "GEO-SHUA account statement",
+      "DANIJACE PROMOTIONS account statement",
 
     url: uri,
 
@@ -4142,7 +4142,7 @@ function MemberAccountStatement({
           >
             This statement is computer-generated and does not
             require a signature. It reflects confirmed entries
-            recorded in the GEO-SHUA savings ledger at the time
+            recorded in the DANIJACE PROMOTIONS savings ledger at the time
             of generation. Pending transactions are excluded from
             the account balance, while reversed transactions remain
             visible for audit and reconciliation purposes.

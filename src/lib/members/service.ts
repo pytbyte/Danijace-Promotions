@@ -18,7 +18,7 @@ import {
 ========================================================= */
 
 const DB_NAME =
-  process.env.MONGODB_DB || "geo-shua";
+  process.env.MONGODB_DB || "danijace-promotions";
 
 const MEMBERS_COLLECTION = "members";
 
@@ -1653,7 +1653,7 @@ export async function deleteMember(
   const db =
     client.db(
       process.env.MONGODB_DB ||
-        "geo-shua",
+        "danijace-promotions",
     );
 
   const session =

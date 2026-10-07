@@ -4,7 +4,7 @@ import { ObjectId } from "mongodb";
 import clientPromise from "@/lib/mongodb";
 
 /* =========================================================
-   GEO-SHUA OVERPAID API
+   DANIJACE PROMOTIONS OVERPAID API
 
    Purpose:
    Persist money received above the remaining CORE loan
@@ -30,7 +30,7 @@ export const runtime = "nodejs";
 
 const DB_NAME =
   process.env.MONGODB_DB ||
-  "geo-shua";
+  "danijace-promotions";
 
 const COLLECTION_NAME =
   "overpaid";
@@ -305,7 +305,7 @@ function authorizeRequest(
 
   const suppliedSecret =
     request.headers.get(
-      "x-geoshua-overpaid-secret",
+      "x-danijace-overpaid-secret",
     );
 
   if (
@@ -342,7 +342,7 @@ export async function POST(
           "OVERPAID_API_SECRET is not configured."
       ) {
         console.error(
-          "[GEO-SHUA OVERPAID] Server secret is not configured.",
+          "[DANIJACE PROMOTIONS OVERPAID] Server secret is not configured.",
         );
 
         return NextResponse.json(
@@ -971,7 +971,7 @@ export async function POST(
     ===================================================== */
 
     console.log(
-      "[GEO-SHUA OVERPAID] Overpaid amount recorded.",
+      "[DANIJACE PROMOTIONS OVERPAID] Overpaid amount recorded.",
       {
         overpaidId:
           document._id.toString(),
@@ -1048,7 +1048,7 @@ export async function POST(
     );
   } catch (error) {
     console.error(
-      "[GEO-SHUA OVERPAID] Unexpected endpoint error.",
+      "[DANIJACE PROMOTIONS OVERPAID] Unexpected endpoint error.",
       error,
     );
 

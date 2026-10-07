@@ -1,4 +1,4 @@
-package com.pytbyte.geoshua;
+package com.pytbyte.danijacepromotions;
 
 import android.app.Activity;
 import android.os.Build;
@@ -29,7 +29,7 @@ import java.security.cert.Certificate;
 import java.util.concurrent.Executor;
 
 /**
- * GEO-SHUA Android Device Security Plugin
+ * DANIJACE PROMOTIONS Android Device Security Plugin
  *
  * Provides:
  *
@@ -68,7 +68,7 @@ public class DeviceSecurityPlugin extends Plugin {
      * Versioned recovery-key alias.
      */
     private static final String RECOVERY_KEY_ALIAS =
-            "geoshua_device_recovery_key_v2";
+            "danijace_device_recovery_key_v2";
 
     /**
      * Signature algorithm used by both Android and the server.
@@ -114,7 +114,7 @@ public class DeviceSecurityPlugin extends Plugin {
         if (!(activity instanceof FragmentActivity)) {
 
             call.reject(
-                    "GEO-SHUA Android activity does not support device security."
+                    "DANIJACE PROMOTIONS Android activity does not support device security."
             );
 
             return;
@@ -162,7 +162,7 @@ public class DeviceSecurityPlugin extends Plugin {
         } catch (Exception error) {
 
             call.reject(
-                    "GEO-SHUA Android device-security availability check failed: "
+                    "DANIJACE PROMOTIONS Android device-security availability check failed: "
                             + safeErrorMessage(error)
             );
         }
@@ -191,7 +191,7 @@ public class DeviceSecurityPlugin extends Plugin {
         if (!(activity instanceof FragmentActivity)) {
 
             call.reject(
-                    "GEO-SHUA Android activity does not support device security."
+                    "DANIJACE PROMOTIONS Android activity does not support device security."
             );
 
             return;
@@ -212,7 +212,7 @@ public class DeviceSecurityPlugin extends Plugin {
                         if (fragmentActivity.isFinishing()) {
 
                             call.reject(
-                                    "GEO-SHUA Android activity is finishing."
+                                    "DANIJACE PROMOTIONS Android activity is finishing."
                             );
 
                             return;
@@ -223,7 +223,7 @@ public class DeviceSecurityPlugin extends Plugin {
                                 && fragmentActivity.isDestroyed()) {
 
                             call.reject(
-                                    "GEO-SHUA Android activity has been destroyed."
+                                    "DANIJACE PROMOTIONS Android activity has been destroyed."
                             );
 
                             return;
@@ -394,7 +394,7 @@ public class DeviceSecurityPlugin extends Plugin {
                     } catch (Exception error) {
 
                         call.reject(
-                                "Unable to start GEO-SHUA Android device authentication: "
+                                "Unable to start DANIJACE PROMOTIONS Android device authentication: "
                                         + error.getClass().getName()
                                         + ": "
                                         + safeErrorMessage(error)
@@ -442,7 +442,7 @@ public class DeviceSecurityPlugin extends Plugin {
                 if (publicKey == null) {
 
                     call.reject(
-                            "GEO-SHUA recovery key alias exists, "
+                            "DANIJACE PROMOTIONS recovery key alias exists, "
                                     + "but its public certificate could not be read. "
                                     + "Alias="
                                     + RECOVERY_KEY_ALIAS
@@ -483,7 +483,7 @@ public class DeviceSecurityPlugin extends Plugin {
 
                 response.put(
                         "message",
-                        "GEO-SHUA Android recovery key already exists."
+                        "DANIJACE PROMOTIONS Android recovery key already exists."
                 );
 
                 call.resolve(
@@ -561,7 +561,7 @@ public class DeviceSecurityPlugin extends Plugin {
             if (publicKey == null) {
 
                 call.reject(
-                        "GEO-SHUA Android recovery key was generated, "
+                        "DANIJACE PROMOTIONS Android recovery key was generated, "
                                 + "but its public key could not be retrieved. "
                                 + "Alias="
                                 + RECOVERY_KEY_ALIAS
@@ -602,7 +602,7 @@ public class DeviceSecurityPlugin extends Plugin {
 
             response.put(
                     "message",
-                    "GEO-SHUA Android recovery key created successfully."
+                    "DANIJACE PROMOTIONS Android recovery key created successfully."
             );
 
             call.resolve(
@@ -612,7 +612,7 @@ public class DeviceSecurityPlugin extends Plugin {
         } catch (Exception error) {
 
             call.reject(
-                    "Unable to create GEO-SHUA Android recovery key: "
+                    "Unable to create DANIJACE PROMOTIONS Android recovery key: "
                             + error.getClass().getName()
                             + ": "
                             + safeErrorMessage(error)
@@ -661,8 +661,8 @@ public class DeviceSecurityPlugin extends Plugin {
             response.put(
                     "message",
                     exists
-                            ? "GEO-SHUA Android recovery key exists."
-                            : "GEO-SHUA Android recovery key does not exist."
+                            ? "DANIJACE PROMOTIONS Android recovery key exists."
+                            : "DANIJACE PROMOTIONS Android recovery key does not exist."
             );
 
             call.resolve(
@@ -672,7 +672,7 @@ public class DeviceSecurityPlugin extends Plugin {
         } catch (Exception error) {
 
             call.reject(
-                    "Unable to check GEO-SHUA Android recovery key: "
+                    "Unable to check DANIJACE PROMOTIONS Android recovery key: "
                             + error.getClass().getName()
                             + ": "
                             + safeErrorMessage(error)
@@ -703,7 +703,7 @@ public class DeviceSecurityPlugin extends Plugin {
             if (!aliasExists) {
 
                 call.reject(
-                        "GEO-SHUA Android recovery public key unavailable: "
+                        "DANIJACE PROMOTIONS Android recovery public key unavailable: "
                                 + "Keystore alias does not exist. "
                                 + "Alias="
                                 + RECOVERY_KEY_ALIAS
@@ -720,7 +720,7 @@ public class DeviceSecurityPlugin extends Plugin {
             if (certificate == null) {
 
                 call.reject(
-                        "GEO-SHUA Android recovery public key unavailable: "
+                        "DANIJACE PROMOTIONS Android recovery public key unavailable: "
                                 + "Keystore certificate is null. "
                                 + "Alias="
                                 + RECOVERY_KEY_ALIAS
@@ -735,7 +735,7 @@ public class DeviceSecurityPlugin extends Plugin {
             if (publicKey == null) {
 
                 call.reject(
-                        "GEO-SHUA Android recovery public key unavailable: "
+                        "DANIJACE PROMOTIONS Android recovery public key unavailable: "
                                 + "Certificate returned a null public key. "
                                 + "Alias="
                                 + RECOVERY_KEY_ALIAS
@@ -752,7 +752,7 @@ public class DeviceSecurityPlugin extends Plugin {
             )) {
 
                 call.reject(
-                        "GEO-SHUA Android recovery public key unavailable: "
+                        "DANIJACE PROMOTIONS Android recovery public key unavailable: "
                                 + "Unexpected key algorithm="
                                 + keyAlgorithm
                                 + ". Expected EC."
@@ -768,7 +768,7 @@ public class DeviceSecurityPlugin extends Plugin {
                     encodedPublicKey.length == 0) {
 
                 call.reject(
-                        "GEO-SHUA Android recovery public key unavailable: "
+                        "DANIJACE PROMOTIONS Android recovery public key unavailable: "
                                 + "Public key DER encoding is empty."
                 );
 
@@ -783,7 +783,7 @@ public class DeviceSecurityPlugin extends Plugin {
             if (base64PublicKey.isEmpty()) {
 
                 call.reject(
-                        "GEO-SHUA Android recovery public key unavailable: "
+                        "DANIJACE PROMOTIONS Android recovery public key unavailable: "
                                 + "Base64 encoding returned an empty value."
                 );
 
@@ -820,7 +820,7 @@ public class DeviceSecurityPlugin extends Plugin {
 
             response.put(
                     "message",
-                    "GEO-SHUA Android recovery public key retrieved successfully."
+                    "DANIJACE PROMOTIONS Android recovery public key retrieved successfully."
             );
 
             call.resolve(
@@ -830,7 +830,7 @@ public class DeviceSecurityPlugin extends Plugin {
         } catch (Exception error) {
 
             call.reject(
-                    "GEO-SHUA Android recovery public key read failed: "
+                    "DANIJACE PROMOTIONS Android recovery public key read failed: "
                             + error.getClass().getName()
                             + ": "
                             + safeErrorMessage(error)
@@ -872,7 +872,7 @@ public class DeviceSecurityPlugin extends Plugin {
         if (!(activity instanceof FragmentActivity)) {
 
             call.reject(
-                    "GEO-SHUA Android activity does not support cryptographic authentication."
+                    "DANIJACE PROMOTIONS Android activity does not support cryptographic authentication."
             );
 
             return;
@@ -895,7 +895,7 @@ public class DeviceSecurityPlugin extends Plugin {
                             resolveFailure(
                                     call,
                                     "ACTIVITY_FINISHING",
-                                    "GEO-SHUA Android activity is finishing."
+                                    "DANIJACE PROMOTIONS Android activity is finishing."
                             );
 
                             return;
@@ -908,7 +908,7 @@ public class DeviceSecurityPlugin extends Plugin {
                             resolveFailure(
                                     call,
                                     "ACTIVITY_DESTROYED",
-                                    "GEO-SHUA Android activity has been destroyed."
+                                    "DANIJACE PROMOTIONS Android activity has been destroyed."
                             );
 
                             return;
@@ -924,7 +924,7 @@ public class DeviceSecurityPlugin extends Plugin {
                             resolveFailure(
                                     call,
                                     "RECOVERY_KEY_NOT_FOUND",
-                                    "GEO-SHUA Android recovery key does not exist. Alias="
+                                    "DANIJACE PROMOTIONS Android recovery key does not exist. Alias="
                                             + RECOVERY_KEY_ALIAS
                             );
 
@@ -941,7 +941,7 @@ public class DeviceSecurityPlugin extends Plugin {
                             resolveFailure(
                                     call,
                                     "PRIVATE_KEY_UNAVAILABLE",
-                                    "Unable to access GEO-SHUA Android recovery private key."
+                                    "Unable to access DANIJACE PROMOTIONS Android recovery private key."
                             );
 
                             return;
@@ -1211,7 +1211,7 @@ public class DeviceSecurityPlugin extends Plugin {
                         resolveFailure(
                                 call,
                                 "CRYPTO_AUTHENTICATION_UNAVAILABLE",
-                                "Unable to start GEO-SHUA Android cryptographic authentication: "
+                                "Unable to start DANIJACE PROMOTIONS Android cryptographic authentication: "
                                         + error.getClass().getName()
                                         + ": "
                                         + safeErrorMessage(error)
@@ -1279,7 +1279,7 @@ public class DeviceSecurityPlugin extends Plugin {
         if (!(activity instanceof FragmentActivity)) {
 
             call.reject(
-                    "GEO-SHUA Android activity does not support device credential authentication."
+                    "DANIJACE PROMOTIONS Android activity does not support device credential authentication."
             );
 
             return;
@@ -1311,7 +1311,7 @@ public class DeviceSecurityPlugin extends Plugin {
                             resolveFailure(
                                     call,
                                     "ACTIVITY_FINISHING",
-                                    "GEO-SHUA Android activity is finishing."
+                                    "DANIJACE PROMOTIONS Android activity is finishing."
                             );
 
                             return;
@@ -1324,7 +1324,7 @@ public class DeviceSecurityPlugin extends Plugin {
                             resolveFailure(
                                     call,
                                     "ACTIVITY_DESTROYED",
-                                    "GEO-SHUA Android activity has been destroyed."
+                                    "DANIJACE PROMOTIONS Android activity has been destroyed."
                             );
 
                             return;
@@ -1375,7 +1375,7 @@ public class DeviceSecurityPlugin extends Plugin {
                             resolveFailure(
                                     call,
                                     "RECOVERY_KEY_NOT_FOUND",
-                                    "GEO-SHUA Android recovery key does not exist. Alias="
+                                    "DANIJACE PROMOTIONS Android recovery key does not exist. Alias="
                                             + RECOVERY_KEY_ALIAS
                             );
 
@@ -1428,7 +1428,7 @@ public class DeviceSecurityPlugin extends Plugin {
                                                 resolveFailure(
                                                         call,
                                                         "PRIVATE_KEY_UNAVAILABLE",
-                                                        "Android device authentication succeeded, but the GEO-SHUA recovery private key is unavailable."
+                                                        "Android device authentication succeeded, but the DANIJACE PROMOTIONS recovery private key is unavailable."
                                                 );
 
                                                 return;
@@ -1664,7 +1664,7 @@ public class DeviceSecurityPlugin extends Plugin {
                         resolveFailure(
                                 call,
                                 "DEVICE_CREDENTIAL_AUTHENTICATION_UNAVAILABLE",
-                                "Unable to start GEO-SHUA Android device-credential recovery: "
+                                "Unable to start DANIJACE PROMOTIONS Android device-credential recovery: "
                                         + error.getClass().getName()
                                         + ": "
                                         + safeErrorMessage(error)

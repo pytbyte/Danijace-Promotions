@@ -3,7 +3,7 @@
 // ============================================================
 
 /**
- * GEO-SHUA APP LOCK
+ * DANIJACE PROMOTIONS APP LOCK
  *
  * This module controls the client-side app-lock policy.
  *
@@ -23,7 +23,7 @@
 ============================================================ */
 
 export const APP_LOCK_STORAGE_KEY =
-  "geoshua_app_lock";
+  "danijace_app_lock";
 
 /* ============================================================
    DEFAULTS

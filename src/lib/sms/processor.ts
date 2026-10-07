@@ -1,6 +1,6 @@
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * INCOMING BANK TRANSACTION PROCESSOR
  * =========================================================
  *
@@ -36,7 +36,7 @@
  *   082083   → loan repayments
  *   2650821  → savings deposits
  *
- * They are NOT GEO-SHUA financial account IDs.
+ * They are NOT DANIJACE PROMOTIONS financial account IDs.
  *
  * Member identity comes from the bank SMS sender name.
  *
@@ -254,7 +254,7 @@ function daysInMonth(
 
 
 /**
- * Validate canonical GEO-SHUA financial date.
+ * Validate canonical DANIJACE PROMOTIONS financial date.
  */
 function isValidCalendarDate(
   value: unknown,
@@ -917,7 +917,7 @@ async function resolveMemberBySmsName(
     candidates.size === 0
   ) {
     throw new Error(
-      `No GEO-SHUA member could be found for bank sender "${senderName}".`,
+      `No DANIJACE PROMOTIONS member could be found for bank sender "${senderName}".`,
     );
   }
 
@@ -945,7 +945,7 @@ async function resolveMemberBySmsName(
     exactMatches.length === 0
   ) {
     throw new Error(
-      `Bank sender "${senderName}" did not exactly match a registered GEO-SHUA member.`,
+      `Bank sender "${senderName}" did not exactly match a registered DANIJACE PROMOTIONS member.`,
     );
   }
 
@@ -953,7 +953,7 @@ async function resolveMemberBySmsName(
     exactMatches.length > 1
   ) {
     throw new Error(
-      `Multiple GEO-SHUA members exactly match bank sender "${senderName}". Automatic processing is blocked.`,
+      `Multiple DANIJACE PROMOTIONS members exactly match bank sender "${senderName}". Automatic processing is blocked.`,
     );
   }
 
@@ -962,7 +962,7 @@ async function resolveMemberBySmsName(
 
   if (!member) {
     throw new Error(
-      `Unable to resolve GEO-SHUA member "${senderName}".`,
+      `Unable to resolve DANIJACE PROMOTIONS member "${senderName}".`,
     );
   }
 
@@ -1156,7 +1156,7 @@ async function resolveLoanForTransaction(
     loans.length === 0
   ) {
     throw new Error(
-      `No historical GEO-SHUA loan could be found for member "${member.name}".`,
+      `No historical DANIJACE PROMOTIONS loan could be found for member "${member.name}".`,
     );
   }
 
@@ -1628,7 +1628,7 @@ export async function processIncomingTransaction(
       "unknown"
   ) {
     throw new Error(
-      `Bank destination account "${classified.destinationAccountNumber}" is not configured as a GEO-SHUA loan or savings collection destination.`,
+      `Bank destination account "${classified.destinationAccountNumber}" is not configured as a DANIJACE PROMOTIONS loan or savings collection destination.`,
     );
   }
 

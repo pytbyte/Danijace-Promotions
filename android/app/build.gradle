@@ -1,7 +1,7 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.pytbyte.geoshua"
+    namespace = "com.pytbyte.danijacepromotions"
 
     compileSdk = rootProject.ext.compileSdkVersion
 
@@ -14,7 +14,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.pytbyte.geoshua"
+        applicationId "com.pytbyte.danijacepromotions"
 
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
@@ -39,8 +39,8 @@ android {
          */
         buildConfigField(
             "String",
-            "GEO_SHUA_SMS_WORKER_TOKEN",
-            "\"GEO_SHUA_SMS_WORKER_2026_TEST_9f7a2c81b4e6\""
+            "DANIJACE_SMS_WORKER_TOKEN",
+            "\"DANIJACE_SMS_WORKER_2026_TEST_9f7a2c81b4e6\""
         )
 
         aaptOptions {

@@ -1,6 +1,6 @@
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * ANDROID SMS DIAGNOSTIC API
  * =========================================================
  *
@@ -44,7 +44,7 @@ import clientPromise from "@/lib/mongodb";
 
 const DB_NAME =
   process.env.MONGODB_DB ||
-  "geo-shua";
+  "danijace-promotions";
 
 const COLLECTION =
   "smsDiagnostics";
@@ -413,7 +413,7 @@ export async function POST(
     );
   } catch (error) {
     console.error(
-      "[GEO-SHUA SMS DIAGNOSTIC] MongoDB write failed:",
+      "[DANIJACE PROMOTIONS SMS DIAGNOSTIC] MongoDB write failed:",
       error,
     );
 
@@ -445,7 +445,7 @@ export async function GET() {
       status: "success",
 
       service:
-        "GEO-SHUA Android SMS Diagnostic API",
+        "DANIJACE PROMOTIONS Android SMS Diagnostic API",
 
       collection:
         COLLECTION,

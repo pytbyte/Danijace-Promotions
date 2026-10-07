@@ -1,4 +1,4 @@
-package com.pytbyte.geoshua;
+package com.pytbyte.danijacepromotions;
 
 import android.Manifest;
 import android.content.Intent;
@@ -160,13 +160,13 @@ public class MainActivity extends BridgeActivity {
 
             if (granted) {
                 android.util.Log.d(
-                        "GeoShuaPermissions",
+                        "DanijacePermissions",
                         "Permission granted: " +
                                 permissions[i]
                 );
             } else {
                 android.util.Log.w(
-                        "GeoShuaPermissions",
+                        "DanijacePermissions",
                         "Permission denied: " +
                                 permissions[i]
                 );

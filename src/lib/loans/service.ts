@@ -1,5 +1,5 @@
 /**
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * Loan Domain Service
  *
  * Loan lifecycle: full CRUD.
@@ -137,7 +137,7 @@ import {
 
 const DB_NAME =
   process.env.MONGODB_DB ||
-  "geo-shua";
+  "danijace-promotions";
 
 const LOANS_COLLECTION =
   "loans";
@@ -8642,7 +8642,7 @@ export async function createLoanRepayment(
 
        - Android SMS receipt time
        - SMS queue insertion time
-       - GEO-SHUA createdAt
+       - DANIJACE PROMOTIONS createdAt
        - repayment.createdAt
 
      This timestamp is required for automatic SMS loan
@@ -9092,7 +9092,7 @@ export async function createLoanRepayment(
                Exact original bank transaction timestamp.
 
              createdAt:
-               GEO-SHUA ledger insertion timestamp.
+               DANIJACE PROMOTIONS ledger insertion timestamp.
 
              These three values have different meanings and
              must not be substituted for one another.

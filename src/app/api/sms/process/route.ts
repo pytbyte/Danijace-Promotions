@@ -1,6 +1,6 @@
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * SMS PROCESS API
  * =========================================================
  *
@@ -34,7 +34,7 @@
  *   082083  → loan
  *   2650821 → savings
  *
- * It is NOT looked up as a GEO-SHUA financial account.
+ * It is NOT looked up as a DANIJACE PROMOTIONS financial account.
  *
  * Member identity comes from the sender name in the SMS.
  *
@@ -549,7 +549,7 @@ export async function POST(
             "savings_deposit_processed",
 
           message:
-            "Bank SMS was processed as a GEO-SHUA savings deposit.",
+            "Bank SMS was processed as a DANIJACE PROMOTIONS savings deposit.",
 
           smsId,
 
@@ -600,7 +600,7 @@ export async function POST(
             "loan_repayment_processed",
 
           message:
-            "Bank SMS was processed as a GEO-SHUA loan repayment.",
+            "Bank SMS was processed as a DANIJACE PROMOTIONS loan repayment.",
 
           smsId,
 
@@ -773,19 +773,19 @@ export async function POST(
 ===================================================== */
 
 /**
- * The member is valid, but there is no GEO-SHUA loan
+ * The member is valid, but there is no DANIJACE PROMOTIONS loan
  * belonging to that member.
  *
  * This is an expected business outcome, not a server
  * failure. The bank transaction cannot be attached to a
- * GEO-SHUA loan, so it must not be retried indefinitely.
+ * DANIJACE PROMOTIONS loan, so it must not be retried indefinitely.
  *
  * No financial change has occurred.
  */
 if (
   error instanceof Error &&
   error.message.startsWith(
-    "No historical GEO-SHUA loan could be found for member ",
+    "No historical DANIJACE PROMOTIONS loan could be found for member ",
   )
 ) {
   return response(
@@ -803,7 +803,7 @@ if (
         "no_historical_loan",
 
       message:
-        "No GEO-SHUA loan could be found for this member, so the bank payment was not recorded.",
+        "No DANIJACE PROMOTIONS loan could be found for this member, so the bank payment was not recorded.",
 
       smsId,
 
@@ -937,13 +937,13 @@ if (
 
     if (
       lowerMessage.includes(
-        "no geo-shua member",
+        "no danijace-promotions member",
       ) ||
       lowerMessage.includes(
         "did not exactly match",
       ) ||
       lowerMessage.includes(
-        "multiple geo-shua members",
+        "multiple danijace-promotions members",
       ) ||
       (
         lowerMessage.includes(
@@ -1009,7 +1009,7 @@ if (
      *
      * Therefore we deliberately DO NOT check for:
      *
-     *     "no active geo-shua loan"
+     *     "no active danijace-promotions loan"
      *
      * and we do not impose a status restriction here.
      *
@@ -1064,7 +1064,7 @@ if (
     ====================================================== */
 
     console.error(
-      "[GEO-SHUA SMS PROCESS] Unexpected processor error:",
+      "[DANIJACE PROMOTIONS SMS PROCESS] Unexpected processor error:",
       error,
     );
 
@@ -1114,7 +1114,7 @@ export async function GET() {
         "success" satisfies ApiStatus,
 
       service:
-        "GEO-SHUA SMS Processing API",
+        "DANIJACE PROMOTIONS SMS Processing API",
 
       message:
         "SMS processing endpoint is available. Use POST to process an Android bank SMS.",

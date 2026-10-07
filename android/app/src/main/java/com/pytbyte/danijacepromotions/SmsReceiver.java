@@ -1,4 +1,4 @@
-package com.pytbyte.geoshua;
+package com.pytbyte.danijacepromotions;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -19,7 +19,7 @@ import java.util.Map;
 
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * ANDROID SMS RECEIVER
  * =========================================================
  *
@@ -70,7 +70,7 @@ import java.util.Map;
 public class SmsReceiver extends BroadcastReceiver {
 
     private static final String TAG =
-            "GeoShuaSmsReceiver";
+            "DanijaceSmsReceiver";
 
     /**
      * Only capture SMS messages from the last 36 hours.

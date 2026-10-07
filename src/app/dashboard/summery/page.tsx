@@ -895,7 +895,7 @@ export default function DashboardPage() {
             failures.length > 0
           ) {
             console.error(
-              "[GEO-SHUA Dashboard] Module failures:",
+              "[DANIJACE PROMOTIONS Dashboard] Module failures:",
               failures,
             );
           }
@@ -1263,7 +1263,7 @@ export default function DashboardPage() {
           }
 
           console.error(
-            "[GEO-SHUA Dashboard] Unexpected dashboard error:",
+            "[DANIJACE PROMOTIONS Dashboard] Unexpected dashboard error:",
             requestError,
           );
 
@@ -1430,7 +1430,7 @@ export default function DashboardPage() {
 
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-black/50">
                     A clean view of
-                    GEO-SHUA members,
+                    DANIJACE PROMOTIONS members,
                     savings, loans and
                     account activity.
                   </p>
@@ -1619,7 +1619,7 @@ export default function DashboardPage() {
                   </h2>
 
                   <p className="mt-1 text-xs text-black/40">
-                    Core GEO-SHUA
+                    Core DANIJACE PROMOTIONS
                     modules
                   </p>
                 </div>
@@ -1774,7 +1774,7 @@ export default function DashboardPage() {
             <div className="mt-5 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between">
 
               <p className="text-[10px] text-black/30">
-                GEO-SHUA SACCO
+                DANIJACE PROMOTIONS SACCO
                 Management
               </p>
 
@@ -2002,7 +2002,7 @@ function MobileDashboard({
             <span className="h-1.5 w-1.5 rounded-full bg-[#1683ff]" />
 
             <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#1683ff]">
-              GEO-SHUA
+              DANIJACE PROMOTIONS
             </span>
           </div>
 
@@ -2363,7 +2363,7 @@ function MobileDashboard({
       <div className="px-1 pb-3 pt-1 text-center">
 
         <p className="text-[9px] text-black/25">
-          GEO-SHUA SACCO
+          DANIJACE PROMOTIONS SACCO
           Management
         </p>
       </div>

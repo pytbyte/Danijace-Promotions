@@ -22,7 +22,7 @@ import type {
    DATABASE
 ========================================================= */
 
-const DB_NAME = "geo-shua";
+const DB_NAME = "danijace-promotions";
 const OUTBOX_COLLECTION = "smsOutbox";
 
 /* =========================================================
@@ -218,7 +218,7 @@ function toObjectId(
 ========================================================= */
 
 /**
- * Keeps GEO-SHUA calendar dates as exact YYYY-MM-DD
+ * Keeps DANIJACE PROMOTIONS calendar dates as exact YYYY-MM-DD
  * strings instead of converting them through JavaScript
  * Date objects.
  */

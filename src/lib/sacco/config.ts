@@ -1,7 +1,7 @@
 /**
  * Current application SACCO configuration.
  *
- * GEO-SHUA is currently the only SACCO supported
+ * DANIJACE PROMOTIONS is currently the only SACCO supported
  * by the application.
  *
  * The ID should remain stable because it is used
@@ -9,8 +9,8 @@
  */
 
 export const CURRENT_SACCO = {
-  id: "geoshua",
-  name: "GEO-SHUA",
+  id: "danijace",
+  name: "DANIJACE PROMOTIONS",
 } as const;
 
 export type CurrentSacco = typeof CURRENT_SACCO;

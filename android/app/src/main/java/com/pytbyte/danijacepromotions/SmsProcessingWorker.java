@@ -1,4 +1,4 @@
-package com.pytbyte.geoshua;
+package com.pytbyte.danijacepromotions;
 
 import android.content.Context;
 import android.net.ConnectivityManager;
@@ -36,7 +36,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * NATIVE INCOMING SMS PROCESSING WORKER
  * =========================================================
  *
@@ -58,7 +58,7 @@ import java.util.concurrent.TimeUnit;
  *       ↓
  *   POST /api/sms/process
  *       ↓
- *   GEO-SHUA API
+ *   DANIJACE PROMOTIONS API
  *       ↓
  *   Financial processing
  *       ↓
@@ -116,7 +116,7 @@ public final class SmsProcessingWorker
         extends Worker {
 
     private static final String TAG =
-            "GeoShuaSmsWorker";
+            "DanijaceSmsWorker";
 
     /* =====================================================
        API
@@ -128,7 +128,7 @@ public final class SmsProcessingWorker
      * This is NOT the diagnostic endpoint.
      */
     private static final String API_BASE_URL =
-            "https://geo-shua.vercel.app";
+            "https://danijace-promotions.vercel.app";
 
     private static final String PROCESS_ENDPOINT =
             API_BASE_URL + "/api/sms/process";
@@ -138,10 +138,10 @@ public final class SmsProcessingWorker
     ===================================================== */
 
     private static final String IMMEDIATE_WORK_NAME =
-            "geoshua_sms_processing_now";
+            "danijace_sms_processing_now";
 
     private static final String PERIODIC_WORK_NAME =
-            "geoshua_sms_processing_periodic";
+            "danijace_sms_processing_periodic";
 
     /* =====================================================
        TIMING

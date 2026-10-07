@@ -108,7 +108,7 @@ export interface SmsOutboxDocument {
   priority: number;
 
   /**
-   * GEO-SHUA financial calendar date.
+   * DANIJACE PROMOTIONS financial calendar date.
    *
    * YYYY-MM-DD
    */

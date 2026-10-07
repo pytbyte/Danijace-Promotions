@@ -1,4 +1,4 @@
-package com.pytbyte.geoshua;
+package com.pytbyte.danijacepromotions;
 
 import android.Manifest;
 import android.content.Context;
@@ -24,7 +24,7 @@ import java.util.List;
 
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * SMS READER
  * =========================================================
  *
@@ -75,7 +75,7 @@ import java.util.List;
  *
  * which owns:
  *
- *     geoshua_sms.db
+ *     danijace_sms.db
  *     sms_queue
  *
  * This prevents the receiver, worker and reconciliation
@@ -138,7 +138,7 @@ import java.util.List;
 public class SmsReaderPlugin extends Plugin {
 
     private static final String TAG =
-        "GeoShuaSmsReader";
+        "DanijaceSmsReader";
 
     /*
      * Android inbox provider.

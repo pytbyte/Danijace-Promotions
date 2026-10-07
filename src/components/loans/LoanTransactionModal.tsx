@@ -127,7 +127,7 @@ function formatKES(value: unknown): string {
 ========================================================= */
 
 /**
- * GEO-SHUA financial dates are CalendarDate strings:
+ * DANIJACE PROMOTIONS financial dates are CalendarDate strings:
  *
  * YYYY-MM-DD
  *
@@ -520,7 +520,7 @@ function getTransactionSortKey(
   }
 
   /*
-   * Exact GEO-SHUA CalendarDate.
+   * Exact DANIJACE PROMOTIONS CalendarDate.
    *
    * NEVER use Date.parse here.
    */

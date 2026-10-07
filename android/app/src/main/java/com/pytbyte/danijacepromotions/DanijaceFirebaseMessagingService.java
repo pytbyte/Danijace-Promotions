@@ -1,4 +1,4 @@
-package com.pytbyte.geoshua;
+package com.pytbyte.danijacepromotions;
 
 import android.content.Context;
 import android.util.Log;
@@ -9,7 +9,7 @@ import com.google.firebase.messaging.FirebaseMessagingService;
 import com.google.firebase.messaging.RemoteMessage;
 
 /**
- * Receives Firebase Cloud Messaging events for GEO-SHUA.
+ * Receives Firebase Cloud Messaging events for DANIJACE PROMOTIONS.
  *
  * IMPORTANT:
  *
@@ -26,14 +26,14 @@ import com.google.firebase.messaging.RemoteMessage;
  * The actual SMS processing is performed by
  * SmsOutboxWorker.
  */
-public class GeoShuaFirebaseMessagingService
+public class DanijaceFirebaseMessagingService
         extends FirebaseMessagingService {
 
     private static final String TAG =
-            "GeoShuaFCM";
+            "DanijaceFCM";
 
     /*
-     * Event sent by the GEO-SHUA backend when there
+     * Event sent by the DANIJACE PROMOTIONS backend when there
      * are SMS messages waiting in the outbox.
      */
     private static final String EVENT_SMS_OUTBOX =
@@ -182,7 +182,7 @@ public class GeoShuaFirebaseMessagingService
      * Firebase can rotate the FCM token.
      *
      * Whenever that happens, immediately register the
-     * new token with the GEO-SHUA backend.
+     * new token with the DANIJACE PROMOTIONS backend.
      */
 
     @Override

@@ -3,7 +3,7 @@
 set -e
 
 echo "============================================================"
-echo " GEO-SHUA ANDROID BUILD"
+echo " DANIJACE PROMOTIONS ANDROID BUILD"
 echo "============================================================"
 echo
 
@@ -30,7 +30,7 @@ echo
 echo "4. Naming APK..."
 
 SOURCE_APK="$(pwd)/app/build/outputs/apk/debug/app-debug.apk"
-FINAL_APK="$(pwd)/app/build/outputs/apk/debug/GEO-SHUA.apk"
+FINAL_APK="$(pwd)/app/build/outputs/apk/debug/DANIJACE PROMOTIONS.apk"
 
 if [ ! -f "$SOURCE_APK" ]; then
     echo

@@ -4,7 +4,7 @@ import { auth } from "@/auth";
 
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * UNIFIED CURRENT USER API
  * =========================================================
  *

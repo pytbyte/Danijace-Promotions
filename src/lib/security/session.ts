@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { Db } from "mongodb";
 
 export const SECURITY_COOKIE =
-  "geoshua_security_verified";
+  "danijace_security_verified";
 
 export const SECURITY_SESSION_COLLECTION =
   "securitySessions";

@@ -1,6 +1,6 @@
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * SAVINGS SUMMARY API
  * =========================================================
  *
@@ -62,7 +62,7 @@ import clientPromise from "@/lib/mongodb";
 
 const DB_NAME =
   process.env.MONGODB_DB ||
-  "geo-shua";
+  "danijace-promotions";
 
 const ACCOUNT_COLLECTION =
   "savingsAccounts";

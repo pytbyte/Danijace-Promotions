@@ -1,6 +1,6 @@
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * SAVINGS TRANSACTIONS API
  * =========================================================
  *
@@ -183,7 +183,7 @@ function isSavingsTransactionStatus(
  * ---------------------------------------------------------
  * There is intentionally NO saccoId filter.
  *
- * Savings currently belongs to the GEO-SHUA application
+ * Savings currently belongs to the DANIJACE PROMOTIONS application
  * and the savings domain does not contain saccoId.
  */
 export async function GET(

@@ -35,9 +35,9 @@ export function buildLoanDisbursementSms(input: {
   amount: number;
 }): string {
   return [
-    `GEO-SHUA: Dear ${cleanName(input.memberName)},`,
+    `DANIJACE PROMOTIONS: Dear ${cleanName(input.memberName)},`,
     `your loan ${input.loanNumber} of ${formatKes(input.amount)} has been approved and disbursed.`,
-    `Thank you for choosing GEO-SHUA.`,
+    `Thank you for choosing DANIJACE PROMOTIONS.`,
   ].join(" ");
 }
 
@@ -57,7 +57,7 @@ export function buildLoanPaymentReceivedSms(input: {
       : "";
 
   return [
-    `GEO-SHUA: Dear ${cleanName(input.memberName)},`,
+    `DANIJACE PROMOTIONS: Dear ${cleanName(input.memberName)},`,
     `your payment of ${formatKes(input.amount)} for loan ${input.loanNumber} has been received.`,
     balanceText,
   ].join(" ").trim();
@@ -74,7 +74,7 @@ export function buildLoanPaymentReminderSms(input: {
   dueDate: string;
 }): string {
   return [
-    `GEO-SHUA reminder: Dear ${cleanName(input.memberName)},`,
+    `DANIJACE PROMOTIONS reminder: Dear ${cleanName(input.memberName)},`,
     `your weekly installment of ${formatKes(input.installmentAmount)} for loan ${input.loanNumber} is due on ${input.dueDate}.`,
     `Please make your payment on time.`,
   ].join(" ");
@@ -89,7 +89,7 @@ export function buildLoanInstallmentClearedSms(input: {
   loanNumber: string;
 }): string {
   return [
-    `GEO-SHUA: Dear ${cleanName(input.memberName)},`,
+    `DANIJACE PROMOTIONS: Dear ${cleanName(input.memberName)},`,
     `your current installment for loan ${input.loanNumber} has been cleared.`,
     `Thank you for your payment.`,
   ].join(" ");
@@ -111,7 +111,7 @@ export function buildSavingsDepositSms(input: {
       : "";
 
   return [
-    `GEO-SHUA: Dear ${cleanName(input.memberName)},`,
+    `DANIJACE PROMOTIONS: Dear ${cleanName(input.memberName)},`,
     `your savings deposit of ${formatKes(input.amount)} to ${input.accountNumber} has been received.`,
     balanceText,
   ].join(" ").trim();
@@ -133,7 +133,7 @@ export function buildSavingsWithdrawalSms(input: {
       : "";
 
   return [
-    `GEO-SHUA: Dear ${cleanName(input.memberName)},`,
+    `DANIJACE PROMOTIONS: Dear ${cleanName(input.memberName)},`,
     `your savings withdrawal of ${formatKes(input.amount)} from ${input.accountNumber} has been processed.`,
     balanceText,
   ].join(" ").trim();

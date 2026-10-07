@@ -12,7 +12,7 @@ carrierName?: string;
 export default function SmsTestPage() {
 const [phone, setPhone] = useState("");
 const [message, setMessage] = useState(
-"GEO-SHUA SMS test. If you received this, Android SMS sending is working."
+"DANIJACE PROMOTIONS SMS test. If you received this, Android SMS sending is working."
 );
 
 const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
@@ -220,7 +220,7 @@ try {
 }
 
 return ( <main className="min-h-screen bg-black p-6 text-white"> <div className="mx-auto max-w-xl space-y-6"> <div> <h1 className="text-2xl font-semibold">
-GEO-SHUA SMS Test </h1>
+DANIJACE PROMOTIONS SMS Test </h1>
 
 
       <p className="mt-1 text-sm text-white/60">

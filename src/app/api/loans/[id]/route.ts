@@ -533,7 +533,7 @@ export async function PATCH(
      * It represents the repayment amount for each
      * repayment cycle.
      *
-     * Normal GEO-SHUA configuration:
+     * Normal DANIJACE PROMOTIONS configuration:
      *
      *     7 days = weekly installment
      *

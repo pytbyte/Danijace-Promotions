@@ -896,7 +896,7 @@ export default function LoansPage() {
                   <div className="h-1.5 w-1.5 rounded-full bg-sky-500" />
 
                   <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-black/50">
-                    GEO-SHUA
+                    DANIJACE PROMOTIONS
                   </p>
                 </div>
 

@@ -1363,7 +1363,7 @@ export default function MyAccountModal({
           <div className="flex items-center justify-between gap-3">
             <p className="hidden text-xs text-slate-500 sm:block">
               Account information is loaded
-              securely from GEO-SHUA.
+              securely from DANIJACE PROMOTIONS.
             </p>
 
             <button

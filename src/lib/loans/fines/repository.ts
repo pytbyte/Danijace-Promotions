@@ -21,7 +21,7 @@ import type {
 } from "./types";
 
 const DB_NAME =
-  process.env.MONGODB_DB || "geo-shua";
+  process.env.MONGODB_DB || "danijace-promotions";
 
 const LOANS_COLLECTION = "loans";
 const LOAN_REPAYMENTS_COLLECTION = "loanRepayments";

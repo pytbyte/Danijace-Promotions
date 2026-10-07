@@ -163,7 +163,7 @@ export async function queueLoanPaymentReceivedSms(
   );
 
   let message =
-    `GEO-SHUA LTD \nDear ${memberName}, loan payment of KES ${formatAmount(amount)} has been received.\n Thank you.`;
+    `DANIJACE PROMOTIONS LTD \nDear ${memberName}, loan payment of KES ${formatAmount(amount)} has been received.\n Thank you.`;
 
   return queueSms({
     type: SMS_TYPES.LOAN_PAYMENT_RECEIVED,
@@ -231,7 +231,7 @@ export async function queueLoanDisbursementSms(
     "082083";
 
   const message = [
-    `GEO-SHUA LTD`,
+    `DANIJACE PROMOTIONS LTD`,
     `Dear ${memberName}, your loan of Ksh ${formatAmount(amount)} has been approved.`,
     `Weekly payment through`,
     `Paybill: ${paybill}`,
@@ -312,7 +312,7 @@ export async function queueLoanPaymentReminderSms(
     data.scheduledFor?.trim();
 
   const message =
-    `GEO-SHUA LTD\n` +
+    `DANIJACE PROMOTIONS LTD\n` +
     `Dear ${memberName}, your weekly loan payment balance of KES ${formatAmount(installmentAmountOwed)} ` +
     `is due on ${dueDate}.\n` +
     `Paybill: ${paybill}\n` +
@@ -367,7 +367,7 @@ export async function queueLoanClearedSms(
   );
 
   const message =
-    `GEO-SHUA\n Dear ${memberName}, your loan is fully cleared. Thank you.: `;
+    `DANIJACE PROMOTIONS\n Dear ${memberName}, your loan is fully cleared. Thank you.: `;
 
   return queueSms({
     type: SMS_TYPES.LOAN_CLEARED,

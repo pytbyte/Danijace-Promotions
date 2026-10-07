@@ -1,12 +1,12 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
-  appId: "com.pytbyte.geoshua",
-  appName: "Geo Shua",
+  appId: "com.pytbyte.danijacepromotions",
+  appName: "Danijace Promotions",
   webDir: "capacitor-assets",
 
   server: {
-    url: "https://geo-shua.vercel.app",
+    url: "https://danijace-promotions.vercel.app",
     cleartext: false,
   },
 

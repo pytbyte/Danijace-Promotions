@@ -1,6 +1,6 @@
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * BANK SMS PARSER
  * =========================================================
  *
@@ -48,10 +48,10 @@
  *
  * It is NOT:
  *
- * - a GEO-SHUA member ID
- * - a GEO-SHUA savings account ID
- * - a GEO-SHUA loan ID
- * - a GEO-SHUA loan number
+ * - a DANIJACE PROMOTIONS member ID
+ * - a DANIJACE PROMOTIONS savings account ID
+ * - a DANIJACE PROMOTIONS loan ID
+ * - a DANIJACE PROMOTIONS loan number
  *
  * The destination account is used by processor.ts to decide
  * whether the payment is:
@@ -59,7 +59,7 @@
  *   082083  → loan
  *   2650821 → savings
  *
- * The sender name is then used to resolve the GEO-SHUA
+ * The sender name is then used to resolve the DANIJACE PROMOTIONS
  * member.
  *
  * Example:
@@ -153,7 +153,7 @@ export type ParsedBankSms = {
    *
    * This is a routing value.
    *
-   * It is NOT a GEO-SHUA member financial account.
+   * It is NOT a DANIJACE PROMOTIONS member financial account.
    *
    * Example:
    *
@@ -503,9 +503,9 @@ function parseSenderName(
  *
  * This is the BANK COLLECTION / DESTINATION ACCOUNT.
  *
- * It is NOT a GEO-SHUA savings account.
+ * It is NOT a DANIJACE PROMOTIONS savings account.
  *
- * It is NOT a GEO-SHUA loan account.
+ * It is NOT a DANIJACE PROMOTIONS loan account.
  *
  * processor.ts decides:
  *

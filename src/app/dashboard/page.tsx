@@ -268,7 +268,7 @@ function getMemberName(
     ]
       .filter(Boolean)
       .join(" ")
-      .trim() || "GEO-SHUA Member"
+      .trim() || "DANIJACE PROMOTIONS Member"
   );
 }
 
@@ -294,7 +294,7 @@ function DashboardLoading(): ReactNode {
 
         <div className="text-center">
           <p className="text-[10px] font-bold uppercase tracking-[0.35em] text-sky-300">
-            GEO-SHUA
+            DANIJACE PROMOTIONS
           </p>
 
           <p className="mt-1 text-xs text-white/35">
@@ -454,7 +454,7 @@ function PinSetupScreen({
             </div>
 
             <p className="mt-3 text-[9px] font-bold uppercase tracking-[0.45em] text-sky-300/80">
-              GEO-SHUA
+              DANIJACE PROMOTIONS
             </p>
 
             <h1 className="mt-1.5 text-xl font-semibold">
@@ -462,7 +462,7 @@ function PinSetupScreen({
             </h1>
 
             <p className="mt-1 text-[11px] text-white/35">
-              Protect your GEO-SHUA workspace
+              Protect your DANIJACE PROMOTIONS workspace
             </p>
           </div>
 
@@ -625,7 +625,7 @@ function PinSetupScreen({
 
           <div className="mt-4 flex items-center justify-center gap-1.5 text-[8px] font-semibold uppercase tracking-[0.25em] text-white/15">
             <ShieldCheck className="h-3 w-3" />
-            GEO-SHUA
+            DANIJACE PROMOTIONS
           </div>
         </section>
       </div>
@@ -792,7 +792,7 @@ function DeviceRecoveryResetScreen({
             </div>
 
             <p className="mt-3 text-[9px] font-bold uppercase tracking-[0.45em] text-sky-300/80">
-              GEO-SHUA
+              DANIJACE PROMOTIONS
             </p>
 
             <h1 className="mt-1.5 text-xl font-semibold">
@@ -972,7 +972,7 @@ function DeviceRecoveryResetScreen({
 
           <div className="mt-4 flex items-center justify-center gap-1.5 text-[8px] font-semibold uppercase tracking-[0.25em] text-white/15">
             <ShieldCheck className="h-3 w-3" />
-            GEO-SHUA
+            DANIJACE PROMOTIONS
           </div>
         </section>
       </div>
@@ -1201,7 +1201,7 @@ function IdentityScreen({
   const verifyDevice = async () => {
     if (!isAndroid) {
       setError(
-        "Android device security is available in the GEO-SHUA Android app.",
+        "Android device security is available in the DANIJACE PROMOTIONS Android app.",
       );
       return;
     }
@@ -1284,7 +1284,7 @@ function IdentityScreen({
     async () => {
       if (!isAndroid) {
         setError(
-          "PIN recovery with device security is available in the GEO-SHUA Android app.",
+          "PIN recovery with device security is available in the DANIJACE PROMOTIONS Android app.",
         );
         return;
       }
@@ -1704,7 +1704,7 @@ function IdentityScreen({
             </div>
 
             <p className="mt-3 text-[9px] font-bold uppercase tracking-[0.45em] text-sky-300/80">
-              GEO-SHUA
+              DANIJACE PROMOTIONS
             </p>
 
             <h1 className="mt-1.5 text-xl font-semibold">
@@ -1727,7 +1727,7 @@ function IdentityScreen({
               </p>
 
               <p className="mt-0.5 truncate text-[10px] text-white/30">
-                GEO-SHUA account authenticated
+                DANIJACE PROMOTIONS account authenticated
               </p>
             </div>
 
@@ -1947,7 +1947,7 @@ function IdentityScreen({
 
           <div className="mt-4 flex items-center justify-center gap-1.5 text-[8px] font-semibold uppercase tracking-[0.25em] text-white/15">
             <ShieldCheck className="h-3 w-3" />
-            GEO-SHUA
+            DANIJACE PROMOTIONS
           </div>
         </section>
       </div>
@@ -1956,10 +1956,10 @@ function IdentityScreen({
 }
 
 /* =========================================================
-   GEO-SHUA NAVIGATOR
+   DANIJACE PROMOTIONS NAVIGATOR
 ========================================================= */
 
-function GeoShuaNavigator(): ReactNode {
+function DanijaceNavigator(): ReactNode {
   const router = useRouter();
 
   const navigation = [
@@ -2007,7 +2007,7 @@ function GeoShuaNavigator(): ReactNode {
             </div>
 
             <p className="mt-3 text-[8px] font-bold uppercase tracking-[0.42em] text-sky-300/70">
-              GEO-SHUA
+              DANIJACE PROMOTIONS
             </p>
 
             <h1 className="mt-1 text-xl font-semibold tracking-tight text-white sm:text-2xl">
@@ -2054,7 +2054,7 @@ function GeoShuaNavigator(): ReactNode {
 
           <div className="mt-5 flex items-center justify-center gap-1.5 text-[8px] font-medium uppercase tracking-[0.28em] text-white/15">
             <ShieldCheck className="h-3 w-3" />
-            GEO-SHUA workspace
+            DANIJACE PROMOTIONS workspace
           </div>
         </section>
       </div>
@@ -2524,7 +2524,7 @@ export default function DashboardPage(): ReactNode {
 
                   description:
                     notification.message ??
-                    "GEO-SHUA notification",
+                    "DANIJACE PROMOTIONS notification",
 
                   date: formatDate(
                     notification.createdAt,
@@ -2653,5 +2653,5 @@ export default function DashboardPage(): ReactNode {
      AFTER SECURITY → NAVIGATOR
   ======================================================= */
 
-  return <GeoShuaNavigator />;
+  return <DanijaceNavigator />;
 }

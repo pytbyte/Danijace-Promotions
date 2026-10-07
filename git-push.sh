@@ -3,7 +3,7 @@
 set -e
 
 echo "======================================"
-echo " GEO-SHUA Git Push"
+echo " DANIJACE PROMOTIONS Git Push"
 echo "======================================"
 
 echo ""

@@ -875,7 +875,7 @@ export default function TopBar() {
           }
 
           console.error(
-            "Unable to verify GEO-SHUA authorization:",
+            "Unable to verify DANIJACE PROMOTIONS authorization:",
             error,
           );
 
@@ -947,7 +947,7 @@ export default function TopBar() {
         }
       } catch (error) {
         console.error(
-          "Unable to close GEO-SHUA Android application:",
+          "Unable to close DANIJACE PROMOTIONS Android application:",
           error,
         );
       }
@@ -2341,7 +2341,7 @@ export default function TopBar() {
             <div className="flex items-center gap-2.5">
               <img
                 src="/logo.png"
-                alt="GEO-SHUA"
+                alt="DANIJACE PROMOTIONS"
                 className="
                   h-9
                   w-auto
@@ -2359,7 +2359,7 @@ export default function TopBar() {
                     text-white
                   "
                 >
-                  GEO-SHUA
+                  DANIJACE PROMOTIONS
                 </p>
 
                 <p
@@ -2844,7 +2844,7 @@ export default function TopBar() {
           <div className="flex items-center gap-2.5">
             <img
               src="/logo.png"
-              alt="GEO-SHUA"
+              alt="DANIJACE PROMOTIONS"
               className="
                 h-9
                 w-9
@@ -2861,7 +2861,7 @@ export default function TopBar() {
                   text-white
                 "
               >
-                GEO-SHUA
+                DANIJACE PROMOTIONS
               </p>
 
               <p
@@ -3186,7 +3186,7 @@ export default function TopBar() {
                 "
               >
                 Your account is not authorized
-                to access GEO-SHUA.
+                to access DANIJACE PROMOTIONS.
               </p>
 
               {email ? (

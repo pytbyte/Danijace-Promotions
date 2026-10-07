@@ -21,7 +21,7 @@ function authorizeRequest(
 
   const suppliedSecret =
     request.headers.get(
-      "x-geoshua-loan-expiry-secret",
+      "x-danijace-loan-expiry-secret",
     );
 
   if (
@@ -97,7 +97,7 @@ export async function POST(
     }
 
     console.error(
-      "[GEO-SHUA LOAN EXPIRY] Failed:",
+      "[DANIJACE PROMOTIONS LOAN EXPIRY] Failed:",
       error,
     );
 

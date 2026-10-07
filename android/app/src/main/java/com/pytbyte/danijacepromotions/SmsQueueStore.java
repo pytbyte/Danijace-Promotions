@@ -1,4 +1,4 @@
-package com.pytbyte.geoshua;
+package com.pytbyte.danijacepromotions;
 
 import android.content.ContentValues;
 import android.content.Context;
@@ -15,7 +15,7 @@ import java.util.List;
 
 /**
  * =========================================================
- * GEO-SHUA
+ * DANIJACE PROMOTIONS
  * SHARED SMS QUEUE STORE
  * =========================================================
  *
@@ -31,7 +31,7 @@ import java.util.List;
  *       ↓
  *   SmsProcessingWorker
  *       ↓
- *   GEO-SHUA API
+ *   DANIJACE PROMOTIONS API
  *
  * Shared by:
  *
@@ -49,7 +49,7 @@ import java.util.List;
  *   - resolve members
  *   - resolve loans
  *
- * Financial processing remains on the GEO-SHUA server.
+ * Financial processing remains on the DANIJACE PROMOTIONS server.
  *
  * IMPORTANT:
  *
@@ -70,14 +70,14 @@ import java.util.List;
 public final class SmsQueueStore {
 
     private static final String TAG =
-            "GeoShuaSmsQueue";
+            "DanijaceSmsQueue";
 
     /* =====================================================
        DATABASE
     ===================================================== */
 
     private static final String DATABASE_NAME =
-            "geoshua_sms.db";
+            "danijace_sms.db";
 
     private static final int DATABASE_VERSION =
             1;

@@ -82,7 +82,7 @@
         ====================================================== -->
 
         <service
-            android:name=".GeoShuaFirebaseMessagingService"
+            android:name=".DanijaceFirebaseMessagingService"
             android:exported="false">
 
             <intent-filter>
@@ -98,7 +98,7 @@
 
              Top-level class:
 
-                 com.pytbyte.geoshua.SmsReceiver
+                 com.pytbyte.danijacepromotions.SmsReceiver
 
              IMPORTANT:
 
@@ -176,7 +176,7 @@
 
 
             <!-- =================================================
-                 GEO-SHUA GOOGLE/OAUTH DEEP LINK
+                 DANIJACE PROMOTIONS GOOGLE/OAUTH DEEP LINK
             ================================================== -->
 
             <intent-filter>
@@ -191,7 +191,7 @@
                     android:name="android.intent.category.BROWSABLE" />
 
                 <data
-                    android:scheme="geoshua"
+                    android:scheme="danijace"
                     android:host="auth" />
 
             </intent-filter>
