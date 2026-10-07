@@ -768,7 +768,56 @@ export async function POST(
         200,
       );
     }
+    /* =====================================================
+   NO HISTORICAL LOAN
+===================================================== */
 
+/**
+ * The member is valid, but there is no GEO-SHUA loan
+ * belonging to that member.
+ *
+ * This is an expected business outcome, not a server
+ * failure. The bank transaction cannot be attached to a
+ * GEO-SHUA loan, so it must not be retried indefinitely.
+ *
+ * No financial change has occurred.
+ */
+if (
+  error instanceof Error &&
+  error.message.startsWith(
+    "No historical GEO-SHUA loan could be found for member ",
+  )
+) {
+  return response(
+    {
+      status:
+        "ignored" satisfies ApiStatus,
+
+      processed:
+        false,
+
+      financialChange:
+        false,
+
+      reason:
+        "no_historical_loan",
+
+      message:
+        "No GEO-SHUA loan could be found for this member, so the bank payment was not recorded.",
+
+      smsId,
+
+      parsed:
+        parsedDiagnostic,
+
+      memberName:
+        parsed.senderName,
+
+      oldSms,
+    },
+    200,
+  );
+}
 
     /* =====================================================
        DUPLICATE DETECTION
