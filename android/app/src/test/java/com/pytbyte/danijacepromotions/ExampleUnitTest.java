@@ -1,4 +1,4 @@
-package com.getcapacitor.myapp;
+package com.pytbyte.danijacepromotions;
 
 import static org.junit.Assert.*;
 
