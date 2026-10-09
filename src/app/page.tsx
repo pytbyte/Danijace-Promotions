@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from "react";
@@ -23,64 +24,48 @@ type GoogleUser = {
 function decodeGoogleIdToken(
   idToken: string,
 ): GoogleUser {
-  const tokenParts =
-    idToken.split(".");
+  const tokenParts = idToken.split(".");
 
   if (tokenParts.length !== 3) {
-    throw new Error(
-      "Invalid Google ID token.",
-    );
+    throw new Error("Invalid Google ID token.");
   }
 
-  const payloadPart =
-    tokenParts[1];
+  const payloadPart = tokenParts[1];
 
   if (!payloadPart) {
-    throw new Error(
-      "Google ID token payload is missing.",
-    );
+    throw new Error("Google ID token payload is missing.");
   }
 
   try {
-    const base64 =
-      payloadPart
-        .replace(/-/g, "+")
-        .replace(/_/g, "/");
+    const base64 = payloadPart
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
 
     const paddedBase64 =
       base64 +
-      "=".repeat(
-        (4 -
-          (base64.length % 4)) %
-          4,
-      );
+      "=".repeat((4 - (base64.length % 4)) % 4);
 
-    const json =
-      atob(paddedBase64);
+    const json = atob(paddedBase64);
 
-    const payload =
-      JSON.parse(json) as {
-        email?: unknown;
-        name?: unknown;
-        picture?: unknown;
-        email_verified?: unknown;
-      };
+    const payload = JSON.parse(json) as {
+      email?: unknown;
+      name?: unknown;
+      picture?: unknown;
+      email_verified?: unknown;
+    };
 
     const email =
-      typeof payload.email ===
-      "string"
+      typeof payload.email === "string"
         ? payload.email.trim()
         : "";
 
     const name =
-      typeof payload.name ===
-      "string"
+      typeof payload.name === "string"
         ? payload.name.trim()
         : "";
 
     const picture =
-      typeof payload.picture ===
-      "string"
+      typeof payload.picture === "string"
         ? payload.picture.trim()
         : "";
 
@@ -98,9 +83,7 @@ function decodeGoogleIdToken(
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message.includes(
-        "no email address was returned",
-      )
+      error.message.includes("no email address was returned")
     ) {
       throw error;
     }
@@ -116,185 +99,141 @@ function decodeGoogleIdToken(
 ========================================================= */
 
 export default function Home() {
-  const [loading, setLoading] =
-    useState(false);
-
-  const router =
-    useRouter();
+  const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   /* =======================================================
      GOOGLE LOGIN
   ======================================================= */
 
-  const handleGoogleLogin =
-    async () => {
-      if (loading) {
+  const handleGoogleLogin = async () => {
+    if (loading) {
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      /* =================================================
+         ANDROID / CAPACITOR
+      ================================================= */
+
+      if (Capacitor.isNativePlatform()) {
+        const result = await loginWithAndroidGoogle();
+
+        console.log("ANDROID GOOGLE LOGIN RESULT:", result);
+
+        /* -----------------------------------------------
+           GET GOOGLE ID TOKEN
+        ----------------------------------------------- */
+
+        const idToken =
+          "idToken" in result.result
+            ? result.result.idToken
+            : undefined;
+
+        if (!idToken) {
+          throw new Error(
+            "Google authentication succeeded, but no ID token was returned.",
+          );
+        }
+
+        /* -----------------------------------------------
+           DECODE PROFILE FOR UI ONLY
+        ----------------------------------------------- */
+
+        const googleUser = decodeGoogleIdToken(idToken);
+
+        console.log("ANDROID GOOGLE USER:", {
+          email: googleUser.email,
+          name: googleUser.name,
+        });
+
+        /* -----------------------------------------------
+           CREATE REAL NEXTAUTH SESSION
+        ----------------------------------------------- */
+
+        const sessionResult = await signIn("android-google", {
+          idToken,
+          redirect: false,
+        });
+
+        console.log(
+          "ANDROID NEXTAUTH SESSION RESULT:",
+          sessionResult,
+        );
+
+        if (!sessionResult || sessionResult.error) {
+          throw new Error(
+            sessionResult?.error ||
+              "Unable to create the application session.",
+          );
+        }
+
+        /* -----------------------------------------------
+           SAVE PROFILE FOR TOPBAR
+        ----------------------------------------------- */
+
+        localStorage.setItem(
+          "android_google_user",
+          JSON.stringify(googleUser),
+        );
+
+        localStorage.setItem(
+          "android_google_authenticated",
+          "true",
+        );
+
+        /* -----------------------------------------------
+           ALLOW SESSION COOKIE TO PERSIST
+        ----------------------------------------------- */
+
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 150);
+        });
+
+        /* -----------------------------------------------
+           DASHBOARD
+        ----------------------------------------------- */
+
+        router.replace("/dashboard");
         return;
       }
 
-      setLoading(true);
+      /* =================================================
+         WEB BROWSER
+      ================================================= */
 
-      try {
-        /* =================================================
-           ANDROID / CAPACITOR
-        ================================================= */
+      await signIn("google", {
+        callbackUrl: "/dashboard",
+      });
+    } catch (error) {
+      console.error("Google sign-in error:", error);
 
-        if (
-          Capacitor.isNativePlatform()
-        ) {
-          const result =
-            await loginWithAndroidGoogle();
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Google authentication failed.";
 
-          console.log(
-            "ANDROID GOOGLE LOGIN RESULT:",
-            result,
-          );
-
-          /* -----------------------------------------------
-             GET GOOGLE ID TOKEN
-          ----------------------------------------------- */
-
-          const idToken =
-            "idToken" in
-            result.result
-              ? result.result.idToken
-              : undefined;
-
-          if (!idToken) {
-            throw new Error(
-              "Google authentication succeeded, but no ID token was returned.",
-            );
-          }
-
-          /* -----------------------------------------------
-             DECODE PROFILE FOR UI ONLY
-          ----------------------------------------------- */
-
-          const googleUser =
-            decodeGoogleIdToken(
-              idToken,
-            );
-
-          console.log(
-            "ANDROID GOOGLE USER:",
-            {
-              email:
-                googleUser.email,
-              name:
-                googleUser.name,
-            },
-          );
-
-          /* -----------------------------------------------
-             CREATE REAL NEXTAUTH SESSION
-          ----------------------------------------------- */
-
-          const sessionResult =
-            await signIn(
-              "android-google",
-              {
-                idToken,
-                redirect: false,
-              },
-            );
-
-          console.log(
-            "ANDROID NEXTAUTH SESSION RESULT:",
-            sessionResult,
-          );
-
-          if (
-            !sessionResult ||
-            sessionResult.error
-          ) {
-            throw new Error(
-              sessionResult?.error ||
-                "Unable to create the application session.",
-            );
-          }
-
-          /* -----------------------------------------------
-             SAVE PROFILE FOR TOPBAR
-          ----------------------------------------------- */
-
-          localStorage.setItem(
-            "android_google_user",
-            JSON.stringify(
-              googleUser,
-            ),
-          );
-
-          localStorage.setItem(
-            "android_google_authenticated",
-            "true",
-          );
-
-          /* -----------------------------------------------
-             ALLOW SESSION COOKIE TO PERSIST
-          ----------------------------------------------- */
-
-          await new Promise<void>(
-            (resolve) => {
-              window.setTimeout(
-                resolve,
-                150,
-              );
-            },
-          );
-
-          /* -----------------------------------------------
-             DASHBOARD
-          ----------------------------------------------- */
-
-          router.replace(
-            "/dashboard",
-          );
-
-          return;
-        }
-
-        /* =================================================
-           WEB BROWSER
-        ================================================= */
-
-        await signIn("google", {
-          callbackUrl:
-            "/dashboard",
-        });
-      } catch (error) {
-        console.error(
-          "Google sign-in error:",
-          error,
-        );
-
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Google authentication failed.";
-
-        alert(message);
-
-        setLoading(false);
-      }
-    };
+      alert(message);
+      setLoading(false);
+    }
+  };
 
   /* =======================================================
      UI
   ======================================================= */
 
   return (
-    <main className="relative min-h-[100dvh] overflow-hidden bg-[#eef7ff] text-black">
+    <main className="relative min-h-[100dvh] overflow-hidden bg-black text-white">
       {/* =================================================
-          SUBTLE LIGHT BACKGROUND
+          PURE BLACK BACKGROUND
       ================================================= */}
 
-     <div className="pointer-events-none absolute inset-0">
-        <div className="absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-[55%] rounded-full bg-sky-400/[0.08] blur-[120px]" />
-
-        <div className="absolute -left-32 -top-32 h-72 w-72 rounded-full bg-sky-300/[0.08] blur-[100px]" />
-
-        <div className="absolute -bottom-32 -right-32 h-72 w-72 rounded-full bg-sky-400/[0.08] blur-[100px]" />
-      </div>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-black"
+      />
 
       {/* =================================================
           MAIN CONTENT
@@ -302,14 +241,11 @@ export default function Home() {
 
       <div className="relative z-10 flex min-h-[100dvh] items-center justify-center px-6">
         <div className="flex w-full max-w-md flex-col items-center text-center">
-
           {/* =================================================
               LOGO
           ================================================= */}
 
           <div className="relative mb-8">
-            <div className="absolute inset-0 scale-75 rounded-full bg-yellow-400/[0.08] blur-3xl" />
-
             <img
               src="/logo.png"
               alt="DANIJACE PROMOTIONS Company"
@@ -318,7 +254,7 @@ export default function Home() {
                 h-auto
                 w-[210px]
                 object-contain
-                drop-shadow-[0_8px_25px_rgba(0,0,0,0.08)]
+                drop-shadow-[0_8px_25px_rgba(255,255,255,0.08)]
                 sm:w-[240px]
               "
             />
@@ -329,11 +265,11 @@ export default function Home() {
           ================================================= */}
 
           <div className="mb-8">
-            <h1 className="text-2xl font-semibold tracking-tight text-black sm:text-3xl">
+            <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
               Welcome
             </h1>
 
-            <p className="mt-2 text-sm leading-6 text-black/50 sm:text-base">
+            <p className="mt-2 text-sm leading-6 text-white/70 sm:text-base">
               Sign in to continue to your account
             </p>
           </div>
@@ -344,9 +280,7 @@ export default function Home() {
 
           <button
             type="button"
-            onClick={
-              handleGoogleLogin
-            }
+            onClick={handleGoogleLogin}
             disabled={loading}
             className="
               group
@@ -359,18 +293,17 @@ export default function Home() {
               gap-3
               rounded-xl
               border
-              border-black/10
-              bg-white
+              border-white/20
+              bg-black
               px-6
               text-[15px]
               font-semibold
-              text-black
-              shadow-[0_8px_30px_rgba(0,0,0,0.08)]
+              text-white
               transition-all
               duration-200
               hover:-translate-y-0.5
-              hover:border-black/15
-              hover:shadow-[0_12px_35px_rgba(0,0,0,0.12)]
+              hover:border-white/40
+              hover:bg-white/5
               active:translate-y-0
               disabled:cursor-not-allowed
               disabled:opacity-60
@@ -383,6 +316,7 @@ export default function Home() {
                 viewBox="0 0 24 24"
                 xmlns="http://www.w3.org/2000/svg"
                 className="shrink-0"
+                aria-hidden="true"
               >
                 <path
                   fill="#4285F4"
@@ -405,7 +339,7 @@ export default function Home() {
                 />
               </svg>
             ) : (
-              <span className="h-5 w-5 animate-spin rounded-full border-2 border-black/20 border-t-black" />
+              <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-white" />
             )}
 
             <span>
@@ -419,7 +353,7 @@ export default function Home() {
               SECURITY MESSAGE
           ================================================= */}
 
-          <div className="mt-6 flex items-center gap-2 text-xs text-black/40">
+          <div className="mt-6 flex items-center gap-2 text-xs text-white/60">
             <svg
               width="14"
               height="14"
@@ -427,6 +361,7 @@ export default function Home() {
               fill="none"
               stroke="currentColor"
               strokeWidth="1.8"
+              aria-hidden="true"
             >
               <rect
                 x="4"
@@ -439,16 +374,14 @@ export default function Home() {
               <path d="M8 10V7a4 4 0 0 1 8 0v3" />
             </svg>
 
-            <span>
-              Secure sign-in with Google
-            </span>
+            <span>Secure sign-in with Google</span>
           </div>
 
           {/* =================================================
               FOOTER
           ================================================= */}
 
-          <p className="mt-12 text-[11px] uppercase tracking-[0.25em] text-black/25">
+          <p className="mt-12 text-[11px] uppercase tracking-[0.25em] text-white/40">
             DANIJACE PROMOTIONS COMPANY
           </p>
         </div>
