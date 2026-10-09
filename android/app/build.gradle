@@ -56,7 +56,20 @@ android {
         }
     }
 
+    signingConfigs {
+        debug {
+            storeFile file("danijace-debug.keystore")
+            storePassword "android"
+            keyAlias "danijaceDebug"
+            keyPassword "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+
         release {
             minifyEnabled false
 
