@@ -287,7 +287,7 @@ function DashboardLoading(): ReactNode {
 
           <div className="relative flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04]">
             <span className="text-sm font-black tracking-[0.2em] text-sky-300">
-              GS
+              DP
             </span>
           </div>
         </div>
@@ -449,7 +449,7 @@ function PinSetupScreen({
           <div className="text-center">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.25rem] border border-sky-400/20 bg-sky-400/[0.06]">
               <span className="text-lg font-black tracking-[0.18em] text-sky-300">
-                GS
+                DP
               </span>
             </div>
 
@@ -1699,7 +1699,7 @@ function IdentityScreen({
           <div className="text-center">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.25rem] border border-sky-400/20 bg-sky-400/[0.06]">
               <span className="text-lg font-black tracking-[0.18em] text-sky-300">
-                GS
+                DP
               </span>
             </div>
 
@@ -2002,7 +2002,7 @@ function DanijaceNavigator(): ReactNode {
           <div className="text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-sky-400/15 bg-white/[0.035] shadow-lg shadow-sky-500/[0.04]">
               <span className="text-sm font-black tracking-[0.16em] text-sky-300">
-                GS
+                DP
               </span>
             </div>
 

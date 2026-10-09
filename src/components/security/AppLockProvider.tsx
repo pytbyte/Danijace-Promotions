@@ -1047,7 +1047,7 @@ export function AppLockProvider({
               <div className="flex flex-col items-center text-center">
                 <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#1683ff] text-white shadow-sm">
                   <span className="text-xl font-black tracking-tight">
-                    GS
+                    DP
                   </span>
                 </div>
 
