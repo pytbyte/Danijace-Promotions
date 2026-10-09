@@ -1,7 +1,7 @@
 import { SocialLogin } from "@capgo/capacitor-social-login";
 
 const GOOGLE_WEB_CLIENT_ID =
-  "545484870581-2gt85vutfh9gd60hh230pl6fitmhk8vd.apps.googleusercontent.com";
+  "545484870581-novr1gbgk3vhk20ghij5re4f9bfmfjjr.apps.googleusercontent.com ";
 
 let initialized = false;
 
