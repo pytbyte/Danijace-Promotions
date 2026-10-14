@@ -775,6 +775,7 @@ type SavingsActionModalProps = {
     | SavingsTransaction
     | null;
 
+  availableBalance: number;
   amount: string;
   reason: string;
   loading: boolean;
@@ -804,6 +805,7 @@ function SavingsActionModal({
   open,
   action,
   transaction,
+  availableBalance,
   amount,
   reason,
   loading,
@@ -935,15 +937,24 @@ function SavingsActionModal({
 
               <div className="shrink-0 text-right">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-black/40">
-                  Original amount
+                  {isAdjustment
+                    ? "Available total"
+                    : "Original amount"}
                 </p>
 
                 <p className="mt-1 font-semibold text-black">
-                  {formatKES(
-                    Math.abs(
-                      transaction.amount,
-                    ),
-                  )}
+                  {isAdjustment
+                    ? formatKES(
+                        Math.max(
+                          0,
+                          availableBalance,
+                        ),
+                      )
+                    : formatKES(
+                        Math.abs(
+                          transaction.amount,
+                        ),
+                      )}
                 </p>
               </div>
             </div>
@@ -1242,6 +1253,11 @@ export default function SavingsPage() {
     actionLoading,
     setActionLoading,
   ] = useState(false);
+
+  const [
+    memberSavingsBalance,
+    setMemberSavingsBalance,
+  ] = useState(0);
 
   const [
     actionError,
@@ -1827,7 +1843,7 @@ export default function SavingsPage() {
 
   const handleAdjust =
     useCallback(
-      (
+      async (
         transaction: SavingsTransaction,
       ) => {
         if (
@@ -1863,6 +1879,54 @@ export default function SavingsPage() {
         setActionError(
           null,
         );
+
+        try {
+          const response =
+            await fetch(
+              `/api/savings/accounts?memberId=${encodeURIComponent(
+                transaction.memberId,
+              )}`,
+              {
+                method: "GET",
+                cache: "no-store",
+                credentials: "same-origin",
+              },
+            );
+
+          const payload =
+            await readJsonResponse(
+              response,
+            );
+
+          if (!response.ok) {
+            throw new Error(
+              String(
+                payload.message ??
+                  payload.error ??
+                  "Failed to load member savings total.",
+              ),
+            );
+          }
+
+          const data =
+            asRecord(payload.data) ??
+            asRecord(payload) ??
+            {};
+
+          setMemberSavingsBalance(
+            safeNumber(
+              data.memberTotalBalance ??
+                data.balance,
+            ),
+          );
+        } catch (error) {
+          console.error(
+            "Member savings total error:",
+            error,
+          );
+
+          setMemberSavingsBalance(0);
+        }
       },
       [],
     );
@@ -1942,6 +2006,8 @@ export default function SavingsPage() {
         "",
       );
 
+      setMemberSavingsBalance(0);
+
       setActionError(
         null,
       );
@@ -1998,6 +2064,17 @@ export default function SavingsPage() {
 
             return;
           }
+
+          if (
+            numericAmount >
+            memberSavingsBalance
+          ) {
+            setActionError(
+              "Withdrawal exceeds the member's total savings balance.",
+            );
+
+            return;
+          }
         }
 
         setActionLoading(
@@ -2009,21 +2086,18 @@ export default function SavingsPage() {
         );
 
         try {
-          const transactionId =
-            encodeURIComponent(
-              actionTransaction.id,
-            );
-
           const endpoint =
             action ===
             "adjust"
-              ? `${TRANSACTIONS_ENDPOINT}/${transactionId}/adjust`
-              : `${TRANSACTIONS_ENDPOINT}/${transactionId}/reverse`;
+              ? "/api/savings/withdraw"
+              : `${TRANSACTIONS_ENDPOINT}/${encodeURIComponent(actionTransaction.id)}/reverse`;
 
           const body =
             action ===
             "adjust"
               ? {
+                  memberId:
+                    actionTransaction.memberId,
                   amount:
                     numericAmount,
                   reason,
@@ -2091,6 +2165,8 @@ export default function SavingsPage() {
             "",
           );
 
+          setMemberSavingsBalance(0);
+
           await handleRefresh();
         } catch (error) {
           console.error(
@@ -2115,6 +2191,7 @@ export default function SavingsPage() {
         actionTransaction,
         actionAmount,
         actionReason,
+        memberSavingsBalance,
         handleRefresh,
       ],
     );
@@ -2796,6 +2873,9 @@ export default function SavingsPage() {
         }
         transaction={
           actionTransaction
+        }
+        availableBalance={
+          memberSavingsBalance
         }
         amount={
           actionAmount

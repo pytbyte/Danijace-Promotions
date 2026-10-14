@@ -3587,12 +3587,13 @@ type AssessmentPeriod = {
  *     2026-09-14 -> 2026-09-21
  *
  *   Period 2:
- *     2026-09-21 -> 2026-09-28
+ *     2026-09-22 -> 2026-09-29
  *
  *   Period 3:
- *     2026-09-28 -> 2026-10-03
+ *     2026-09-30 -> 2026-10-07
  *
- *   There is no Period 4.
+ *   The schedule is clipped at loan.endDate, so there is no
+ *   period that starts on or after the contractual end date.
  */
 function getAssessmentPeriod(
   loan: LoanDocument,
@@ -3642,7 +3643,7 @@ function getAssessmentPeriod(
       disbursementDate,
       (
         periodNumber - 1
-      ) * cycleDays,
+      ) * (cycleDays + 1),
     );
 
   /*
@@ -3732,7 +3733,7 @@ function getMaximumContractualPeriod(
       addCalendarDays(
         disbursementDate,
         maximumPeriod *
-          cycleDays,
+          (cycleDays + 1),
       );
 
     if (

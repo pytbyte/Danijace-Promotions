@@ -118,7 +118,7 @@ console.log("[MAX PERIOD TRACE] FIRST PERIOD", {
 
   const periodStart = repository.addCalendarDays(
     disbursementDate,
-    (periodNumber - 1) * cycleDays,
+    (periodNumber - 1) * (cycleDays + 1),
   );
 
   if (periodStart >= loanEndDate) {
@@ -188,7 +188,7 @@ console.log("[MAX PERIOD TRACE] FIRST PERIOD", {
   for (;;) {
     const periodStart = repository.addCalendarDays(
       disbursementDate,
-      maximumPeriod * cycleDays,
+      maximumPeriod * (cycleDays + 1),
     );
 
     if (periodStart >= loanEndDate) {

@@ -476,6 +476,49 @@ async function calculateLedgerBalance(
   );
 }
 
+async function calculateMemberLedgerBalance(
+  transactions: Collection<SavingsTransactionDocument>,
+  memberId: ObjectId,
+  session?: ClientSession,
+): Promise<number> {
+  const result =
+    await transactions
+      .aggregate<{
+        _id: null;
+        balance: number;
+      }>(
+        [
+          {
+            $match: {
+              memberId,
+
+              status: {
+                $ne: "pending",
+              },
+            },
+          },
+
+          {
+            $group: {
+              _id: null,
+
+              balance: {
+                $sum: "$amount",
+              },
+            },
+          },
+        ],
+        {
+          session,
+        },
+      )
+      .toArray();
+
+  return Number(
+    result[0]?.balance ?? 0,
+  );
+}
+
 /* =========================================================
    ACCOUNT LOCK
 ========================================================= */
@@ -711,11 +754,11 @@ export async function ensureSavingsIndexes(): Promise<void> {
    GET ACCOUNT BY MEMBER
 ========================================================= */
 
-export async function getSavingsAccount(
+export async function getMemberSavingsTotal(
   memberId: string,
-): Promise<SavingsAccount | null> {
+): Promise<number> {
   const {
-    accounts,
+    transactions,
   } =
     await getCollections();
 
@@ -725,19 +768,77 @@ export async function getSavingsAccount(
       "memberId",
     );
 
-  const account =
-    await accounts.findOne({
-      memberId:
-        memberObjectId,
-    });
+  return calculateMemberLedgerBalance(
+    transactions,
+    memberObjectId,
+  );
+}
 
-  if (!account) {
+export async function getSavingsAccount(
+  memberId: string,
+): Promise<SavingsAccount | null> {
+  const {
+    accounts,
+    transactions,
+  } =
+    await getCollections();
+
+  const memberObjectId =
+    toObjectId(
+      memberId,
+      "memberId",
+    );
+
+  const [account, memberTotalBalance, accountCount] =
+    await Promise.all([
+      accounts.findOne({
+        memberId:
+          memberObjectId,
+      }),
+      calculateMemberLedgerBalance(
+        transactions,
+        memberObjectId,
+      ),
+      accounts.countDocuments({
+        memberId:
+          memberObjectId,
+      }),
+    ]);
+
+  if (!account && memberTotalBalance === 0 && accountCount === 0) {
     return null;
   }
 
-  return toPublicSavingsAccount(
-    account as SavingsAccountDocument,
-  );
+  const normalizedAccount =
+    account
+      ? toPublicSavingsAccount(
+          account as SavingsAccountDocument,
+        )
+      : {
+          id: "",
+          memberId,
+          memberName: "",
+          accountNumber: "",
+          accountType: "fixed",
+          balance: 0,
+          status: "active",
+          isActive: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as SavingsAccount;
+
+  return {
+    ...normalizedAccount,
+    balance:
+      Number.isFinite(memberTotalBalance)
+        ? memberTotalBalance
+        : normalizedAccount.balance,
+    memberTotalBalance:
+      Number.isFinite(memberTotalBalance)
+        ? memberTotalBalance
+        : normalizedAccount.balance,
+    accountCount,
+  };
 }
 
 /* =========================================================
@@ -1647,6 +1748,165 @@ export async function getSavingsBalance(
 /* =========================================================
    CREATE ADJUSTMENT / WITHDRAWAL
 ========================================================= */
+
+export async function createMemberSavingsWithdrawal(
+  data: {
+    memberId: string;
+    amount: number;
+    reason: string;
+    recordedBy?: SavingsTransaction["recordedBy"];
+    source?: SavingsTransaction["source"];
+    session?: ClientSession;
+  },
+): Promise<SavingsTransaction> {
+  const memberId =
+    data.memberId?.trim();
+
+  if (!memberId) {
+    throw new Error(
+      "Member ID is required.",
+    );
+  }
+
+  const amount =
+    requirePositiveNumber(
+      data.amount,
+      "Withdrawal amount must be greater than zero.",
+    );
+
+  const reason =
+    requireReason(
+      data.reason,
+    );
+
+  const {
+    accounts,
+    transactions,
+  } =
+    await getCollections();
+
+  const memberObjectId =
+    toObjectId(
+      memberId,
+      "memberId",
+    );
+
+  const memberTotalBalance =
+    await calculateMemberLedgerBalance(
+      transactions,
+      memberObjectId,
+    );
+
+  if (amount > memberTotalBalance) {
+    throw new Error(
+      "Withdrawal exceeds the member's total savings balance.",
+    );
+  }
+
+  const account =
+    await accounts.findOne({
+      memberId:
+        memberObjectId,
+      status: "active",
+    });
+
+  const targetAccount =
+    account
+      ? toPublicSavingsAccount(
+          account as SavingsAccountDocument,
+        )
+      : await getOrCreateSavingsAccount(
+          {
+            memberId,
+          },
+          data.session,
+        );
+
+  const targetAccountObjectId =
+    toObjectId(
+      targetAccount.id,
+      "savingsAccountId",
+    );
+
+  const now =
+    new Date();
+
+  const withdrawal: SavingsTransactionDocument = {
+    _id: randomUUID(),
+    savingsAccountId:
+      targetAccountObjectId,
+    memberId:
+      memberObjectId,
+    memberName:
+      targetAccount.memberName ||
+      "Member",
+    type: "adjustment",
+    amount: -amount,
+    source:
+      data.source ?? "manual",
+    status: "confirmed",
+    reason,
+    transactionAt: now,
+    recordedBy:
+      data.recordedBy,
+    synced: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  if (data.session) {
+    await transactions.insertOne(
+      withdrawal,
+      {
+        session:
+          data.session,
+      },
+    );
+
+    await updateCachedBalance(
+      accounts,
+      transactions,
+      targetAccountObjectId,
+      data.session,
+    );
+
+    return toPublicSavingsTransaction(
+      withdrawal,
+    );
+  }
+
+  const client =
+    await clientPromise;
+
+  const session =
+    client.startSession();
+
+  try {
+    await session.withTransaction(
+      async () => {
+        await transactions.insertOne(
+          withdrawal,
+          {
+            session,
+          },
+        );
+
+        await updateCachedBalance(
+          accounts,
+          transactions,
+          targetAccountObjectId,
+          session,
+        );
+      },
+    );
+  } finally {
+    await session.endSession();
+  }
+
+  return toPublicSavingsTransaction(
+    withdrawal,
+  );
+}
 
 export async function createSavingsAdjustment(
   data: CreateSavingsAdjustmentInput,

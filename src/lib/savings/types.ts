@@ -153,6 +153,17 @@ export interface SavingsAccount {
   memberId: string;
 
   /**
+   * Total savings balance for the member across all active
+   * savings accounts/ledgers.
+   */
+  memberTotalBalance?: number;
+
+  /**
+   * Number of savings accounts linked to the member.
+   */
+  accountCount?: number;
+
+  /**
    * Cached member name.
    *
    * Stored for display convenience.
