@@ -137,7 +137,7 @@ import {
 
 const DB_NAME =
   process.env.MONGODB_DB ||
-  "danijace-promotions";
+  "danijace";
 
 const LOANS_COLLECTION =
   "loans";

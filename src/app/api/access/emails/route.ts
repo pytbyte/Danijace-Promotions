@@ -12,7 +12,7 @@ import clientPromise from "@/lib/mongodb";
 
 const DB_NAME =
   process.env.MONGODB_DB ||
-  "danijace-promotions";
+  "danijace";
 
 const COLLECTION_NAME =
   "authorizedEmails";

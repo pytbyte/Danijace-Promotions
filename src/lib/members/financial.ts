@@ -49,7 +49,7 @@ import type {
 ========================================================= */
 
 const DB_NAME =
-  process.env.MONGODB_DB || "danijace-promotions";
+  process.env.MONGODB_DB || "danijace";
 
 const SAVINGS_ACCOUNTS_COLLECTION =
   "savingsAccounts";

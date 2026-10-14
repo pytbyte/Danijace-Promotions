@@ -30,7 +30,7 @@ export const runtime = "nodejs";
 
 const DB_NAME =
   process.env.MONGODB_DB ||
-  "danijace-promotions";
+  "danijace";
 
 const COLLECTION_NAME =
   "overpaid";

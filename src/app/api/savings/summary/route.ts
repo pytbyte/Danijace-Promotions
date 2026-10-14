@@ -62,7 +62,7 @@ import clientPromise from "@/lib/mongodb";
 
 const DB_NAME =
   process.env.MONGODB_DB ||
-  "danijace-promotions";
+  "danijace";
 
 const ACCOUNT_COLLECTION =
   "savingsAccounts";
