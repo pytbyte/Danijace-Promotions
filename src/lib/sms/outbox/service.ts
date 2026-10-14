@@ -22,7 +22,7 @@ import type {
    DATABASE
 ========================================================= */
 
-const DB_NAME = "danijace-promotions";
+const DB_NAME = process.env.MONGODB_DB || "danijace";
 const OUTBOX_COLLECTION = "smsOutbox";
 
 /* =========================================================

@@ -162,6 +162,14 @@ export async function queueLoanPaymentReceivedSms(
     data.amount,
   );
 
+  // Feature flag: only queue loan SMS when enabled explicitly.
+  const SEND_LOAN_SMS = String(process.env.SEND_LOAN_SMS || "false").toLowerCase() === "true";
+
+  if (!SEND_LOAN_SMS) {
+    // SMS sending disabled for loans in this deployment.
+    return Promise.resolve("disabled");
+  }
+
   let message =
     `DANIJACE PROMOTIONS LTD \nDear ${memberName}, loan payment of KES ${formatAmount(amount)} has been received.\n Thank you.`;
 
@@ -238,6 +246,13 @@ export async function queueLoanDisbursementSms(
     `Account: ${accountNumber}`,
     `Thank you.`,
   ].join("\n");
+
+  // Feature flag: only queue loan SMS when enabled explicitly.
+  const SEND_LOAN_SMS = String(process.env.SEND_LOAN_SMS || "false").toLowerCase() === "true";
+
+  if (!SEND_LOAN_SMS) {
+    return Promise.resolve("disabled");
+  }
 
   return queueSms({
     type:
@@ -319,6 +334,13 @@ export async function queueLoanPaymentReminderSms(
     `Account: ${accountNumber}\n` +
     `Please pay on time.`;
 
+  // Feature flag: only queue loan SMS when enabled explicitly.
+  const SEND_LOAN_SMS = String(process.env.SEND_LOAN_SMS || "false").toLowerCase() === "true";
+
+  if (!SEND_LOAN_SMS) {
+    return Promise.resolve("disabled");
+  }
+
   return queueSms({
     type: SMS_TYPES.LOAN_PAYMENT_REMINDER,
     memberId,
@@ -368,6 +390,12 @@ export async function queueLoanClearedSms(
 
   const message =
     `DANIJACE PROMOTIONS\n Dear ${memberName}, your loan is fully cleared. Thank you.: `;
+  // Feature flag: only queue loan SMS when enabled explicitly.
+  const SEND_LOAN_SMS = String(process.env.SEND_LOAN_SMS || "false").toLowerCase() === "true";
+
+  if (!SEND_LOAN_SMS) {
+    return Promise.resolve("disabled");
+  }
 
   return queueSms({
     type: SMS_TYPES.LOAN_CLEARED,
