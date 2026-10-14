@@ -5,7 +5,7 @@ import {
   type Db,
 } from "mongodb";
 
-import clientPromise from "@/lib/mongodb";
+import clientPromise from "../../mongodb";
 
 import type {
   Loan,

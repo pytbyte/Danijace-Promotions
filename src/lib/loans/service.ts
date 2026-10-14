@@ -3641,9 +3641,7 @@ function getAssessmentPeriod(
   const periodStart =
     addCalendarDays(
       disbursementDate,
-      (
-        periodNumber - 1
-      ) * (cycleDays + 1),
+      (periodNumber - 1) * cycleDays,
     );
 
   /*
@@ -3664,7 +3662,7 @@ function getAssessmentPeriod(
   const normalPeriodEnd =
     addCalendarDays(
       periodStart,
-      cycleDays,
+      cycleDays - 1,
     );
 
   /*
@@ -3732,8 +3730,7 @@ function getMaximumContractualPeriod(
     const periodStart =
       addCalendarDays(
         disbursementDate,
-        maximumPeriod *
-          (cycleDays + 1),
+        maximumPeriod * cycleDays,
       );
 
     if (

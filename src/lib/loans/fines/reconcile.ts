@@ -13,9 +13,10 @@ import type {
   AssessmentPeriod,
   CalendarDate,
   FineCalculation,
-} from "@/lib/loans/fines/types";
+} from "./types";
 
-import * as repository from "@/lib/loans/fines/repository";
+import { normalizeLoanCalendarDate, addCalendarDays } from "./date-utils";
+import type { FineLoanDocument } from "./repository";
 
 const SYSTEM_ACTOR: LoanActor = {
   name: "System",
@@ -68,8 +69,8 @@ function calculateLoanAmountDue(
   return money(Math.min(money(installmentAmount), remainingCore));
 }
 
-function getAssessmentPeriod(
-  loan: repository.FineLoanDocument,
+export function getAssessmentPeriod(
+  loan: FineLoanDocument,
   periodNumber: number,
 ): AssessmentPeriod {
   if (!Number.isInteger(periodNumber) || periodNumber <= 0) {
@@ -79,12 +80,12 @@ function getAssessmentPeriod(
   }
 
   const cycleDays = normalizeCycleDays(loan.repaymentCycleDays);
-  const disbursementDate = repository.normalizeLoanCalendarDate(
+  const disbursementDate = normalizeLoanCalendarDate(
     loan.disbursementDate,
     "loan.disbursementDate",
     loan.loanNumber,
   );
-  const loanEndDate = repository.normalizeLoanCalendarDate(
+  const loanEndDate = normalizeLoanCalendarDate(
     loan.endDate,
     "loan.endDate",
     loan.loanNumber,
@@ -98,10 +99,7 @@ function getAssessmentPeriod(
   loanEndType: typeof loanEndDate,
 });
 
-const firstPeriodStart = repository.addCalendarDays(
-  disbursementDate,
-  0,
-);
+const firstPeriodStart = addCalendarDays(disbursementDate, 0);
 
 console.log("[MAX PERIOD TRACE] FIRST PERIOD", {
   disbursementDate,
@@ -116,10 +114,7 @@ console.log("[MAX PERIOD TRACE] FIRST PERIOD", {
     );
   }
 
-  const periodStart = repository.addCalendarDays(
-    disbursementDate,
-    (periodNumber - 1) * (cycleDays + 1),
-  );
+  const periodStart = addCalendarDays(disbursementDate, (periodNumber - 1) * cycleDays);
 
   if (periodStart >= loanEndDate) {
     throw new Error(
@@ -127,10 +122,7 @@ console.log("[MAX PERIOD TRACE] FIRST PERIOD", {
     );
   }
 
-  const normalPeriodEnd = repository.addCalendarDays(
-    periodStart,
-    cycleDays,
-  );
+  const normalPeriodEnd = addCalendarDays(periodStart, cycleDays - 1);
 
   return {
     periodNumber,
@@ -142,16 +134,16 @@ console.log("[MAX PERIOD TRACE] FIRST PERIOD", {
   };
 }
 
-function getMaximumContractualPeriod(
-  loan: repository.FineLoanDocument,
+export function getMaximumContractualPeriod(
+  loan: FineLoanDocument,
 ): number {
   const cycleDays = normalizeCycleDays(loan.repaymentCycleDays);
-  const disbursementDate = repository.normalizeLoanCalendarDate(
+  const disbursementDate = normalizeLoanCalendarDate(
     loan.disbursementDate,
     "loan.disbursementDate",
     loan.loanNumber,
   );
-  const loanEndDate = repository.normalizeLoanCalendarDate(
+  const loanEndDate = normalizeLoanCalendarDate(
     loan.endDate,
     "loan.endDate",
     loan.loanNumber,
@@ -165,10 +157,7 @@ function getMaximumContractualPeriod(
   loanEndType: typeof loanEndDate,
 });
 
-const firstPeriodStart = repository.addCalendarDays(
-  disbursementDate,
-  0,
-);
+const firstPeriodStart = addCalendarDays(disbursementDate, 0);
 
 console.log("[MAX PERIOD TRACE] FIRST PERIOD", {
   disbursementDate,
@@ -186,10 +175,7 @@ console.log("[MAX PERIOD TRACE] FIRST PERIOD", {
   let maximumPeriod = 0;
 
   for (;;) {
-    const periodStart = repository.addCalendarDays(
-      disbursementDate,
-      maximumPeriod * (cycleDays + 1),
-    );
+    const periodStart = addCalendarDays(disbursementDate, maximumPeriod * cycleDays);
 
     if (periodStart >= loanEndDate) {
       break;
