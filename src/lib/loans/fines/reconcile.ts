@@ -16,6 +16,7 @@ import type {
 } from "./types";
 
 import { normalizeLoanCalendarDate, addCalendarDays } from "./date-utils";
+import * as repository from "./repository";
 import type { FineLoanDocument } from "./repository";
 
 const SYSTEM_ACTOR: LoanActor = {
