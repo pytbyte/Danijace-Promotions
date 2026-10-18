@@ -787,7 +787,7 @@ function DeviceRecoveryResetScreen({
           <div className="text-center">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.25rem] border border-sky-400/20 bg-sky-400/[0.06]">
               <span className="text-lg font-black tracking-[0.18em] text-sky-300">
-                JP
+                DP
               </span>
             </div>
 
@@ -1959,7 +1959,7 @@ function IdentityScreen({
    DANIJACE PROMOTIONS NAVIGATOR
 ========================================================= */
 
-function DanijaceNavigator(): ReactNode {
+function DanijacePromotionsNavigator(): ReactNode {
   const router = useRouter();
 
   const navigation = [
@@ -2653,5 +2653,5 @@ export default function DashboardPage(): ReactNode {
      AFTER SECURITY → NAVIGATOR
   ======================================================= */
 
-  return <DanijaceNavigator />;
+  return <DanijacePromotionsNavigator />;
 }

@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "DANIJACE PROMOTIONS Company",
-    short_name: "DANIJACE PROMOTIONS",
-    description: "DANIJACE PROMOTIONS SACCO Management System",
+    name: "Danijace Promotions",
+    short_name: "Danijace",
+    description: "Danijace Promotions SACCO Management System",
     start_url: "/dashboard",
     display: "standalone",
     background_color: "#050505",
@@ -12,7 +12,7 @@ export default function manifest(): MetadataRoute.Manifest {
     orientation: "portrait",
     icons: [
       {
-        src: "/icon-192.png",
+        src: "/icons/icon-192.png",
         sizes: "192x192",
         type: "image/png",
       },

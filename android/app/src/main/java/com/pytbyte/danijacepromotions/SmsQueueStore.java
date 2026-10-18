@@ -70,7 +70,7 @@ import java.util.List;
 public final class SmsQueueStore {
 
     private static final String TAG =
-            "DanijaceSmsQueue";
+            "DanijacePromotionsSmsQueue";
 
     /* =====================================================
        DATABASE

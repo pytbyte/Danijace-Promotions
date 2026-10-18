@@ -95,7 +95,7 @@ public final class FcmTokenRegistrar {
             "https://danijace-promotions.vercel.app/api/sms/outbox/device";
 
     private static final String WORKER_TOKEN_HEADER =
-            "x-danijace-sms-worker";
+            "x-danijacepromotions-sms-worker";
 
     /* =====================================================
        HTTP
@@ -123,7 +123,7 @@ public final class FcmTokenRegistrar {
      * that could become inconsistent with MongoDB.
      */
     private static final String PREFS_NAME =
-            "danijace_fcm_registration";
+            "danijacepromotions_fcm_registration";
 
     private static final String TOKEN_KEY =
             "fcm_token";
@@ -133,7 +133,7 @@ public final class FcmTokenRegistrar {
     ===================================================== */
 
     private static final String REGISTRATION_WORK_NAME =
-            "danijace_fcm_device_registration";
+            "danijacepromotions_fcm_device_registration";
 
     /* =====================================================
        EXECUTOR
@@ -210,7 +210,7 @@ public final class FcmTokenRegistrar {
      *
      * Called from:
      *
-     *     DanijaceFirebaseMessagingService.onNewToken()
+     *     DanijacePromotionsFirebaseMessagingService.onNewToken()
      *
      * and internally after Firebase returns the current
      * token.
@@ -782,7 +782,7 @@ public final class FcmTokenRegistrar {
              */
             connection.setRequestProperty(
                     WORKER_TOKEN_HEADER,
-                    BuildConfig.DANIJACE_SMS_WORKER_TOKEN
+                    BuildConfig.GEO_SHUA_SMS_WORKER_TOKEN
             );
 
             byte[] payload =

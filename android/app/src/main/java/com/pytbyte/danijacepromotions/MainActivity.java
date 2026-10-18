@@ -160,13 +160,13 @@ public class MainActivity extends BridgeActivity {
 
             if (granted) {
                 android.util.Log.d(
-                        "DanijacePermissions",
+                        "DanijacePromotionsPermissions",
                         "Permission granted: " +
                                 permissions[i]
                 );
             } else {
                 android.util.Log.w(
-                        "DanijacePermissions",
+                        "DanijacePromotionsPermissions",
                         "Permission denied: " +
                                 permissions[i]
                 );

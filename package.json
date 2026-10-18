@@ -7,7 +7,9 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest"
+    "test:sms": "node --test tests/sms-bank-routing.test.mjs",
+    "test:fines": "node --test tests/*.test.mjs",
+    "sweep:fines": "node scripts/sweep-historical-fines.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
@@ -41,7 +43,6 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.3",
     "tailwindcss": "^4",
-    "typescript": "^5",
-    "vitest": "^1.0.0"
+    "typescript": "^5"
   }
 }

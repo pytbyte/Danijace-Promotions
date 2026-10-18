@@ -26,11 +26,11 @@ import com.google.firebase.messaging.RemoteMessage;
  * The actual SMS processing is performed by
  * SmsOutboxWorker.
  */
-public class DanijaceFirebaseMessagingService
+public class DanijacePromotionsFirebaseMessagingService
         extends FirebaseMessagingService {
 
     private static final String TAG =
-            "DanijaceFCM";
+            "DanijacePromotionsFCM";
 
     /*
      * Event sent by the DANIJACE PROMOTIONS backend when there

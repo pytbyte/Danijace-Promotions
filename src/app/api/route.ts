@@ -305,7 +305,7 @@ function authorizeRequest(
 
   const suppliedSecret =
     request.headers.get(
-      "x-danijace-overpaid-secret",
+      "x-danijacepromotions-overpaid-secret",
     );
 
   if (

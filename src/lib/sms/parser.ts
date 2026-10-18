@@ -32,7 +32,7 @@
  *      ↓
  * processor.ts
  *      ↓
- * bank destination classification
+ * bank-source classification
  *      ↓
  * loan / savings / unknown
  *      ↓
@@ -53,14 +53,14 @@
  * - a DANIJACE PROMOTIONS loan ID
  * - a DANIJACE PROMOTIONS loan number
  *
- * The destination account is used by processor.ts to decide
- * whether the payment is:
+ * Known bank formats are routed by bank source. Legacy
+ * messages still use the configured destination account:
  *
  *   082083  → loan
  *   2650821 → savings
  *
- * The sender name is then used to resolve the DANIJACE PROMOTIONS
- * member.
+ * Loan messages use the payer name. KCB savings messages use
+ * the account-holder name, which can differ from the payer.
  *
  * Example:
  *
@@ -109,6 +109,13 @@ export type BankPaymentType =
   | "savings"
   | "unknown";
 
+export type BankSource =
+  | "equity"
+  | "kcb"
+  | "ncba"
+  | "legacy"
+  | "unknown";
+
 /**
  * Parsed and normalized bank SMS.
  *
@@ -118,6 +125,7 @@ export type BankPaymentType =
  * processor.ts.
  */
 export type ParsedBankSms = {
+  bank: BankSource;
   /**
    * Bank transaction/reference code.
    *
@@ -144,6 +152,9 @@ export type ParsedBankSms = {
    * FRANCIS MWANGI KAMAU
    */
   senderName: string;
+
+  /** Named KCB account holder; may differ from the payer. */
+  accountHolderName?: string;
 
   /**
    * BANK collection/destination account number appearing
@@ -415,6 +426,88 @@ function parseReference(
   return reference;
 }
 
+function identifyBank(
+  body: string,
+  address: string | null,
+): BankSource {
+  const source = (address || "").toUpperCase();
+
+  if (/\bNCBA\b/.test(source) || /\bNCBA,\s*Go for it\b/i.test(body)) return "ncba";
+  if (/\bKCB\b/.test(source) || /\bKCB Go Ahead\b/i.test(body)) return "kcb";
+  if (/\bEQUITY\b/.test(source)) return "equity";
+
+  if (/^Confirmed\.\s*KES\.?\s*[\d,]+(?:\.\d{1,2})?\s+from\s+.+?\s+received\s+Ref\./i.test(body)) return "equity";
+  if (/^Dear\s+.+?\s+a\s+transaction\s+of\s+KES\s+[\d,]+(?:\.\d{1,2})?\s+for\s+\d+\s+has\s+been\s+received\s+from\s+.+?M-Pesa\s+Ref:/i.test(body)) return "ncba";
+  if (/^[A-Z0-9]+\s+completed\.\s+You have received\s+KES\s+[\d,]+(?:\.\d{1,2})?\s+from\s+.+?\s+for account\s+/i.test(body)) return "kcb";
+
+  return "legacy";
+}
+
+function parseBankReference(
+  body: string,
+  bank: BankSource,
+): string {
+  const match = bank === "equity"
+    ? body.match(/\breceived\s+Ref\.?\s*([A-Z0-9]+)\b/i)
+    : bank === "ncba"
+      ? body.match(/\bM-Pesa\s+Ref:\s*([A-Z0-9]+)\b/i)
+      : bank === "kcb"
+        ? body.match(/^([A-Z0-9]+)\s+completed\./i)
+        : null;
+
+  if (match?.[1]) return normalizeReference(match[1]);
+  return parseReference(body);
+}
+
+function parseBankSenderName(
+  body: string,
+  bank: BankSource,
+): string {
+  const match = bank === "equity"
+    ? body.match(/\bfrom\s+(.+?)\s+received\s+Ref\./i)
+    : bank === "ncba"
+      ? body.match(/\breceived\s+from\s+(.+?)\s+on\s+\d/i)
+      : bank === "kcb"
+        ? body.match(/\bfrom\s+(.+?)\s+for\s+account\b/i)
+        : null;
+
+  if (!match?.[1]) return parseSenderName(body);
+
+  const name = normalizeName(match[1].replace(/\s+\+?254\d{9}\s*$/, ""));
+  if (!name) throw new SmsParseError("Sender name is empty.");
+  return name;
+}
+
+function parseKcbAccount(
+  body: string,
+): { name: string; number: string } {
+  const match = body.match(/\bfor\s+account\s+(.+?)\s+(\d+)\s+on\s+/i);
+  if (!match?.[1] || !match[2]) {
+    throw new SmsParseError("Could not identify the KCB account holder and account number.");
+  }
+
+  return {
+    name: normalizeName(match[1]),
+    number: normalizeDestinationAccountNumber(match[2]),
+  };
+}
+
+function parseBankDestinationAccount(
+  body: string,
+  bank: BankSource,
+): string {
+  if (bank === "equity") return "";
+  if (bank === "kcb") return parseKcbAccount(body).number;
+
+  if (bank === "ncba") {
+    const match = body.match(/\bfor\s+(\d+)\s+has\s+been\s+received\b/i);
+    if (!match?.[1]) throw new SmsParseError("Could not identify the NCBA account number.");
+    return match[1];
+  }
+
+  return parseDestinationAccountNumber(body);
+}
+
 /* =========================================================
    AMOUNT
 ========================================================= */
@@ -429,7 +522,7 @@ function parseAmountFromBody(
 ): number {
   const match =
     body.match(
-      /\bKES\s+([\d,]+(?:\.\d{1,2})?)\b/i,
+      /\bKES\.?\s*([\d,]+(?:\.\d{1,2})?)\b/i,
     );
 
   if (!match?.[1]) {
@@ -573,7 +666,7 @@ function parseTransactionDate(
 ): Date {
   const match =
     body.match(
-      /\bon\s+(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\s+at\s+(\d{1,2}):(\d{2})\s*(AM|PM)\b/i,
+      /\bon\s+(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})\s+(?:at\s+)?(\d{1,2}):(\d{2})\s*(AM|PM)?\b/i,
     );
 
   if (!match) {
@@ -608,7 +701,7 @@ function parseTransactionDate(
     Number(minuteText);
 
   const meridiem =
-    meridiemText.toUpperCase();
+    (meridiemText || "").toUpperCase();
 
   if (
     !Number.isInteger(day) ||
@@ -639,8 +732,8 @@ function parseTransactionDate(
     month > 12 ||
     day < 1 ||
     day > 31 ||
-    hour < 1 ||
-    hour > 12 ||
+    hour < 0 ||
+    hour > (meridiem ? 12 : 23) ||
     minute < 0 ||
     minute > 59
   ) {
@@ -668,7 +761,7 @@ function parseTransactionDate(
     ) {
       hour += 12;
     }
-  } else {
+  } else if (meridiem) {
     throw new SmsParseError(
       "Transaction time must specify AM or PM.",
     );
@@ -753,7 +846,7 @@ function parseStatus(
   body: string,
 ): "confirmed" {
   if (
-    !/\bConfirmed\./i.test(
+    !/(?:\bConfirmed\.|\bcompleted\.|\bhas been received\b)/i.test(
       body,
     )
   ) {
@@ -830,12 +923,21 @@ export function parseBankSms(
       body,
     );
 
+  const address =
+    typeof sms.address === "string"
+      ? sms.address.trim() || null
+      : null;
+
+  const bank =
+    identifyBank(normalizedBody, address);
+
   /**
    * Parse immutable bank fields.
    */
   const reference =
-    parseReference(
+    parseBankReference(
       normalizedBody,
+      bank,
     );
 
   const amount =
@@ -844,13 +946,20 @@ export function parseBankSms(
     );
 
   const senderName =
-    parseSenderName(
+    parseBankSenderName(
       normalizedBody,
+      bank,
     );
 
+  const accountHolderName =
+    bank === "kcb"
+      ? parseKcbAccount(normalizedBody).name
+      : undefined;
+
   const destinationAccountNumber =
-    parseDestinationAccountNumber(
+    parseBankDestinationAccount(
       normalizedBody,
+      bank,
     );
 
   const transactionDate =
@@ -879,11 +988,17 @@ export function parseBankSms(
     "unknown";
 
   return {
+    bank,
+
     reference,
 
     amount,
 
     senderName,
+
+    ...(accountHolderName
+      ? { accountHolderName }
+      : {}),
 
     destinationAccountNumber,
 
@@ -891,12 +1006,7 @@ export function parseBankSms(
 
     transactionDate,
 
-    address:
-      typeof sms.address ===
-        "string"
-        ? sms.address.trim() ||
-          null
-        : null,
+    address,
 
     rawMessage:
       normalizedBody,

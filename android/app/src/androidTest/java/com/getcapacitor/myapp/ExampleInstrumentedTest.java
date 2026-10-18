@@ -1,4 +1,4 @@
-package com.pytbyte.danijacepromotions;
+package com.getcapacitor.myapp;
 
 import static org.junit.Assert.*;
 
@@ -21,6 +21,6 @@ public class ExampleInstrumentedTest {
         // Context of the app under test.
         Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
 
-        assertEquals("com.pytbyte.danijacepromotions", appContext.getPackageName());
+        assertEquals("com.getcapacitor.app", appContext.getPackageName());
     }
 }

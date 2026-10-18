@@ -3571,7 +3571,8 @@ type AssessmentPeriod = {
  * Contractual schedule rules:
  *
  * 1. The first period starts on loan.disbursementDate.
- * 2. Each normal period spans repaymentCycleDays.
+ * 2. A normal period spans repaymentCycleDays and the next
+ *    period begins one calendar day later.
  * 3. No period may begin on or after loan.endDate.
  * 4. If loan.endDate falls inside a normal cycle, that cycle
  *    becomes the final contractual period and is clipped to
@@ -3587,13 +3588,12 @@ type AssessmentPeriod = {
  *     2026-09-14 -> 2026-09-21
  *
  *   Period 2:
- *     2026-09-22 -> 2026-09-29
+ *     2026-09-22 -> 2026-09-28
  *
  *   Period 3:
- *     2026-09-30 -> 2026-10-07
+ *     2026-09-29 -> 2026-10-03
  *
- *   The schedule is clipped at loan.endDate, so there is no
- *   period that starts on or after the contractual end date.
+ *   There is no Period 4.
  */
 function getAssessmentPeriod(
   loan: LoanDocument,
@@ -3641,7 +3641,12 @@ function getAssessmentPeriod(
   const periodStart =
     addCalendarDays(
       disbursementDate,
-      (periodNumber - 1) * cycleDays,
+      (
+        periodNumber - 1
+      ) *
+        (
+          cycleDays + 1
+        ),
     );
 
   /*
@@ -3662,7 +3667,7 @@ function getAssessmentPeriod(
   const normalPeriodEnd =
     addCalendarDays(
       periodStart,
-      cycleDays - 1,
+      cycleDays,
     );
 
   /*
@@ -3723,6 +3728,9 @@ function getMaximumContractualPeriod(
     );
   }
 
+  const periodStartStepDays =
+    cycleDays + 1;
+
   let maximumPeriod =
     0;
 
@@ -3730,7 +3738,8 @@ function getMaximumContractualPeriod(
     const periodStart =
       addCalendarDays(
         disbursementDate,
-        maximumPeriod * cycleDays,
+        maximumPeriod *
+          periodStartStepDays,
       );
 
     if (
@@ -8047,6 +8056,9 @@ async function closeCompletedLoanPeriods(
   /*
    * Determine the number of contractual periods.
    */
+  const periodStartStepDays =
+    cycleDays + 1;
+
   let maximumContractualPeriod =
     0;
 
@@ -8055,7 +8067,7 @@ async function closeCompletedLoanPeriods(
       addCalendarDays(
         disbursementDate,
         maximumContractualPeriod *
-          cycleDays,
+          periodStartStepDays,
       );
 
     if (

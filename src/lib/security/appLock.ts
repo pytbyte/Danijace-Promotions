@@ -23,7 +23,7 @@
 ============================================================ */
 
 export const APP_LOCK_STORAGE_KEY =
-  "danijace_app_lock";
+  "danijacepromotions_app_lock";
 
 /* ============================================================
    DEFAULTS

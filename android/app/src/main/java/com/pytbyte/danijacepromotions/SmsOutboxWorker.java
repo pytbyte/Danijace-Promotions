@@ -63,7 +63,7 @@ public class SmsOutboxWorker extends Worker {
             30_000;
 
     private static final String PREFS_NAME =
-            "danijace_sms_worker";
+            "danijacepromotions_sms_worker";
 
     private static final String DEVICE_ID_KEY =
             "device_id";
@@ -73,10 +73,10 @@ public class SmsOutboxWorker extends Worker {
      */
 
     private static final String IMMEDIATE_WORK_NAME =
-            "danijace_sms_outbox_now";
+            "danijacepromotions_sms_outbox_now";
 
     private static final String PERIODIC_WORK_NAME =
-            "danijace_sms_outbox";
+            "danijacepromotions_sms_outbox";
 
     /*
      * =========================================================
@@ -402,7 +402,7 @@ public class SmsOutboxWorker extends Worker {
      * FCM WAKE
      * =========================================================
      *
-     * Called by DanijaceFirebaseMessagingService when the
+     * Called by DanijacePromotionsFirebaseMessagingService when the
      * backend sends:
      *
      *     event=sms_outbox
@@ -1081,8 +1081,8 @@ public class SmsOutboxWorker extends Worker {
              */
 
             connection.setRequestProperty(
-                    "x-danijace-sms-worker",
-                    BuildConfig.DANIJACE_SMS_WORKER_TOKEN
+                    "x-danijacepromotions-sms-worker",
+                    BuildConfig.GEO_SHUA_SMS_WORKER_TOKEN
             );
 
             byte[] payload =

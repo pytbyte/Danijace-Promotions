@@ -17,7 +17,7 @@ type ReverseRequestBody = {
   reason?: unknown;
 };
 
-const SACCO_ID = "danijace";
+const SACCO_ID = "danijacepromotions";
 const SACCO_NAME = "DANIJACE PROMOTIONS";
 
 export async function POST(

@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 
 const FRESH_LAUNCH_KEY =
-  "danijace_native_session_initialized";
+  "danijacepromotions_native_session_initialized";
 
 export default function CapacitorAuthListener() {
   const router = useRouter();
@@ -126,7 +126,7 @@ export default function CapacitorAuthListener() {
        *
        * Once the app has already initialized, receiving:
        *
-       * danijace://auth...
+       * danijacepromotions://auth...
        *
        * takes the authenticated user to the dashboard.
        */
@@ -141,7 +141,7 @@ export default function CapacitorAuthListener() {
 
             if (
               !url.startsWith(
-                "danijace://auth",
+                "danijacepromotions://auth",
               )
             ) {
               return;

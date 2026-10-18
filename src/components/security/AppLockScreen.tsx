@@ -259,7 +259,7 @@ export default function AppLockScreen({
       "
       role="dialog"
       aria-modal="true"
-      aria-labelledby="danijace-app-lock-title"
+      aria-labelledby="danijacepromotions-app-lock-title"
     >
       {/* ======================================================
           BACKGROUND
@@ -291,7 +291,7 @@ export default function AppLockScreen({
             </p>
 
             <h1
-              id="danijace-app-lock-title"
+              id="danijacepromotions-app-lock-title"
               className="mt-1.5 text-xl font-semibold"
             >
               App locked

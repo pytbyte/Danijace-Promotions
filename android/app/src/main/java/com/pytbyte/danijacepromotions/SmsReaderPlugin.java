@@ -138,7 +138,7 @@ import java.util.List;
 public class SmsReaderPlugin extends Plugin {
 
     private static final String TAG =
-        "DanijaceSmsReader";
+        "DanijacePromotionsSmsReader";
 
     /*
      * Android inbox provider.

@@ -68,7 +68,7 @@ public class DeviceSecurityPlugin extends Plugin {
      * Versioned recovery-key alias.
      */
     private static final String RECOVERY_KEY_ALIAS =
-            "danijace_device_recovery_key_v2";
+            "danijacepromotions_device_recovery_key_v2";
 
     /**
      * Signature algorithm used by both Android and the server.

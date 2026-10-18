@@ -63,7 +63,7 @@ public final class SmsDiagnosticWorker
         extends Worker {
 
     private static final String TAG =
-            "DanijaceSmsDiagnostic";
+            "DanijacePromotionsSmsDiagnostic";
 
     /* =====================================================
        API
@@ -81,7 +81,7 @@ public final class SmsDiagnosticWorker
     ===================================================== */
 
     private static final String UNIQUE_WORK_NAME =
-            "danijace_sms_diagnostic_now";
+            "danijacepromotions_sms_diagnostic_now";
 
     /* =====================================================
        SMS WINDOW

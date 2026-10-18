@@ -21,7 +21,7 @@ function authorizeRequest(
 
   const suppliedSecret =
     request.headers.get(
-      "x-danijace-loan-expiry-secret",
+      "x-danijacepromotions-loan-expiry-secret",
     );
 
   if (

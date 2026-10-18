@@ -17,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Danijace Promotions",
-  description: "Danijace Promotions Company",
+  title: "Danijace",
+  description: "Danijace Company",
 };
 
 export default function RootLayout({

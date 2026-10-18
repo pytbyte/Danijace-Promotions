@@ -39,8 +39,8 @@ android {
          */
         buildConfigField(
             "String",
-            "DANIJACE_SMS_WORKER_TOKEN",
-            "\"DANIJACE_SMS_WORKER_2026_TEST_9f7a2c81b4e6\""
+            "GEO_SHUA_SMS_WORKER_TOKEN",
+            "\"GEO_SHUA_SMS_WORKER_2026_TEST_9f7a2c81b4e6\""
         )
 
         aaptOptions {
@@ -56,20 +56,7 @@ android {
         }
     }
 
-    signingConfigs {
-        debug {
-            storeFile file("danijace-debug.keystore")
-            storePassword "android"
-            keyAlias "danijaceDebug"
-            keyPassword "android"
-        }
-    }
-
     buildTypes {
-        debug {
-            signingConfig signingConfigs.debug
-        }
-
         release {
             minifyEnabled false
 

@@ -5,7 +5,7 @@ import {
   type Db,
 } from "mongodb";
 
-import clientPromise from "../../mongodb";
+import clientPromise from "@/lib/mongodb";
 
 import type {
   Loan,
@@ -19,6 +19,11 @@ import type {
   AssessmentPeriod,
   CalendarDate,
 } from "./types";
+
+import {
+  isCalendarDateAtOrBefore,
+  isCalendarDateWithinRange,
+} from "./date-range";
 
 const DB_NAME =
   process.env.MONGODB_DB || "danijace";
@@ -336,44 +341,35 @@ export async function getAmountPaidAsOf(
   assertCalendarDate(asOfDate, "repayment cutoff date");
 
   const { repayments } = await getCollections();
-  const legacyCutoffStart = calendarDateToKenyanStartDate(asOfDate);
-  const legacyCutoffEnd = new Date(
-    legacyCutoffStart.getTime() + 24 * 60 * 60 * 1000 - 1,
-  );
 
-  const result = await repayments
-    .aggregate<{ _id: null; total: number }>(
-      [
-        {
-          $match: {
-            loanId,
-            $or: [
-              {
-                transactionDate: {
-                  $lte: asOfDate,
-                },
-              },
-              {
-                transactionDate: {
-                  $type: "date",
-                  $lte: legacyCutoffEnd,
-                },
-              },
-            ],
-          },
+  const records = await repayments
+    .find(
+      { loanId },
+      {
+        projection: {
+          amount: 1,
+          transactionDate: 1,
         },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: "$amount" },
-          },
-        },
-      ],
-      { session },
+        session,
+      },
     )
     .toArray();
 
-  return money(Number(result[0]?.total ?? 0));
+  let total = 0;
+
+  for (const record of records) {
+    const amount = Number(record.amount ?? 0);
+
+    if (!Number.isFinite(amount)) {
+      continue;
+    }
+
+    if (isCalendarDateAtOrBefore(record.transactionDate, asOfDate)) {
+      total += amount;
+    }
+  }
+
+  return money(total);
 }
 
 export async function getPaymentsDuringPeriod(
@@ -386,63 +382,42 @@ export async function getPaymentsDuringPeriod(
 
   const { repayments } = await getCollections();
 
-  const canonicalDateFilter =
-    period.periodNumber === 1
-      ? {
-          $gte: period.periodStart,
-          $lte: period.periodEnd,
-        }
-      : {
-          $gt: period.periodStart,
-          $lte: period.periodEnd,
-        };
-
-  const periodStartDate = calendarDateToKenyanStartDate(period.periodStart);
-  const periodEndStartDate = calendarDateToKenyanStartDate(period.periodEnd);
-  const periodEndDate = new Date(
-    periodEndStartDate.getTime() + 24 * 60 * 60 * 1000 - 1,
-  );
-
-  const legacyDateFilter =
-    period.periodNumber === 1
-      ? {
-          $gte: periodStartDate,
-          $lte: periodEndDate,
-        }
-      : {
-          $gt: periodStartDate,
-          $lte: periodEndDate,
-        };
-
-  const result = await repayments
-    .aggregate<{ _id: null; total: number }>(
-      [
-        {
-          $match: {
-            loanId,
-            $or: [
-              { transactionDate: canonicalDateFilter },
-              {
-                transactionDate: {
-                  $type: "date",
-                  ...legacyDateFilter,
-                },
-              },
-            ],
-          },
+  const records = await repayments
+    .find(
+      { loanId },
+      {
+        projection: {
+          amount: 1,
+          transactionDate: 1,
         },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: "$amount" },
-          },
-        },
-      ],
-      { session },
+        session,
+      },
     )
     .toArray();
 
-  return money(Number(result[0]?.total ?? 0));
+  let total = 0;
+  const includeStartBoundary = period.periodNumber === 1;
+
+  for (const record of records) {
+    const amount = Number(record.amount ?? 0);
+
+    if (!Number.isFinite(amount)) {
+      continue;
+    }
+
+    if (
+      isCalendarDateWithinRange(
+        record.transactionDate,
+        period.periodStart,
+        period.periodEnd,
+        includeStartBoundary,
+      )
+    ) {
+      total += amount;
+    }
+  }
+
+  return money(total);
 }
 
 export async function findFineByPeriod(

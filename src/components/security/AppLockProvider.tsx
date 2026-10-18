@@ -71,9 +71,9 @@ const DEFAULT_FOREGROUND_TIMEOUT_MS =
 ============================================================ */
 
 const PREF_KEYS = {
-  foregroundTimeoutMs: "danijace.app_lock_timeout_ms",
-  lastActivity: "danijace.app_lock_last_activity",
-  backgroundedAt: "danijace.app_lock_backgrounded_at",
+  foregroundTimeoutMs: "danijacepromotions.app_lock_timeout_ms",
+  lastActivity: "danijacepromotions.app_lock_last_activity",
+  backgroundedAt: "danijacepromotions.app_lock_backgrounded_at",
 };
 
 /* ============================================================

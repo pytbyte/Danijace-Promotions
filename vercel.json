@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "schedule": "0 2 * * *",
+      "path": "/api/loans/fines/sweep"
+    }
+  ]
+}

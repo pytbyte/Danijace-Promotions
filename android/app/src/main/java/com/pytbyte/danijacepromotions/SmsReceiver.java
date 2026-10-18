@@ -70,7 +70,7 @@ import java.util.Map;
 public class SmsReceiver extends BroadcastReceiver {
 
     private static final String TAG =
-            "DanijaceSmsReceiver";
+            "DanijacePromotionsSmsReceiver";
 
     /**
      * Only capture SMS messages from the last 36 hours.

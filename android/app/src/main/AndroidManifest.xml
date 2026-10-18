@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.pytbyte.danijacepromotions">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- =========================================================
          NETWORK
@@ -83,7 +82,7 @@
         ====================================================== -->
 
         <service
-            android:name=".DanijaceFirebaseMessagingService"
+            android:name=".DanijacePromotionsFirebaseMessagingService"
             android:exported="false">
 
             <intent-filter>
@@ -192,7 +191,7 @@
                     android:name="android.intent.category.BROWSABLE" />
 
                 <data
-                    android:scheme="danijace"
+                    android:scheme="danijacepromotions"
                     android:host="auth" />
 
             </intent-filter>

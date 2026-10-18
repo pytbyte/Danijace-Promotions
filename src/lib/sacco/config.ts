@@ -9,7 +9,7 @@
  */
 
 export const CURRENT_SACCO = {
-  id: "danijace",
+  id: "danijacepromotions",
   name: "DANIJACE PROMOTIONS",
 } as const;
 

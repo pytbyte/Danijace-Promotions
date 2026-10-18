@@ -1,4 +1,4 @@
-const WORKER_HEADER = "x-danijace-sms-worker";
+const WORKER_HEADER = "x-danijacepromotions-sms-worker";
 
 export function isSmsWorkerRequest(request: Request): boolean {
   const configuredToken =

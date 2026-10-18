@@ -12,7 +12,7 @@ import {
    FIXED SACCO
 ========================================================= */
 
-const SACCO_ID = "danijace";
+const SACCO_ID = "danijacepromotions";
 
 /* =========================================================
    RESPONSE HELPERS

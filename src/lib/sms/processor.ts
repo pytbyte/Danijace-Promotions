@@ -120,14 +120,15 @@ import type {
   ParsedBankSms,
 } from "@/lib/sms/parser";
 
+import {
+  classifySmsTransaction,
+  getSmsMemberName,
+} from "@/lib/sms/routing";
+
 
 /* =========================================================
    CONSTANTS
 ========================================================= */
-
-const LOAN_BANK_ACCOUNT = "082083";
-
-const SAVINGS_BANK_ACCOUNT = "2650821";
 
 const FINANCIAL_TIME_ZONE =
   "Africa/Nairobi";
@@ -715,41 +716,15 @@ function normalizeTransactionTimestamp(
    BANK DESTINATION
 ========================================================= */
 
-function classifyBankAccount(
-  destinationAccountNumber: string,
-): BankPaymentType {
-  const account =
-    destinationAccountNumber
-      .trim()
-      .replace(/\s+/g, "");
-
-  if (
-    account ===
-    LOAN_BANK_ACCOUNT
-  ) {
-    return "loan";
-  }
-
-  if (
-    account ===
-    SAVINGS_BANK_ACCOUNT
-  ) {
-    return "savings";
-  }
-
-  return "unknown";
-}
-
-
 function classifyTransaction(
   parsed: ParsedBankSms,
 ): ClassifiedBankTransaction {
   return {
     ...parsed,
-    transactionType:
-      classifyBankAccount(
-        parsed.destinationAccountNumber,
-      ),
+    transactionType: classifySmsTransaction(
+      parsed.bank,
+      parsed.destinationAccountNumber,
+    ),
   };
 }
 
@@ -764,8 +739,8 @@ function normalizeName(
   return value
     .normalize("NFKC")
     .replace(
-      /[\u2018\u2019\u201A\u0060]/g,
-      "'",
+      /['\u2018\u2019\u201A\u0060]/g,
+      " ",
     )
     .replace(
       /\s+/g,
@@ -839,11 +814,11 @@ function getMemberName(
 ========================================================= */
 
 async function resolveMemberBySmsName(
-  senderName: string,
+  memberNameFromSms: string,
 ): Promise<ResolvedMember> {
   const normalizedSender =
     normalizeName(
-      senderName,
+      memberNameFromSms,
     );
 
   if (!normalizedSender) {
@@ -868,7 +843,7 @@ async function resolveMemberBySmsName(
   const searchTerms =
     Array.from(
       new Set([
-        senderName,
+      memberNameFromSms,
         ...tokens,
       ]),
     );
@@ -1529,9 +1504,9 @@ export async function processIncomingTransaction(
   }
 
   if (
-    typeof parsedTransaction.destinationAccountNumber !==
-      "string" ||
-    !parsedTransaction.destinationAccountNumber.trim()
+    typeof parsedTransaction.destinationAccountNumber !== "string" ||
+    (!parsedTransaction.destinationAccountNumber.trim() &&
+      parsedTransaction.bank !== "equity")
   ) {
     throw new Error(
       "Parsed bank transaction bank destination account number is required.",
@@ -1636,9 +1611,18 @@ export async function processIncomingTransaction(
      MEMBER
   ------------------------------------------------------- */
 
+  const memberName =
+    getSmsMemberName(classified);
+
+  if (!memberName?.trim()) {
+    throw new Error(
+      "Bank SMS payer name is required to identify the member.",
+    );
+  }
+
   const member =
     await resolveMemberBySmsName(
-      classified.senderName,
+      memberName,
     );
 
   /* -------------------------------------------------------

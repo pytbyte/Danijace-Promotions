@@ -116,7 +116,7 @@ public final class SmsProcessingWorker
         extends Worker {
 
     private static final String TAG =
-            "DanijaceSmsWorker";
+            "DanijacePromotionsSmsWorker";
 
     /* =====================================================
        API
@@ -138,10 +138,10 @@ public final class SmsProcessingWorker
     ===================================================== */
 
     private static final String IMMEDIATE_WORK_NAME =
-            "danijace_sms_processing_now";
+            "danijacepromotions_sms_processing_now";
 
     private static final String PERIODIC_WORK_NAME =
-            "danijace_sms_processing_periodic";
+            "danijacepromotions_sms_processing_periodic";
 
     /* =====================================================
        TIMING

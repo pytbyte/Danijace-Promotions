@@ -144,6 +144,10 @@ export const {
   signIn,
   signOut,
 } = NextAuth({
+  // The app runs behind managed hosting proxies; explicitly trust the
+  // forwarded host so Auth.js can serve /api/auth/session and callbacks.
+  trustHost: true,
+
   providers: [
     /* -----------------------------------------------------
        WEB GOOGLE LOGIN

@@ -32,6 +32,7 @@ import SavingsSearch, {
 import SavingsTable from "@/components/dashboard/savings/SavingsTable";
 import SavingsTransactionCard from "@/components/dashboard/savings/SavingsTransactionCard";
 
+import { calculateMemberAvailableSavingsBalance } from "@/lib/savings/ledger";
 import type { SavingsTransaction } from "@/lib/savings/types";
 
 /* =========================================================
@@ -775,10 +776,10 @@ type SavingsActionModalProps = {
     | SavingsTransaction
     | null;
 
-  availableBalance: number;
   amount: string;
   reason: string;
   loading: boolean;
+  availableBalance: number;
 
   error:
     | string
@@ -805,10 +806,10 @@ function SavingsActionModal({
   open,
   action,
   transaction,
-  availableBalance,
   amount,
   reason,
   loading,
+  availableBalance,
   error,
   onAmountChange,
   onReasonChange,
@@ -829,6 +830,14 @@ function SavingsActionModal({
   const parsedAmount =
     Number(amount);
 
+  const exceedsAvailableBalance =
+    isAdjustment &&
+    Number.isFinite(
+      parsedAmount,
+    ) &&
+    parsedAmount >
+      availableBalance;
+
   const canSubmit =
     reason.trim().length >
       0 &&
@@ -840,7 +849,8 @@ function SavingsActionModal({
         Number.isFinite(
           parsedAmount,
         ) &&
-        parsedAmount > 0
+        parsedAmount > 0 &&
+        !exceedsAvailableBalance
       )
     );
 
@@ -937,24 +947,15 @@ function SavingsActionModal({
 
               <div className="shrink-0 text-right">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-black/40">
-                  {isAdjustment
-                    ? "Available total"
-                    : "Original amount"}
+                  Original amount
                 </p>
 
                 <p className="mt-1 font-semibold text-black">
-                  {isAdjustment
-                    ? formatKES(
-                        Math.max(
-                          0,
-                          availableBalance,
-                        ),
-                      )
-                    : formatKES(
-                        Math.abs(
-                          transaction.amount,
-                        ),
-                      )}
+                  {formatKES(
+                    Math.abs(
+                      transaction.amount,
+                    ),
+                  )}
                 </p>
               </div>
             </div>
@@ -1015,6 +1016,24 @@ function SavingsActionModal({
                 ledger records withdrawals
                 as negative entries.
               </p>
+
+              <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <span className="text-xs font-medium text-black/55">
+                  Available savings
+                </span>
+
+                <span className="text-sm font-semibold text-black">
+                  {formatKES(
+                    availableBalance,
+                  )}
+                </span>
+              </div>
+
+              {exceedsAvailableBalance && (
+                <p className="mt-2 text-xs font-medium text-red-600">
+                  Withdrawal exceeds the member's available savings balance of {formatKES(availableBalance)}.
+                </p>
+              )}
             </div>
           )}
 
@@ -1255,11 +1274,6 @@ export default function SavingsPage() {
   ] = useState(false);
 
   const [
-    memberSavingsBalance,
-    setMemberSavingsBalance,
-  ] = useState(0);
-
-  const [
     actionError,
     setActionError,
   ] = useState<
@@ -1330,6 +1344,23 @@ export default function SavingsPage() {
         reversals,
       ],
     );
+
+  const actionMemberAvailableBalance =
+    useMemo(() => {
+      if (
+        !actionTransaction
+      ) {
+        return 0;
+      }
+
+      return calculateMemberAvailableSavingsBalance(
+        transactions,
+        actionTransaction.memberId,
+      );
+    }, [
+      actionTransaction,
+      transactions,
+    ]);
 
   /* =======================================================
      LOAD SUMMARY
@@ -1843,7 +1874,7 @@ export default function SavingsPage() {
 
   const handleAdjust =
     useCallback(
-      async (
+      (
         transaction: SavingsTransaction,
       ) => {
         if (
@@ -1879,54 +1910,6 @@ export default function SavingsPage() {
         setActionError(
           null,
         );
-
-        try {
-          const response =
-            await fetch(
-              `/api/savings/accounts?memberId=${encodeURIComponent(
-                transaction.memberId,
-              )}`,
-              {
-                method: "GET",
-                cache: "no-store",
-                credentials: "same-origin",
-              },
-            );
-
-          const payload =
-            await readJsonResponse(
-              response,
-            );
-
-          if (!response.ok) {
-            throw new Error(
-              String(
-                payload.message ??
-                  payload.error ??
-                  "Failed to load member savings total.",
-              ),
-            );
-          }
-
-          const data =
-            asRecord(payload.data) ??
-            asRecord(payload) ??
-            {};
-
-          setMemberSavingsBalance(
-            safeNumber(
-              data.memberTotalBalance ??
-                data.balance,
-            ),
-          );
-        } catch (error) {
-          console.error(
-            "Member savings total error:",
-            error,
-          );
-
-          setMemberSavingsBalance(0);
-        }
       },
       [],
     );
@@ -2006,8 +1989,6 @@ export default function SavingsPage() {
         "",
       );
 
-      setMemberSavingsBalance(0);
-
       setActionError(
         null,
       );
@@ -2065,12 +2046,18 @@ export default function SavingsPage() {
             return;
           }
 
+          const availableBalance =
+            calculateMemberAvailableSavingsBalance(
+              transactions,
+              actionTransaction.memberId,
+            );
+
           if (
             numericAmount >
-            memberSavingsBalance
+            availableBalance
           ) {
             setActionError(
-              "Withdrawal exceeds the member's total savings balance.",
+              `Withdrawal exceeds the member's available savings balance of ${formatKES(availableBalance)}.`,
             );
 
             return;
@@ -2086,18 +2073,21 @@ export default function SavingsPage() {
         );
 
         try {
+          const transactionId =
+            encodeURIComponent(
+              actionTransaction.id,
+            );
+
           const endpoint =
             action ===
             "adjust"
-              ? "/api/savings/withdraw"
-              : `${TRANSACTIONS_ENDPOINT}/${encodeURIComponent(actionTransaction.id)}/reverse`;
+              ? `${TRANSACTIONS_ENDPOINT}/${transactionId}/adjust`
+              : `${TRANSACTIONS_ENDPOINT}/${transactionId}/reverse`;
 
           const body =
             action ===
             "adjust"
               ? {
-                  memberId:
-                    actionTransaction.memberId,
                   amount:
                     numericAmount,
                   reason,
@@ -2165,8 +2155,6 @@ export default function SavingsPage() {
             "",
           );
 
-          setMemberSavingsBalance(0);
-
           await handleRefresh();
         } catch (error) {
           console.error(
@@ -2191,7 +2179,6 @@ export default function SavingsPage() {
         actionTransaction,
         actionAmount,
         actionReason,
-        memberSavingsBalance,
         handleRefresh,
       ],
     );
@@ -2874,9 +2861,6 @@ export default function SavingsPage() {
         transaction={
           actionTransaction
         }
-        availableBalance={
-          memberSavingsBalance
-        }
         amount={
           actionAmount
         }
@@ -2885,6 +2869,9 @@ export default function SavingsPage() {
         }
         loading={
           actionLoading
+        }
+        availableBalance={
+          actionMemberAvailableBalance
         }
         error={
           actionError
