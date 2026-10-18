@@ -892,7 +892,7 @@ async function resolveMemberBySmsName(
     candidates.size === 0
   ) {
     throw new Error(
-      `No DANIJACE PROMOTIONS member could be found for bank sender "${senderName}".`,
+      `No DANIJACE PROMOTIONS member could be found for bank sender "${memberNameFromSms}".`,
     );
   }
 
@@ -910,7 +910,7 @@ async function resolveMemberBySmsName(
           candidateName.length > 0 &&
           namesEqual(
             candidateName,
-            senderName,
+            memberNameFromSms,
           )
         );
       },
@@ -920,7 +920,7 @@ async function resolveMemberBySmsName(
     exactMatches.length === 0
   ) {
     throw new Error(
-      `Bank sender "${senderName}" did not exactly match a registered DANIJACE PROMOTIONS member.`,
+      `Bank sender "${memberNameFromSms}" did not exactly match a registered DANIJACE PROMOTIONS member.`,
     );
   }
 
@@ -928,7 +928,7 @@ async function resolveMemberBySmsName(
     exactMatches.length > 1
   ) {
     throw new Error(
-      `Multiple DANIJACE PROMOTIONS members exactly match bank sender "${senderName}". Automatic processing is blocked.`,
+      `Multiple DANIJACE PROMOTIONS members exactly match bank sender "${memberNameFromSms}". Automatic processing is blocked.`,
     );
   }
 
@@ -937,7 +937,7 @@ async function resolveMemberBySmsName(
 
   if (!member) {
     throw new Error(
-      `Unable to resolve DANIJACE PROMOTIONS member "${senderName}".`,
+      `Unable to resolve DANIJACE PROMOTIONS member "${memberNameFromSms}".`,
     );
   }
 
@@ -948,7 +948,7 @@ async function resolveMemberBySmsName(
 
   if (!memberId) {
     throw new Error(
-      `Resolved member "${senderName}" has no valid member ID.`,
+      `Resolved member "${memberNameFromSms}" has no valid member ID.`,
     );
   }
 
@@ -961,7 +961,7 @@ async function resolveMemberBySmsName(
     status !== "active"
   ) {
     throw new Error(
-      `Member "${senderName}" is not active and cannot receive automatic financial processing.`,
+      `Member "${memberNameFromSms}" is not active and cannot receive automatic financial processing.`,
     );
   }
 
@@ -972,7 +972,7 @@ async function resolveMemberBySmsName(
 
   if (!canonicalName) {
     throw new Error(
-      `Resolved member "${senderName}" has no valid registered name.`,
+      `Resolved member "${memberNameFromSms}" has no valid registered name.`,
     );
   }
 
