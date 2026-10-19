@@ -56,7 +56,7 @@ import java.util.List;
  *     Android SMS inbox
  *          |
  *          v
- *     last week only
+ *     last three days only
  *          |
  *          v
  *     SmsQueueStore
@@ -110,12 +110,12 @@ import java.util.List;
  *
  *
  * =========================================================
- * ONE-WEEK RULE
+ * THREE-DAY RULE
  * =========================================================
  *
  * Only SMS satisfying:
  *
- *     now - one week <= smsDate <= now
+ *     now - three days <= smsDate <= now
  *
  * are eligible.
  *
@@ -147,10 +147,10 @@ public class SmsReaderPlugin extends Plugin {
         "content://sms/inbox";
 
     /*
-     * Exactly one week.
+     * Exactly three days.
      */
-    private static final long ONE_WEEK_MS =
-        7L * 24L * 60L * 60L * 1000L;
+    private static final long THREE_DAYS_MS =
+        3L * 24L * 60L * 60L * 1000L;
 
     /*
      * Shared local SMS queue.
@@ -189,7 +189,7 @@ public class SmsReaderPlugin extends Plugin {
     /**
      * Reads the Android SMS inbox as a recovery mechanism.
      *
-     * Only the previous week is queried.
+     * Only the previous three days are queried.
      *
      * The Android inbox itself is never scanned historically.
      */
@@ -382,13 +382,13 @@ public class SmsReaderPlugin extends Plugin {
          * - Android inbox query
          * - pending retrieval
          *
-         * all use the same one-week boundary.
+         * all use the same three-day boundary.
          */
         final long now =
             System.currentTimeMillis();
 
         final long cutoff =
-            now - ONE_WEEK_MS;
+            now - THREE_DAYS_MS;
 
         Log.d(
             TAG,
@@ -407,7 +407,7 @@ public class SmsReaderPlugin extends Plugin {
 
         /*
          * Remove queue entries that are no longer inside the
-         * one-week processing window.
+         * three-day processing window.
          */
         int deleted =
             smsStore.deleteOlderThan(
@@ -529,7 +529,7 @@ public class SmsReaderPlugin extends Plugin {
 
         diagnostic.put(
             "windowHours",
-            168
+            72
         );
 
         diagnostic.put(
@@ -621,7 +621,7 @@ public class SmsReaderPlugin extends Plugin {
 
     /**
      * Reads ONLY Android inbox SMS inside the supplied
-     * one-week window.
+     * three-day window.
      *
      * It does not scan older SMS.
      *
@@ -648,7 +648,7 @@ public class SmsReaderPlugin extends Plugin {
 
             /*
              * Android ContentResolver receives only the desired
-             * one-week window.
+             * three-day window.
              */
             String selection =
                 "date >= ? AND date <= ?";
@@ -761,7 +761,7 @@ public class SmsReaderPlugin extends Plugin {
                         );
 
                     /*
-                     * Defensive one-week validation.
+                     * Defensive three-day validation.
                      *
                      * Even though the ContentResolver already
                      * filtered the query, validate again before
@@ -1065,7 +1065,7 @@ public class SmsReaderPlugin extends Plugin {
             System.currentTimeMillis();
 
         final long cutoff =
-            now - ONE_WEEK_MS;
+            now - THREE_DAYS_MS;
 
         /*
          * Remove anything outside the active processing window

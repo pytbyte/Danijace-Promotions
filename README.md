@@ -99,7 +99,7 @@ Install the resulting APK on a device and grant the requested permissions for SM
 
 ### SMS processing
 
-The Android app reads and queues SMS for processing. The server validates and processes supported bank messages, then stores applicable financial transactions. Android background workers communicate with the SMS API and can be woken through Firebase Cloud Messaging. The current automatic SMS lookback window is one week (168 hours) on both Android and the server.
+The Android app reads and queues SMS for processing. The server validates and processes supported bank messages, then stores applicable financial transactions. Android background workers communicate with the SMS API and can be woken through Firebase Cloud Messaging. The current automatic SMS lookback window is three days (72 hours) on both Android and the server.
 
 The worker authentication token is currently configured in `android/app/build.gradle` and on the server as `SMS_WORKER_TEST_TOKEN`. Keep the values in sync when changing them. This is the current test-token mechanism for the worker API.
 
