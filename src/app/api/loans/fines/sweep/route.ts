@@ -6,24 +6,26 @@ import {
   sweepHistoricalLoanFines,
 } from "@/lib/loans/fines/sweep";
 
-function getSweepSecret(): string | undefined {
-  const secret = process.env.LOANS_FINE_SWEEP_SECRET;
-
-  return typeof secret === "string" && secret.trim()
-    ? secret.trim()
-    : undefined;
+function getSweepSecrets(): string[] {
+  return [
+    process.env.LOANS_FINE_SWEEP_SECRET,
+    process.env.CRON_SECRET,
+  ].filter(
+    (secret): secret is string =>
+      typeof secret === "string" && Boolean(secret.trim()),
+  ).map((secret) => secret.trim());
 }
 
 async function isAuthorized(request: NextRequest): Promise<boolean> {
-  const secret = getSweepSecret();
+  const secrets = getSweepSecrets();
 
-  if (secret) {
+  if (secrets.length > 0) {
     const authorization = request.headers.get("authorization") ?? "";
     const token = authorization.startsWith("Bearer ")
       ? authorization.slice(7).trim()
       : authorization.trim();
 
-    return token === secret;
+    return secrets.includes(token);
   }
 
   const session = await auth();

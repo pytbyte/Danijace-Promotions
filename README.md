@@ -64,6 +64,7 @@ Set these values in `.env.local` for local development and in the deployment env
 | `FIREBASE_PRIVATE_KEY` | Service account private key for Firebase Admin messaging. Store it as a deployment secret. Escaped `\\n` sequences are converted to newlines by the server code. |
 | `SMS_WORKER_TEST_TOKEN` | Shared token required by the Android SMS worker API. It must match the Android `DANIJACE_SMS_WORKER_TOKEN` build configuration. |
 | `LOANS_FINE_SWEEP_SECRET` | Secret used to authorize the scheduled loan fine sweep endpoint. |
+| `CRON_SECRET` | Optional Vercel cron authorization secret. Vercel sends it as a Bearer token; the fine sweep endpoint accepts it as well as `LOANS_FINE_SWEEP_SECRET`. |
 | `FINES_SWEEP_URL` | Optional target URL for the historical fine sweep script. |
 | `FINES_SWEEP_AS_OF_DATE` | Optional as-of date for the historical fine sweep script. |
 | `MEMBERSHIP_PREFIX` | Optional membership-number prefix override. |
@@ -106,7 +107,7 @@ The worker authentication token is currently configured in `android/app/build.gr
 
 The web application is deployed to Vercel. Configure all required server environment variables in the Vercel project, including the correctly cased MongoDB database name, before deploying. A web deployment updates the site loaded by the Android Capacitor app.
 
-`vercel.json` schedules `/api/loans/fines/sweep` at `0 2 * * *` (02:00 UTC daily). Configure `LOANS_FINE_SWEEP_SECRET` in Vercel so the scheduled endpoint can authenticate its request.
+`vercel.json` schedules `/api/loans/fines/sweep` at `0 2 * * *` (02:00 UTC daily). Configure `CRON_SECRET` or `LOANS_FINE_SWEEP_SECRET` in Vercel so the scheduled endpoint can authenticate its request. Vercel automatically sends `CRON_SECRET` in the `Authorization` header for cron invocations.
 
 Android changes are distributed separately as an APK or through the chosen Android release channel. Rebuild and install/release a new APK when native Android code or configuration changes.
 
