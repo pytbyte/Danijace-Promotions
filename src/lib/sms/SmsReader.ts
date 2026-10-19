@@ -38,7 +38,7 @@ export interface SmsReaderResult {
 export interface SmsReaderPlugin {
   /**
    * Reads SMS messages currently available in the
-   * Android inbox from the previous 36 hours.
+   * Android inbox from the previous week.
    *
    * The native plugin does not perform financial
    * processing or server communication.

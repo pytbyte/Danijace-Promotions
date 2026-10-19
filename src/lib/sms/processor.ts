@@ -133,7 +133,7 @@ import {
 const FINANCIAL_TIME_ZONE =
   "Africa/Nairobi";
 
-const SMS_LOOKBACK_HOURS = 36;
+const SMS_LOOKBACK_HOURS = 168;
 
 const SMS_LOOKBACK_MS =
   SMS_LOOKBACK_HOURS *
@@ -1527,7 +1527,7 @@ export async function processIncomingTransaction(
   ------------------------------------------------------- */
 
   /**
-   * This timestamp is ONLY for the 36-hour automatic
+   * This timestamp is ONLY for the one-week automatic
    * processing window.
    *
    * It must not be used to determine loan ownership.

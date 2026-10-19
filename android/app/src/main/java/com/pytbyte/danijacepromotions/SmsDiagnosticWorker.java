@@ -88,7 +88,8 @@ public final class SmsDiagnosticWorker
     ===================================================== */
 
     private static final long LOOKBACK_MS =
-            36L
+            7L
+                    * 24L
                     * 60L
                     * 60L
                     * 1000L;
@@ -182,7 +183,7 @@ public final class SmsDiagnosticWorker
 
             Log.i(
                     TAG,
-                    "36-hour cutoff: " + cutoff
+                    "one-week cutoff: " + cutoff
             );
 
             /* =================================================

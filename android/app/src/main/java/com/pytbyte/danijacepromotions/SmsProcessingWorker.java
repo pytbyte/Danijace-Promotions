@@ -99,10 +99,10 @@ import java.util.concurrent.TimeUnit;
  *
  * =========================================================
  *
- * 36-HOUR WINDOW
+ * ONE-WEEK WINDOW
  * ---------------------------------------------------------
  *
- * The 36-hour period is used to select recent pending SMS
+ * The one-week period is used to select recent pending SMS
  * for automatic Android reconciliation/processing.
  *
  * It is NOT a financial validity decision.
@@ -149,12 +149,12 @@ public final class SmsProcessingWorker
 
     /**
      * Android automatically processes/reconciles SMS from
-     * the most recent 36 hours.
+     * the most recent week.
      *
      * This is NOT the server's financial validity rule.
      */
     private static final long SMS_LOOKBACK_HOURS =
-            36L;
+            168L;
 
     private static final long SMS_LOOKBACK_MS =
             SMS_LOOKBACK_HOURS
@@ -261,7 +261,7 @@ public final class SmsProcessingWorker
              * Use one processing window for this worker
              * invocation.
              *
-             * The 36-hour window determines which recent
+             * The one-week window determines which recent
              * pending SMS are automatically submitted.
              */
             final long now =
@@ -505,7 +505,7 @@ public final class SmsProcessingWorker
 
             /*
              * Check whether messages still remain inside the
-             * current 36-hour processing window.
+             * current one-week processing window.
              *
              * If so, schedule another immediate pass.
              *

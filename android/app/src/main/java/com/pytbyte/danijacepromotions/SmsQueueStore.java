@@ -53,7 +53,7 @@ import java.util.List;
  *
  * IMPORTANT:
  *
- * The 36-hour window is a processing/reconciliation window.
+ * The one-week window is a processing/reconciliation window.
  *
  * It is NOT a reason to destroy an unprocessed SMS.
  *
@@ -759,7 +759,7 @@ public final class SmsQueueStore {
      * An unprocessed SMS may represent a legitimate
      * financial event that has not yet reached the backend.
      *
-     * The 36-hour window is used for automatic processing
+     * The one-week window is used for automatic processing
      * and inbox reconciliation. It is NOT a destructive
      * retention rule for pending financial events.
      *

@@ -73,10 +73,10 @@ public class SmsReceiver extends BroadcastReceiver {
             "DanijacePromotionsSmsReceiver";
 
     /**
-     * Only capture SMS messages from the last 36 hours.
+     * Only capture SMS messages from the last week.
      */
     private static final long SMS_WINDOW_MS =
-            36L * 60L * 60L * 1000L;
+            7L * 24L * 60L * 60L * 1000L;
 
 
     /* =====================================================
@@ -232,7 +232,7 @@ public class SmsReceiver extends BroadcastReceiver {
 
         Log.i(
                 TAG,
-                "36-hour cutoff=" +
+                "one-week cutoff=" +
                         cutoff
         );
 
@@ -604,7 +604,7 @@ public class SmsReceiver extends BroadcastReceiver {
                         TAG,
                         "SMS part #" +
                                 partNumber +
-                                " rejected: older than 36 hours."
+                                " rejected: older than one week."
                 );
 
                 continue;
@@ -699,7 +699,7 @@ public class SmsReceiver extends BroadcastReceiver {
                 Log.w(
                         TAG,
                         "Skipping SMS during persistence: " +
-                                "older than 36 hours."
+                                "older than one week."
                 );
 
                 continue;
