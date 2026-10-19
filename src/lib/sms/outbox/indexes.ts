@@ -1,6 +1,6 @@
 import clientPromise from "@/lib/mongodb/index";
 
-const DB_NAME = "danijace";
+const DB_NAME = process.env.MONGODB_DB || "Danijace";
 const COLLECTION_NAME = "smsOutbox";
 
 type IndexDefinition = {

@@ -26,7 +26,7 @@ import {
 } from "./date-range";
 
 const DB_NAME =
-  process.env.MONGODB_DB || "danijace";
+  process.env.MONGODB_DB || "Danijace";
 
 const LOANS_COLLECTION = "loans";
 const LOAN_REPAYMENTS_COLLECTION = "loanRepayments";

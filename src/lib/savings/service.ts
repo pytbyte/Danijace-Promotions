@@ -67,7 +67,7 @@ import type {
 
 const DB_NAME =
   process.env.MONGODB_DB ||
-  "danijace";
+  "Danijace";
 
 const ACCOUNT_COLLECTION =
   "savingsAccounts";

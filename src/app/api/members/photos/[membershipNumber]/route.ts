@@ -8,7 +8,7 @@ import clientPromise from "@/lib/mongodb";
 ========================================================= */
 
 const DB_NAME =
-  process.env.MONGODB_DB || "danijace";
+  process.env.MONGODB_DB || "Danijace";
 
 const MAX_FILE_SIZE =
   5 * 1024 * 1024;
