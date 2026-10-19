@@ -782,7 +782,7 @@ public final class FcmTokenRegistrar {
              */
             connection.setRequestProperty(
                     WORKER_TOKEN_HEADER,
-                    BuildConfig.GEO_SHUA_SMS_WORKER_TOKEN
+                    BuildConfig.DANIJACE_SMS_WORKER_TOKEN
             );
 
             byte[] payload =

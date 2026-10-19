@@ -1082,7 +1082,7 @@ public class SmsOutboxWorker extends Worker {
 
             connection.setRequestProperty(
                     "x-danijacepromotions-sms-worker",
-                    BuildConfig.GEO_SHUA_SMS_WORKER_TOKEN
+                    BuildConfig.DANIJACE_SMS_WORKER_TOKEN
             );
 
             byte[] payload =
