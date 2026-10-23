@@ -568,8 +568,9 @@ export async function reconcileLoanFines(
 export const accrueLoanFines = reconcileLoanFines;
 
 /**
- * Sweep all loans that have an actual repayment ledger entry.
- * Each loan is passed through the same central fine engine.
+ * Sweep every loan, including loans with no repayment ledger
+ * entries. The central fine engine still applies all eligibility
+ * rules, including requiring fineStatus to be active.
  */
 export async function accrueAllLoanFines(
   asOfDate: Date = new Date(),
@@ -578,7 +579,7 @@ export async function accrueAllLoanFines(
     throw new Error("Invalid as-of date.");
   }
 
-  const loanIds = await repository.getLoanIdsWithRepayments();
+  const loanIds = await repository.getAllLoanIds();
   let reconciledPeriods = 0;
 
   for (const loanId of loanIds) {

@@ -328,9 +328,13 @@ export async function getLoanDomain(
   return toLoan(await getLoan(loanId, session));
 }
 
-export async function getLoanIdsWithRepayments(): Promise<ObjectId[]> {
-  const { repayments } = await getCollections();
-  return repayments.distinct("loanId");
+export async function getAllLoanIds(): Promise<ObjectId[]> {
+  const { loans } = await getCollections();
+  const documents = await loans
+    .find({}, { projection: { _id: 1 } })
+    .toArray();
+
+  return documents.map((loan) => loan._id);
 }
 
 export async function getAmountPaidAsOf(
